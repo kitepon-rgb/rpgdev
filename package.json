@@ -5,9 +5,9 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "rpgdev": "./scripts/desktop.mjs",
-    "rpgdev-hook": "./scripts/rpg-hook.mjs",
-    "rpgdev-server": "./server/rpgdev-server.mjs"
+    "rpgdev": "bin/rpgdev",
+    "rpgdev-hook": "bin/rpgdev-hook",
+    "rpgdev-server": "bin/rpgdev-server"
   },
   "scripts": {
     "start": "node scripts/desktop.mjs",
@@ -19,6 +19,7 @@
     "test": "node --test"
   },
   "files": [
+    "bin",
     "desktop",
     "examples",
     "public",
