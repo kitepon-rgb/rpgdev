@@ -1,0 +1,9 @@
+.rpgdev/
+.venv/
+tmp/
+node_modules/
+.DS_Store
+.claude/
+.codex/
+.vscode/
+npm-debug.log*

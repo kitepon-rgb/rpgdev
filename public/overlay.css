@@ -1,0 +1,326 @@
+:root {
+  color-scheme: dark;
+  --ink: #fff7dd;
+  --muted: #b9cec2;
+  --gold: #ffd15c;
+  --field: #7dd873;
+  --danger: #ff5c57;
+  --panel: rgba(8, 13, 13, 0.74);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: #050807;
+}
+
+button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 6px;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.5);
+  font: inherit;
+  font-weight: 900;
+}
+
+button.is-on {
+  color: #07100b;
+  background: var(--field);
+}
+
+.overlay {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: #101512;
+  isolation: isolate;
+}
+
+.bg,
+.shade {
+  position: absolute;
+  inset: 0;
+}
+
+.bg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+  transform: scale(1.06);
+}
+
+.shade {
+  background:
+    linear-gradient(180deg, rgba(5, 8, 7, 0.12), rgba(5, 8, 7, 0.68)),
+    radial-gradient(circle at 66% 48%, rgba(255, 92, 87, 0), rgba(255, 92, 87, 0));
+  z-index: 1;
+}
+
+body[data-phase="idle"] .shade,
+body[data-phase="complete"] .shade {
+  background: linear-gradient(180deg, rgba(5, 8, 7, 0.04), rgba(5, 8, 7, 0.36));
+}
+
+body[data-phase="battle"] .shade {
+  animation: battleGlow 1.2s ease-in-out infinite;
+}
+
+.bar,
+.stage {
+  position: relative;
+  z-index: 2;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 54px;
+  padding: 12px 12px 8px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent);
+}
+
+.brand {
+  display: block;
+  color: var(--gold);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+#phaseLabel {
+  display: block;
+  margin-top: 1px;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.stage {
+  height: calc(100vh - 54px);
+  min-height: 116px;
+  overflow: hidden;
+  perspective: 480px;
+}
+
+.hero,
+.monster,
+#fxCanvas {
+  position: absolute;
+}
+
+.hero {
+  left: 50%;
+  bottom: max(-178px, -45vh);
+  width: min(70vw, 316px);
+  height: min(90vh, 356px);
+  transform: translateX(-50%) translateY(0) rotate(0deg);
+  transform-origin: center bottom;
+  animation: heroWalkInPlace 0.72s ease-in-out infinite;
+  filter: drop-shadow(0 15px 10px rgba(0, 0, 0, 0.34));
+}
+
+.hero img,
+.monster img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+body[data-phase="idle"] .hero,
+body[data-phase="complete"] .hero {
+  left: 34%;
+  bottom: max(-38px, -12vh);
+  width: min(60vw, 260px);
+  height: min(72vh, 260px);
+  animation: heroRest 2.4s ease-in-out infinite;
+  filter: drop-shadow(0 12px 9px rgba(0, 0, 0, 0.28));
+}
+
+.monster {
+  left: 50%;
+  top: 41%;
+  width: min(69vw, 308px);
+  height: min(51vh, 225px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.76);
+  transform-origin: center center;
+  transition: opacity 180ms ease, transform 180ms ease, filter 180ms ease;
+  filter: drop-shadow(0 13px 9px rgba(0, 0, 0, 0.42));
+}
+
+.enemy-status {
+  position: absolute;
+  left: 50%;
+  top: -18px;
+  display: grid;
+  gap: 4px;
+  width: min(34vw, 150px);
+  min-width: 104px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.48));
+}
+
+.enemy-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 18px;
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  background: rgba(8, 13, 13, 0.72);
+}
+
+#monsterName {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#monsterHp {
+  color: var(--muted);
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.enemy-meter {
+  overflow: hidden;
+  height: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.enemy-meter span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--danger), #ffb357);
+  transition: width 220ms ease;
+}
+
+body[data-phase="battle"] .monster {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  animation: monsterBattleIdle 0.9s steps(2) infinite;
+}
+
+body[data-phase="battle"] .hero {
+  left: 23%;
+  bottom: max(-118px, -38vh);
+  width: min(48vw, 240px);
+  height: min(72vh, 288px);
+  opacity: 1;
+  animation: heroBattleReady 1.05s ease-in-out infinite;
+  filter: drop-shadow(0 15px 10px rgba(0, 0, 0, 0.42));
+}
+
+#fxCanvas {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+@keyframes idle {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+@keyframes heroWalkInPlace {
+  0% {
+    transform: translateX(-50%) translateY(0) rotate(-1.7deg) scaleX(1);
+  }
+  25% {
+    transform: translateX(calc(-50% - 3px)) translateY(-7px) rotate(1.2deg) scaleX(0.985);
+  }
+  50% {
+    transform: translateX(-50%) translateY(0) rotate(1.7deg) scaleX(1);
+  }
+  75% {
+    transform: translateX(calc(-50% + 3px)) translateY(-7px) rotate(-1.2deg) scaleX(0.985);
+  }
+  100% {
+    transform: translateX(-50%) translateY(0) rotate(-1.7deg) scaleX(1);
+  }
+}
+
+@keyframes heroRest {
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0) rotate(-0.4deg);
+  }
+  50% {
+    transform: translateX(-50%) translateY(-2px) rotate(0.5deg);
+  }
+}
+
+@keyframes monsterBattleIdle {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -5px;
+  }
+}
+
+@keyframes heroBattleReady {
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0) rotate(-1.2deg);
+  }
+  50% {
+    transform: translateX(-50%) translateY(-4px) rotate(1.2deg);
+  }
+}
+
+@keyframes battleGlow {
+  0%,
+  100% {
+    background:
+      linear-gradient(180deg, rgba(5, 8, 7, 0.22), rgba(5, 8, 7, 0.72)),
+      radial-gradient(circle at 66% 48%, rgba(255, 92, 87, 0), rgba(255, 92, 87, 0));
+  }
+  50% {
+    background:
+      linear-gradient(180deg, rgba(5, 8, 7, 0.22), rgba(5, 8, 7, 0.72)),
+      radial-gradient(circle at 66% 48%, rgba(255, 92, 87, 0.34), rgba(255, 92, 87, 0));
+  }
+}

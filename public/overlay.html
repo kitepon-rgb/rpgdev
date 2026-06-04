@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RPGDev Overlay</title>
+    <link rel="stylesheet" href="/overlay.css" />
+  </head>
+  <body data-phase="idle">
+    <main class="overlay">
+      <img id="sceneBg" class="bg" src="/assets/town.png" alt="" />
+      <div class="shade"></div>
+      <audio id="fieldAudio" src="/audio/field.wav" loop preload="auto"></audio>
+      <audio id="adventureAudio" src="/audio/adventure.wav" loop preload="auto"></audio>
+      <audio id="battleAudio" src="/audio/battle.wav" loop preload="auto"></audio>
+
+      <header class="bar">
+        <div>
+          <span class="brand">RPGDev</span>
+          <strong id="phaseLabel">待機</strong>
+        </div>
+        <div class="buttons">
+          <button id="audioButton" type="button" title="BGM">♪</button>
+          <button id="resetButton" type="button" title="Reset">↺</button>
+        </div>
+      </header>
+
+      <section class="stage">
+        <div class="hero" aria-hidden="true">
+          <img id="heroImage" src="/assets/sprites/hero.png" alt="" />
+        </div>
+        <div class="monster" aria-hidden="true">
+          <div class="enemy-status">
+            <div class="enemy-meta">
+              <span id="monsterName"></span>
+              <strong id="monsterHp"></strong>
+            </div>
+            <div class="enemy-meter"><span id="hpFill"></span></div>
+          </div>
+          <img id="monsterImage" src="/assets/sprites/slime.png" alt="" />
+        </div>
+        <canvas id="fxCanvas" width="440" height="300"></canvas>
+      </section>
+    </main>
+    <script type="module" src="/overlay.js"></script>
+  </body>
+</html>

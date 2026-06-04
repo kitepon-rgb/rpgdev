@@ -1,0 +1,56 @@
+{
+  "name": "rpgdev",
+  "version": "0.1.0",
+  "description": "A small macOS RPG overlay for Codex and Claude Code hook events.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rpgdev": "./scripts/desktop.mjs",
+    "rpgdev-hook": "./scripts/rpg-hook.mjs",
+    "rpgdev-server": "./server/rpgdev-server.mjs"
+  },
+  "scripts": {
+    "start": "node scripts/desktop.mjs",
+    "web": "node server/rpgdev-server.mjs --open",
+    "server": "node server/rpgdev-server.mjs",
+    "build:desktop": "node scripts/desktop.mjs --build-only",
+    "render:bgm": "node scripts/render-bgm.mjs",
+    "demo": "node scripts/demo.mjs",
+    "test": "node --test"
+  },
+  "files": [
+    "desktop",
+    "examples",
+    "public",
+    "scripts",
+    "server",
+    "test",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "codex",
+    "claude-code",
+    "hooks",
+    "rpg",
+    "overlay",
+    "macos"
+  ],
+  "homepage": "https://github.com/kitepon-rgb/rpgdev#readme",
+  "bugs": {
+    "url": "https://github.com/kitepon-rgb/rpgdev/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kitepon-rgb/rpgdev.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ]
+}

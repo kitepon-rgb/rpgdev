@@ -1,0 +1,100 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook",
+            "args": ["claude", "UserPromptSubmit"],
+            "timeout": 5,
+            "statusMessage": "冒険の小窓を開いています"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook",
+            "args": ["claude", "PreToolUse"],
+            "timeout": 3,
+            "statusMessage": "小窓の冒険が進んでいます"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook",
+            "args": ["claude", "PostToolUse"],
+            "timeout": 3,
+            "statusMessage": "戦況を更新しています"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook",
+            "args": ["claude", "PostToolUseFailure"],
+            "timeout": 3,
+            "statusMessage": "モンスターが出現しています"
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook",
+            "args": ["claude", "PermissionDenied"],
+            "timeout": 3,
+            "statusMessage": "障害を記録しています"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook",
+            "args": ["claude", "Stop"],
+            "timeout": 3,
+            "statusMessage": "冒険を記録しています"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook",
+            "args": ["claude", "StopFailure"],
+            "timeout": 3,
+            "statusMessage": "冒険の危機を記録しています"
+          }
+        ]
+      }
+    ]
+  }
+}

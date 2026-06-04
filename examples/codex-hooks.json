@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook codex UserPromptSubmit",
+            "timeout": 5,
+            "statusMessage": "冒険の小窓を開いています"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook codex PreToolUse",
+            "timeout": 3,
+            "statusMessage": "小窓の冒険が進んでいます"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook codex PostToolUse",
+            "timeout": 3,
+            "statusMessage": "戦況を更新しています"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook codex Stop",
+            "timeout": 3,
+            "statusMessage": "冒険を記録しています"
+          }
+        ]
+      }
+    ]
+  }
+}

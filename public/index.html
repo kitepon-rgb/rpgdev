@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RPGDev Adventure</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-phase="idle">
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">RPGDev</p>
+          <h1>Hook Adventure</h1>
+        </div>
+        <div class="toolbar" aria-label="controls">
+          <span class="signal" id="connectionSignal">CONNECT</span>
+          <button class="icon-button" id="audioButton" type="button" title="BGM">
+            <span aria-hidden="true">♪</span>
+          </button>
+          <button class="icon-button" id="resetButton" type="button" title="Reset">
+            <span aria-hidden="true">↺</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="scene-wrap" aria-label="adventure scene">
+          <div class="scene" id="scene">
+            <img class="field" src="/assets/field.png" alt="" />
+            <div class="skyline"></div>
+            <div class="battle-flash" id="battleFlash"></div>
+
+            <div class="sprite hero" aria-hidden="true">
+              <div class="hero-head"></div>
+              <div class="hero-body"></div>
+              <div class="hero-cape"></div>
+              <div class="hero-sword"></div>
+            </div>
+
+            <div class="sprite monster" id="monsterSprite" aria-hidden="true">
+              <div class="monster-shadow"></div>
+              <div class="monster-core"></div>
+              <div class="monster-eye left"></div>
+              <div class="monster-eye right"></div>
+              <div class="monster-horn left"></div>
+              <div class="monster-horn right"></div>
+            </div>
+
+            <canvas class="fx" id="fxCanvas" width="1280" height="720"></canvas>
+            <div class="start-gate" id="startGate">
+              <button class="start-button" id="startButton" type="button">冒険開始</button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="hud" aria-label="adventure status">
+          <section class="panel headline-panel">
+            <div class="phase-row">
+              <span class="phase-mark" id="phaseMark"></span>
+              <span id="phaseLabel">待機</span>
+            </div>
+            <div class="track-row">
+              <span id="trackLabel">BGM: silence</span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="meter-header">
+              <span>冒険</span>
+              <strong id="progressValue">0%</strong>
+            </div>
+            <div class="meter">
+              <div class="meter-fill progress-fill" id="progressFill"></div>
+            </div>
+          </section>
+
+          <section class="panel monster-panel" id="monsterPanel">
+            <p class="panel-label">遭遇</p>
+            <h2 id="monsterName">No Error</h2>
+            <p class="monster-title" id="monsterTitle">Field is clear</p>
+            <div class="meter danger">
+              <div class="meter-fill hp-fill" id="monsterHpFill"></div>
+            </div>
+            <div class="hp-row">
+              <span id="monsterHp">0 / 0</span>
+              <span id="monsterQueue">0</span>
+            </div>
+          </section>
+
+          <section class="stats">
+            <div class="stat">
+              <span>TURN</span>
+              <strong id="turnValue">0</strong>
+            </div>
+            <div class="stat">
+              <span>STEP</span>
+              <strong id="stepValue">0</strong>
+            </div>
+            <div class="stat">
+              <span>WIN</span>
+              <strong id="winValue">0</strong>
+            </div>
+          </section>
+
+          <section class="panel log-panel">
+            <p class="panel-label">LOG</p>
+            <ol class="event-log" id="eventLog"></ol>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
