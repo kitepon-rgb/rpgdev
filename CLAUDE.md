@@ -26,6 +26,14 @@ npm run demo                          # 起動中のサーバに対して擬似 
 
 `npm run demo` は事前にサーバが起動している必要がある（`rpgdev` / `npm run server`）。
 
+## リリース（npm publish）
+
+詳細は [docs/releasing.md](docs/releasing.md)。要点だけ：
+
+- **rpgdev は npm 公開済み**（2026-06-05 に v0.1.0 初公開）。**2回目以降の更新は granular automation トークン（bypass 2FA）で publish できる**＝バージョンを上げて `npm publish --access public` だけ。OTP 不要。
+- Claude に publish させるには `.claude/settings.local.json` の `permissions.allow` に `Bash(npm publish:*)` が必要（gitignore 対象なので無ければ足す）。`cd && npm publish` の複合だと許可パターンに当たらないので、`npm publish <repo path> --access public` の形で叩く。
+- **罠（もう再発しないが知っておく）**：npm の granular トークンは「まだ存在しないパッケージ」を作れない。**新規パッケージの初回 publish だけは対話 `npm login` + OTP が必須**（granular だと PUT 404、whoami 401）。既存パッケージの更新では起きない。トークンを何度替えても初回作成は通らないので、新規 publish で 404 が出たら token を疑う前に「初回は OTP」を思い出すこと。
+
 ## 再設計中（重要）
 
 ゲームモデルを「エラー＝モンスター」から「**TODO 項目＝モンスター**」へ作り直している。
