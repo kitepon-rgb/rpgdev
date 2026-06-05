@@ -62,6 +62,7 @@ Codex / Claude Code 側で project-local hooks の trust / review が必要な�
   - `TodoWrite` / `update_plan` → モンスター名簿を更新（`pending`＝待機列, `in_progress`＝現在の敵, `completed`＝撃破）
   - それ以外のツール → スキル攻撃（技名＝ツール名）。失敗時は敵が反撃
 - `PostToolUseFailure`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
+- `SubagentStart` / `SubagentStop`: 仲間が参戦 / 帰還。戦闘中は仲間も現在の敵を追撃する
 - `Stop`: 未完了の TODO（モンスター）が無ければ一区切り。残っていれば戦線維持
 
 モンスターの出現・撃破は TODO の状態変化だけが駆動します（エラーの単語マッチでは湧きません）。

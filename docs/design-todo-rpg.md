@@ -98,6 +98,16 @@ TODO のステータス3状態がそのままフェーズに対応する：
 - 技名＝ツール名はプロバイダで品揃えが違う（後述）。未知ツールは生のツール名をそのまま技名に出す
   （握りつぶして通常攻撃に丸めない）。表示名マップは任意。
 
+### 仲間（SubagentStart / SubagentStop）[実装済み]
+- サブエージェントが起動すると仲間が参戦、終了すると離脱する。`state.allies` にエンティティを持つ。
+  - `SubagentStart` → 仲間を追加（`ally_summon` effect に ally 情報）。
+  - `SubagentStop` → 最後に参戦した仲間を帰還（LIFO。hook payload が個体 id を持つとは限らないため）。
+    在席ゼロで Stop が来たら何もしない（黙って成功扱いにしない＝effect を出さない）。
+- **仲間アシスト攻撃**：戦闘中（`in_progress` の敵がいる時）、hero の通常/スキル攻撃に続けて、在席中の
+  各仲間も現在の敵を追撃する（`attack` effect, `kind:"ally"`, `allyId` 付き）。
+- HP は演出なので**仲間も敵を殺せない**（HP_FLOOR / 瀕死は hero と同じ damage() が担保）。撃破は TODO completed のみ。
+- 敵が居ない探検中は仲間は攻撃しない（前進のみ）。
+
 ---
 
 ## 4. 使うフック：共通縛り [決定]
@@ -116,8 +126,8 @@ TODO のステータス3状態がそのままフェーズに対応する：
 | PostToolUse | ★中核 | スキル攻撃＋名簿更新＋成否分岐（下記） |
 | PreCompact | 演出 | 「記憶が霞む／霧」長期戦の区切り |
 | PostCompact | 演出 | 「霧が晴れる」名簿を再同期 |
-| SubagentStart | 戦闘 | 仲間召喚／別働隊出撃 |
-| SubagentStop | 戦闘 | 仲間帰還 |
+| SubagentStart | 戦闘 | 仲間が参戦（`state.allies` に追加）。戦闘中は hero 攻撃に追撃（§3 仲間） |
+| SubagentStop | 戦闘 | 仲間が帰還（LIFO で1体離脱） |
 | Stop | →待機 | 一区切り。未完了TODO無ければ街へ、有れば戦線維持 |
 
 **PostToolUse の中の分岐：**
@@ -280,15 +290,18 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - 失敗信号は A案（Claude=PostToolUseFailure イベント / Codex=PostToolUse payload の exit code）→ `counter`。
   - HP は演出専用（HP_FLOOR=1 で殺せない、瀕死=dying）。トドメは completed のみ。
   - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝ツール名）。
-- **テスト：12/12 pass。** `test/adventure-state.test.mjs`（偽陽性修正・HP で殺せない・completed トドメ・provider parity 等）。
-- **サーバ経由の E2E スモーク：確認済み。** 一時 PROJECT_DIR＋別ポートで `/hook`→`/state`→effects を実行し、
+  - 仲間：SubagentStart で参戦（`state.allies`）/ SubagentStop で離脱（LIFO）。戦闘中は hero 攻撃に追撃（`attack` kind:"ally"）。仲間も殺せない（HP_FLOOR 準拠）。
+- **テスト：18/18 pass。** `test/adventure-state.test.mjs`（偽陽性修正・HP で殺せない・completed トドメ・provider parity・no-TODO・仲間 召喚/離脱/アシスト/殺せない/敵不在 等）。
+- **サーバ経由の E2E スモーク：確認済み。** `/hook`→`/state`→effects を実行し、
   TodoWrite→battle、Edit→attack(skill)、PostToolUseFailure→counter、completed→monster_defeated(finisher)+次の engage を確認。
+- **稼働サーバ：本日 新モデルへ再起動済み。** 旧コード（error=モンスター）が動いていて「TODO→戦闘にならない」問題が出ていたが、
+  サーバ再起動＋`/control/reset` で解消。稼働サーバの `/state` が新形式（`defeatedCount`/`allies`）であることを確認。
 - **フロントエンド：新 state/effect に配線済み（ビジュアルは仮）。**
   - `public/overlay.html` / `overlay.js` / `overlay.css`：target=in_progress を戦闘相手に、pending を待機列(`#roster`)に、
-    TODO 本文を `#monsterLabel` に表示。新 effect（engage/attack(kind,skill)/counter/monster_dying/monster_defeated(finisher)/
-    monster_fled/retreat/turn_completed/ally_*/compact_*/hold）をトースト＋パーティクル＋フラッシュで仮表示。瀕死は点滅。
-  - `public/app.js`（Web ビュー）：`progress`/`errorsDefeated` 廃止に追従、target/defeatedCount/label に対応、新 effect 対応。
+    在席仲間を `#allies` に、TODO 本文を `#monsterLabel` に表示。新 effect（engage/attack(kind,skill,ally)/counter/monster_dying/
+    monster_defeated(finisher)/monster_fled/retreat/turn_completed/ally_summon/ally_return/compact_*/hold）をトースト＋パーティクル＋フラッシュで仮表示。瀕死は点滅。
+  - `public/app.js`（Web ビュー）：`progress`/`errorsDefeated` 廃止に追従、target/defeatedCount/label に対応、新 effect（仲間含む）対応。仲間は主に event log と追撃演出で表示。
   - **未着手：** 画像・スプライト・凝った演出（Codex 側で対応予定）。`scripts/demo.mjs` は旧イベント形式のまま。
-    `.rpgdev/state.json` は旧形式が残るので実起動前に `/control/reset` 推奨。
+    フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
 - 実機検証の生データ：`tmp/codex-probe/`（gitignore 対象、`hook-capture.log` / `probe*-events.jsonl`）。
   ※ 検証中に `~/.codex/auth.json` を `tmp/codex-home/` にコピーしたが、機密のため削除済み。

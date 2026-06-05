@@ -144,6 +144,10 @@ function applyEffects(effects) {
         playSting("danger");
         break;
       case "attack":
+        if (effect.kind === "ally") {
+          if (!effect.stagger) burst(0.66, 0.5, "#7fe0ff", 12);
+          break;
+        }
         if (effect.stagger) {
           burst(0.72, 0.52, "#9fb8c8", 10);
           break;
@@ -151,6 +155,13 @@ function applyEffects(effects) {
         slash();
         burst(0.72, 0.52, effect.kind === "skill" ? "#ffd15c" : "#ffe9a8", effect.kind === "skill" ? 24 : 14);
         playSting("hit");
+        break;
+      case "ally_summon":
+        burst(0.3, 0.55, "#7fe0ff", 24);
+        playSting("win");
+        break;
+      case "ally_return":
+        burst(0.3, 0.55, "#9aa6b2", 12);
         break;
       case "counter":
         burst(0.5, 0.55, "#ff4d4d", 26);

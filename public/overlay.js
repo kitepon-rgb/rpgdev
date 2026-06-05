@@ -4,6 +4,7 @@ const monsterHp = document.querySelector("#monsterHp");
 const monsterLabel = document.querySelector("#monsterLabel");
 const monsterStage = document.querySelector("#monsterStage");
 const roster = document.querySelector("#roster");
+const allies = document.querySelector("#allies");
 const toast = document.querySelector("#toast");
 const sceneBg = document.querySelector("#sceneBg");
 const heroImage = document.querySelector("#heroImage");
@@ -154,6 +155,7 @@ function render(state) {
   const target = monsters.find((m) => m.status === "in_progress") || null;
   const pending = monsters.filter((m) => m.status !== "in_progress");
   renderRoster(pending);
+  renderAllies(state.allies || []);
 
   if (!target) {
     // 探検中（in_progress なし）または待機: 戦闘相手を出さない
@@ -189,6 +191,17 @@ function renderRoster(pending) {
   roster.textContent = `⚔ 待機 ${pending.length} ： ${labels}`;
 }
 
+function renderAllies(list) {
+  if (!allies) return;
+  if (!list.length) {
+    allies.dataset.active = "false";
+    allies.textContent = "";
+    return;
+  }
+  allies.dataset.active = "true";
+  allies.textContent = `🛡 仲間 ${list.length}： ${list.map((a) => a.name).join(" ・ ")}`;
+}
+
 function monsterSprite(monster) {
   if (monster.sprite && spriteByName[monster.sprite]) return monster.sprite;
   const name = String(monster.name || "").toLowerCase();
@@ -211,6 +224,11 @@ function effects(list) {
         sting([52, 55, 59]);
         break;
       case "attack":
+        if (effect.kind === "ally") {
+          // 仲間の追撃（毎回鳴るので軽く・スティングなし）
+          if (!effect.stagger) burst(0.5, 0.5, "#7fe0ff", 12);
+          break;
+        }
         if (effect.stagger) {
           burst(0.52, 0.46, "#9fb8c8", 10);
           break;

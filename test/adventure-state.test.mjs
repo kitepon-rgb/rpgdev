@@ -219,3 +219,62 @@ test("no-TODO session stays in peaceful exploration and completes, never enterin
   assert.equal(r.state.phase, "complete");
   assert.equal(r.state.active, false);
 });
+
+test("SubagentStart summons an ally; SubagentStop returns it (LIFO), and a spurious Stop is silent", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  assert.equal(r.state.allies.length, 1);
+  assert.ok(r.effects.some((e) => e.type === "ally_summon" && e.ally));
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  assert.equal(r.state.allies.length, 2);
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStop", raw: {} });
+  assert.equal(r.state.allies.length, 1);
+  assert.ok(r.effects.some((e) => e.type === "ally_return"));
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStop", raw: {} });
+  assert.equal(r.state.allies.length, 0);
+  // 仲間ゼロで SubagentStop が来ても黙って成功扱いにしない（effect を出さない）
+  const extra = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStop", raw: {} });
+  assert.ok(!extra.effects.some((e) => e.type === "ally_return"));
+});
+
+test("present allies assist the hero's attack on the current monster (extra cosmetic damage)", () => {
+  const base = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }])).state;
+  const beforeHp = base.monsters[0].hp;
+
+  const solo = reduceHookEvent(base, { provider: "claude", event: "PreToolUse", raw: { tool_name: "Read" } });
+  const soloDrop = beforeHp - solo.state.monsters[0].hp;
+
+  const withAlly = reduceHookEvent(base, { provider: "claude", event: "SubagentStart", raw: {} });
+  const hpAfterSummon = withAlly.state.monsters[0].hp;
+  const assisted = reduceHookEvent(withAlly.state, { provider: "claude", event: "PreToolUse", raw: { tool_name: "Read" } });
+  const assistedDrop = hpAfterSummon - assisted.state.monsters[0].hp;
+
+  assert.equal(hpAfterSummon, beforeHp, "召喚自体は攻撃しない");
+  assert.ok(assistedDrop > soloDrop, "仲間がいる方が多く削れる");
+  assert.ok(assisted.effects.some((e) => e.type === "attack" && e.kind === "ally"));
+});
+
+test("allies cannot kill: only TODO completion defeats the monster", () => {
+  let r = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  let guard = 0;
+  while (!r.state.monsters[0].dying && guard < 200) {
+    r = reduceHookEvent(r.state, { provider: "claude", event: "PostToolUse", raw: { tool_name: "Edit" } });
+    guard += 1;
+  }
+  assert.equal(r.state.monsters.length, 1, "仲間がいても HP では撃破されない");
+  assert.ok(r.state.monsters[0].hp >= 1);
+  const done = reduceHookEvent(r.state, todoWrite([{ content: "task", status: "completed" }]));
+  assert.equal(done.state.monsters.length, 0);
+  assert.equal(done.state.defeatedCount, 1);
+});
+
+test("allies do not attack when there is no current monster (exploration)", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  assert.equal(r.state.phase, "field"); // 敵なし＝探検
+  r = reduceHookEvent(r.state, { provider: "claude", event: "PreToolUse", raw: { tool_name: "Read" } });
+  assert.ok(r.effects.some((e) => e.type === "step"));
+  assert.ok(!r.effects.some((e) => e.type === "attack"));
+});

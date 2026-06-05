@@ -27,6 +27,7 @@ export function createInitialState() {
     currentTrack: "field", // field | adventure | battle
     monsters: [], // 現役名簿: pending + in_progress（TODO 由来）
     defeated: [],
+    allies: [], // 在席中の仲間（SubagentStart で参戦 / SubagentStop で離脱）
     steps: 0,
     attacks: 0,
     spawned: 0,
@@ -36,8 +37,20 @@ export function createInitialState() {
   };
 }
 
+const ALLY_CATALOG = [
+  { name: "Mage", sprite: "hero" },
+  { name: "Knight", sprite: "hero" },
+  { name: "Ranger", sprite: "hero" },
+  { name: "Cleric", sprite: "hero" }
+];
+const ALLY_DAMAGE = 6; // 仲間アシストの1撃（演出。HP_FLOOR は越えない＝仲間も殺せない）
+
 export function reduceHookEvent(previousState, hookEvent) {
   const state = cloneState(previousState);
+  // 旧/部分的な state.json を読んでもクラッシュしないよう配列を正規化（無い場合のみ）。
+  if (!Array.isArray(state.monsters)) state.monsters = [];
+  if (!Array.isArray(state.defeated)) state.defeated = [];
+  if (!Array.isArray(state.allies)) state.allies = [];
   const event = normalizeHookEvent(hookEvent);
   const effects = [];
 
@@ -71,10 +84,10 @@ export function reduceHookEvent(previousState, hookEvent) {
       counter(state, event, effects);
       break;
     case "SubagentStart":
-      ally(state, event, effects, "ally_summon");
+      summonAlly(state, event, effects);
       break;
     case "SubagentStop":
-      ally(state, event, effects, "ally_return");
+      returnAlly(state, event, effects);
       break;
     case "PreCompact":
       ambient(state, event, effects, "compact_pre");
@@ -183,6 +196,7 @@ function normalAttack(state, event, effects) {
   const target = currentTarget(state);
   if (target) {
     damage(state, target, NORMAL_DAMAGE, "normal", "", event, effects);
+    allyAssist(state, target, event, effects);
   } else {
     step(state, event, effects);
   }
@@ -195,21 +209,31 @@ function skillAttack(state, event, effects) {
   const skill = event.toolName || "技";
   if (target) {
     damage(state, target, SKILL_DAMAGE, "skill", skill, event, effects);
+    allyAssist(state, target, event, effects);
   } else {
     step(state, event, effects);
   }
 }
 
-function damage(state, monster, amount, kind, skill, event, effects) {
+// 在席中の仲間が、hero の攻撃に続けて現在の敵を追撃（戦闘中のみ）。
+// HP は演出なので仲間も殺せない（HP_FLOOR / 瀕死は damage() が担保）。
+function allyAssist(state, target, event, effects) {
+  for (const ally of state.allies) {
+    damage(state, target, ALLY_DAMAGE, "ally", ally.name, event, effects, ally);
+  }
+}
+
+function damage(state, monster, amount, kind, skill, event, effects, ally = null) {
+  const allyId = ally ? ally.id : undefined;
   if (monster.dying) {
     // 瀕死：これ以上削れない。よろける→立ち上がる（ヨーヨー禁止）
     pushLog(state, "stagger", monster.label, event);
-    effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: 0, stagger: true });
+    effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: 0, stagger: true, allyId });
     return;
   }
   const applied = Math.max(0, Math.min(amount, monster.hp - HP_FLOOR));
   monster.hp -= applied;
-  effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied });
+  effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied, allyId });
   pushLog(state, "attack", `${skill || kind} -${applied}`, event);
   if (monster.hp <= HP_FLOOR) {
     monster.dying = true;
@@ -267,10 +291,30 @@ function hold(state, event, effects) {
   effects.push({ type: "hold" });
 }
 
-function ally(state, event, effects, type) {
+// SubagentStart で仲間が参戦、SubagentStop で離脱。
+// Hook payload は個体 id を持たない場合があるため、離脱は LIFO（最後に参戦した仲間を帰還）。
+function summonAlly(state, event, effects) {
   ensureActive(state, event, effects);
-  pushLog(state, type, event.summary, event);
-  effects.push({ type });
+  const template = ALLY_CATALOG[state.allies.length % ALLY_CATALOG.length];
+  const ally = {
+    id: `ally-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name: template.name,
+    sprite: template.sprite,
+    appearedAt: event.at
+  };
+  state.allies.push(ally);
+  pushLog(state, "ally_summon", ally.name, event);
+  effects.push({ type: "ally_summon", ally });
+}
+
+function returnAlly(state, event, effects) {
+  const ally = state.allies.pop();
+  if (!ally) {
+    // 参戦記録なしで Stop が来た場合は何もしない（黙って成功扱いにしない＝effect は出さない）
+    return;
+  }
+  pushLog(state, "ally_return", ally.name, event);
+  effects.push({ type: "ally_return", allyId: ally.id });
 }
 
 function ambient(state, event, effects, type) {
