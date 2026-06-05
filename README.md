@@ -2,7 +2,11 @@
 
 Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトップウィンドウの演出に変換する macOS アプリです。
 
-エラーが出るとモンスターが出現し、解決ステップごとにダメージを与え、解決したら撃破します。待機中は街で勇者がくつろぎ、作業が始まると冒険フィールドを歩き、戦闘中はモンスターと向き合います。
+**TODO（作業項目）をモンスターに見立てます。** エージェントの TODO リスト（Claude の TodoWrite / Codex の update_plan）の各項目が1体のモンスターとして出現し、`in_progress` の項目が「いま戦っている敵」になります。ツールを使うたびに攻撃（`PreToolUse`＝通常攻撃 / `PostToolUse`＝技名がツール名のスキル攻撃）、項目が `completed` になるとトドメで撃破します。待機中は街、作業中はフィールドを探検、`in_progress` の項目と対峙すると戦闘になります。
+
+HP は演出用で攻撃では倒せません（瀕死で粘る）。撃破は TODO が完了した瞬間だけ。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` で検知。Codex は hook がツールの成否を出さないため反撃は出ません）。TODO を使わないセッションは戦闘にならず、平和な探検になります。
+
+設計の詳細・実機検証の根拠は [docs/design-todo-rpg.md](docs/design-todo-rpg.md) を参照。
 
 ## Install
 
@@ -52,12 +56,15 @@ Codex / Claude Code 側で project-local hooks の trust / review が必要な�
 
 ## Hook Flow
 
-- `UserPromptSubmit`: 冒険開始、ウィンドウを開く、探索 BGM
-- `PreToolUse`: TODO / 作業ステップとして冒険進行。戦闘中ならダメージ
-- `PostToolUse`: 成功なら進行または攻撃。失敗 payload ならモンスター出現
-- `PostToolUseFailure` / `PermissionDenied` / `StopFailure`: モンスター出現
-- `Stop`: モンスターがいなければ一区切り。残っていれば戦闘継続
+- `UserPromptSubmit`: 冒険開始、ウィンドウを開く、フィールドへ
+- `PreToolUse`: 通常攻撃（戦闘中の `in_progress` モンスターへ）。敵がいなければ探検で前進
+- `PostToolUse`:
+  - `TodoWrite` / `update_plan` → モンスター名簿を更新（`pending`＝待機列, `in_progress`＝現在の敵, `completed`＝撃破）
+  - それ以外のツール → スキル攻撃（技名＝ツール名）。失敗時は敵が反撃
+- `PostToolUseFailure`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
+- `Stop`: 未完了の TODO（モンスター）が無ければ一区切り。残っていれば戦線維持
 
+モンスターの出現・撃破は TODO の状態変化だけが駆動します（エラーの単語マッチでは湧きません）。
 Hook がサーバへ送れない場合は静かに成功扱いせず、stderr と `.rpgdev/hook-errors.log` にエラーを出します。
 
 ## Demo

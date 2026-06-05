@@ -85,25 +85,32 @@ function renderState(state) {
   phaseLabel.textContent = phaseText[state.phase] || state.phase;
   trackLabel.textContent = `BGM: ${state.currentTrack}`;
 
-  progressValue.textContent = `${state.progress}%`;
-  progressFill.style.width = `${state.progress}%`;
+  const monsters = state.monsters || [];
+  const target = monsters.find((m) => m.status === "in_progress") || null;
+  const remaining = monsters.length;
+  const defeated = state.defeatedCount || 0;
+  const total = defeated + remaining;
+  const progress = total ? Math.round((defeated / total) * 100) : state.phase === "complete" ? 100 : 0;
+
+  progressValue.textContent = `${progress}%`;
+  progressFill.style.width = `${progress}%`;
   turnValue.textContent = state.turn;
   stepValue.textContent = state.steps;
-  winValue.textContent = state.errorsDefeated;
+  winValue.textContent = defeated;
 
-  const monster = state.monsters[0];
-  if (monster) {
-    monsterName.textContent = monster.name;
-    monsterTitle.textContent = monster.title;
-    monsterHp.textContent = `${monster.hp} / ${monster.maxHp}`;
-    monsterHpFill.style.width = `${Math.max(0, Math.round((monster.hp / monster.maxHp) * 100))}%`;
-    monsterQueue.textContent = `${state.monsters.length}`;
+  if (target) {
+    monsterName.textContent = target.dying ? `${target.name}（瀕死）` : target.name;
+    monsterTitle.textContent = target.label || "";
+    monsterHp.textContent = target.dying ? "瀕死" : `${target.hp} / ${target.maxHp}`;
+    monsterHpFill.style.width = `${Math.max(0, Math.round((target.hp / target.maxHp) * 100))}%`;
+    monsterQueue.textContent = `${remaining}`;
   } else {
-    monsterName.textContent = "No Error";
-    monsterTitle.textContent = state.phase === "complete" ? "Quest clear" : "Field is clear";
+    monsterName.textContent = remaining ? "探索中" : "No Monster";
+    monsterTitle.textContent =
+      state.phase === "complete" ? "Quest clear" : remaining ? `待機 ${remaining}` : "Field is clear";
     monsterHp.textContent = "0 / 0";
     monsterHpFill.style.width = "0%";
-    monsterQueue.textContent = "0";
+    monsterQueue.textContent = `${remaining}`;
   }
 
   renderLog(state.log || []);
@@ -127,22 +134,38 @@ function renderLog(log) {
 
 function applyEffects(effects) {
   for (const effect of effects) {
-    if (effect.type === "monster_appeared") {
-      burst(0.72, 0.55, "#ff5c57", 44);
-      playSting("danger");
-    }
-    if (effect.type === "damage") {
-      slash();
-      burst(0.72, 0.52, "#ffd15c", 24);
-      playSting("hit");
-    }
-    if (effect.type === "monster_defeated") {
-      burst(0.72, 0.48, "#7dd873", 72);
-      playSting("win");
-    }
-    if (effect.type === "turn_completed") {
-      burst(0.5, 0.42, "#71d7ff", 70);
-      playSting("clear");
+    switch (effect.type) {
+      case "monster_appeared":
+        burst(0.72, 0.55, "#ff5c57", 40);
+        playSting("danger");
+        break;
+      case "engage":
+        burst(0.72, 0.5, "#ffb15c", 26);
+        playSting("danger");
+        break;
+      case "attack":
+        if (effect.stagger) {
+          burst(0.72, 0.52, "#9fb8c8", 10);
+          break;
+        }
+        slash();
+        burst(0.72, 0.52, effect.kind === "skill" ? "#ffd15c" : "#ffe9a8", effect.kind === "skill" ? 24 : 14);
+        playSting("hit");
+        break;
+      case "counter":
+        burst(0.5, 0.55, "#ff4d4d", 26);
+        playSting("danger");
+        break;
+      case "monster_defeated":
+        burst(0.72, 0.48, "#7dd873", 72);
+        playSting("win");
+        break;
+      case "turn_completed":
+        burst(0.5, 0.42, "#71d7ff", 70);
+        playSting("clear");
+        break;
+      default:
+        break;
     }
   }
 }

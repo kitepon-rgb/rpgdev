@@ -1,6 +1,10 @@
 const phaseLabel = document.querySelector("#phaseLabel");
 const monsterName = document.querySelector("#monsterName");
 const monsterHp = document.querySelector("#monsterHp");
+const monsterLabel = document.querySelector("#monsterLabel");
+const monsterStage = document.querySelector("#monsterStage");
+const roster = document.querySelector("#roster");
+const toast = document.querySelector("#toast");
 const sceneBg = document.querySelector("#sceneBg");
 const heroImage = document.querySelector("#heroImage");
 const monsterImage = document.querySelector("#monsterImage");
@@ -146,19 +150,43 @@ function render(state) {
   }
   setTrack(currentTrack);
 
-  const monster = state.monsters?.[0];
-  if (!monster) {
+  const monsters = state.monsters || [];
+  const target = monsters.find((m) => m.status === "in_progress") || null;
+  const pending = monsters.filter((m) => m.status !== "in_progress");
+  renderRoster(pending);
+
+  if (!target) {
+    // 探検中（in_progress なし）または待機: 戦闘相手を出さない
+    monsterStage.dataset.active = "false";
+    monsterStage.dataset.dying = "false";
     monsterName.textContent = "";
+    monsterLabel.textContent = "";
     monsterHp.textContent = "";
     hpFill.style.width = "0%";
     return;
   }
 
-  const sprite = monsterSprite(monster);
+  const sprite = monsterSprite(target);
+  monsterStage.dataset.active = "true";
+  monsterStage.dataset.dying = target.dying ? "true" : "false";
   monsterImage.src = `/assets/sprites/${sprite}.png`;
-  monsterName.textContent = monster.name;
-  monsterHp.textContent = `${monster.hp} / ${monster.maxHp}`;
-  hpFill.style.width = `${Math.max(0, Math.round((monster.hp / monster.maxHp) * 100))}%`;
+  monsterName.textContent = target.name;
+  monsterLabel.textContent = target.label || "";
+  monsterHp.textContent = target.dying ? "瀕死" : `${target.hp} / ${target.maxHp}`;
+  hpFill.dataset.dying = target.dying ? "true" : "false";
+  hpFill.style.width = `${Math.max(0, Math.round((target.hp / target.maxHp) * 100))}%`;
+}
+
+function renderRoster(pending) {
+  if (!roster) return;
+  if (!pending.length) {
+    roster.dataset.active = "false";
+    roster.textContent = "";
+    return;
+  }
+  roster.dataset.active = "true";
+  const labels = pending.map((m) => m.label).filter(Boolean).join(" ・ ");
+  roster.textContent = `⚔ 待機 ${pending.length} ： ${labels}`;
 }
 
 function monsterSprite(monster) {
@@ -172,20 +200,100 @@ function monsterSprite(monster) {
 
 function effects(list) {
   for (const effect of list) {
-    if (effect.type === "monster_appeared") {
-      burst(0.5, 0.48, "#ff5c57", 42);
-      sting([43, 47, 50]);
-    }
-    if (effect.type === "damage") {
-      slash();
-      burst(0.52, 0.44, "#ffd15c", 24);
-      sting([81, 76]);
-    }
-    if (effect.type === "monster_defeated" || effect.type === "turn_completed") {
-      burst(0.5, 0.42, "#7dd873", 58);
-      sting([72, 76, 79, 84]);
+    switch (effect.type) {
+      case "monster_appeared":
+        burst(0.5, 0.46, "#ff5c57", 38);
+        sting([43, 47, 50]);
+        break;
+      case "engage":
+        flash("#ff8a4c");
+        burst(0.52, 0.44, "#ffb15c", 28);
+        sting([52, 55, 59]);
+        break;
+      case "attack":
+        if (effect.stagger) {
+          burst(0.52, 0.46, "#9fb8c8", 10);
+          break;
+        }
+        slash();
+        if (effect.kind === "skill") {
+          burst(0.52, 0.42, "#ffd15c", 26);
+          showToast(effect.skill || "SKILL", "skill");
+          sting([81, 76]);
+        } else {
+          burst(0.52, 0.44, "#ffe9a8", 14);
+          sting([74]);
+        }
+        break;
+      case "counter":
+        flash("#ff3b3b");
+        burst(0.34, 0.5, "#ff4d4d", 28);
+        showToast("反撃!", "counter");
+        sting([45, 40]);
+        break;
+      case "monster_dying":
+        flash("#c8a0ff");
+        showToast("瀕死", "dying");
+        break;
+      case "monster_defeated":
+        burst(0.5, 0.42, "#7dd873", 58);
+        showToast(effect.finisher ? "撃破!" : "撃破", "win");
+        sting([72, 76, 79, 84]);
+        break;
+      case "monster_fled":
+        burst(0.5, 0.46, "#9aa6b2", 16);
+        showToast("逃走", "info");
+        break;
+      case "retreat":
+        showToast("後退", "info");
+        break;
+      case "turn_completed":
+        burst(0.5, 0.42, "#7dd873", 70);
+        showToast("CLEAR", "win");
+        sting([72, 76, 79, 84, 88]);
+        break;
+      case "turn_blocked":
+        showToast(`未討伐 ${effect.remaining}`, "info");
+        break;
+      case "ally_summon":
+        showToast("仲間参戦", "info");
+        sting([64, 67, 71]);
+        break;
+      case "ally_return":
+        showToast("仲間帰還", "info");
+        break;
+      case "compact_pre":
+        showToast("記憶が霞む…", "info");
+        break;
+      case "compact_post":
+        showToast("霧が晴れた", "info");
+        break;
+      case "hold":
+        showToast("!", "info");
+        break;
+      default:
+        break;
     }
   }
+}
+
+function showToast(text, kind) {
+  if (!toast || !text) return;
+  const item = document.createElement("div");
+  item.className = `toast-item toast-${kind || "info"}`;
+  item.textContent = text;
+  toast.appendChild(item);
+  requestAnimationFrame(() => item.classList.add("in"));
+  window.setTimeout(() => item.classList.add("out"), 1100);
+  window.setTimeout(() => item.remove(), 1500);
+  while (toast.children.length > 4) toast.removeChild(toast.firstChild);
+}
+
+let flashFrames = 0;
+let flashColor = "#ffffff";
+function flash(color) {
+  flashColor = color || "#ffffff";
+  flashFrames = 8;
 }
 
 function resize() {
@@ -237,6 +345,15 @@ function draw() {
   resize();
   const rect = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
+
+  if (flashFrames > 0) {
+    ctx.globalAlpha = Math.min(0.35, flashFrames / 24);
+    ctx.fillStyle = flashColor;
+    ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.globalAlpha = 1;
+    flashFrames -= 1;
+  }
+
   particles = particles.filter((particle) => particle.life > 0);
 
   for (const particle of particles) {

@@ -1,24 +1,36 @@
+// TODO 項目＝モンスター モデル。設計の正典は docs/design-todo-rpg.md。
+// この reducer は純粋関数（I/O なし）: reduceHookEvent(prev, event) -> { state, effects, normalized }。
+
 const MONSTER_CATALOG = [
-  { name: "Slime", hp: 72, element: "syntax", sprite: "slime" },
-  { name: "Goblin", hp: 96, element: "runtime", sprite: "goblin" },
-  { name: "Orc", hp: 124, element: "build", sprite: "orc" },
-  { name: "Ogre", hp: 156, element: "logic", sprite: "ogre" }
+  { name: "Slime", element: "syntax", sprite: "slime", hp: 72 },
+  { name: "Goblin", element: "runtime", sprite: "goblin", hp: 96 },
+  { name: "Orc", element: "build", sprite: "orc", hp: 124 },
+  { name: "Ogre", element: "logic", sprite: "ogre", hp: 156 }
 ];
 
 const MAX_LOG = 80;
+const NORMAL_DAMAGE = 8; // PreToolUse 通常攻撃
+const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃
+const HP_FLOOR = 1; // HP は演出のみ。攻撃ではここまでしか減らない（殺せない）
+
+// プロバイダ別 TODO ツール（docs §6 / §7 で実機確認済み）。
+const TODO_TOOLS = {
+  TodoWrite: "todos", // Claude（フィールド名は仮定・要確認）
+  update_plan: "plan" // Codex（実機検証済み）
+};
 
 export function createInitialState() {
   return {
     active: false,
-    phase: "idle",
+    phase: "idle", // idle | field | battle | complete
     turn: 0,
-    progress: 0,
-    steps: 0,
-    errorsFound: 0,
-    errorsDefeated: 0,
-    monsters: [],
+    currentTrack: "field", // field | adventure | battle
+    monsters: [], // 現役名簿: pending + in_progress（TODO 由来）
     defeated: [],
-    currentTrack: "field",
+    steps: 0,
+    attacks: 0,
+    spawned: 0,
+    defeatedCount: 0,
     lastEvent: null,
     log: []
   };
@@ -26,47 +38,259 @@ export function createInitialState() {
 
 export function reduceHookEvent(previousState, hookEvent) {
   const state = cloneState(previousState);
-  const normalized = normalizeHookEvent(hookEvent);
+  const event = normalizeHookEvent(hookEvent);
   const effects = [];
 
-  state.lastEvent = normalized;
+  state.lastEvent = event;
 
-  switch (normalized.event) {
+  switch (event.event) {
+    case "SessionStart":
+      townReset(state, event, effects);
+      break;
     case "UserPromptSubmit":
-      startTurn(state, normalized, effects);
+      beginTurn(state, event, effects);
       break;
     case "PreToolUse":
+      normalAttack(state, event, effects);
+      break;
     case "PermissionRequest":
-      stepAdventure(state, normalized, effects);
+      hold(state, event, effects);
+      break;
+    case "PostToolUse":
+      if (event.todoItems) {
+        reconcileRoster(state, event, effects);
+      } else if (detectFailure(event)) {
+        counter(state, event, effects);
+      } else {
+        skillAttack(state, event, effects);
+      }
       break;
     case "PostToolUseFailure":
     case "StopFailure":
     case "PermissionDenied":
-      spawnMonster(state, normalized, effects);
+      counter(state, event, effects);
       break;
-    case "PostToolUse":
-      if (detectFailure(normalized.raw, normalized.event)) {
-        spawnMonster(state, normalized, effects);
-      } else {
-        stepAdventure(state, normalized, effects, { successfulTool: true });
-      }
+    case "SubagentStart":
+      ally(state, event, effects, "ally_summon");
       break;
-    case "TaskCreated":
-    case "TaskCompleted":
-      stepAdventure(state, normalized, effects, { taskEvent: true });
+    case "SubagentStop":
+      ally(state, event, effects, "ally_return");
+      break;
+    case "PreCompact":
+      ambient(state, event, effects, "compact_pre");
+      break;
+    case "PostCompact":
+      ambient(state, event, effects, "compact_post");
       break;
     case "Stop":
     case "SessionEnd":
-      finishTurn(state, normalized, effects);
+      finishTurn(state, event, effects);
       break;
     default:
-      stepAdventure(state, normalized, effects, { ambient: true });
+      step(state, event, effects);
       break;
   }
 
+  if (state.active) {
+    state.phase = hasEngaged(state) ? "battle" : "field";
+  }
   state.currentTrack = trackForState(state);
   state.log = state.log.slice(-MAX_LOG);
-  return { state, effects, normalized };
+  return { state, effects, normalized: event };
+}
+
+// --- 名簿（TODO 由来のモンスター）---
+
+function reconcileRoster(state, event, effects) {
+  ensureActive(state, event, effects);
+
+  const seen = new Set();
+  for (const item of event.todoItems) {
+    const key = item.label.toLowerCase();
+    seen.add(key);
+
+    let monster = state.monsters.find((m) => m.key === key);
+
+    if (item.status === "completed") {
+      if (monster) finishMonster(state, monster, event, effects); // トドメ（残HP無視）
+      continue;
+    }
+
+    if (!monster && !state.defeated.some((d) => d.key === key)) {
+      monster = spawnMonster(state, item, event, effects);
+    }
+    if (monster && monster.status !== item.status) {
+      monster.status = item.status;
+      if (item.status === "in_progress") {
+        pushLog(state, "engage", monster.label, event);
+        effects.push({ type: "engage", monsterId: monster.id });
+      } else {
+        pushLog(state, "retreat", monster.label, event);
+        effects.push({ type: "retreat", monsterId: monster.id });
+      }
+    }
+  }
+
+  // スナップショットから消えた（completed でない）項目＝戦線離脱
+  for (const monster of [...state.monsters]) {
+    if (!seen.has(monster.key)) {
+      removeMonster(state, monster);
+      pushLog(state, "monster_fled", monster.label, event);
+      effects.push({ type: "monster_fled", monsterId: monster.id });
+    }
+  }
+}
+
+function spawnMonster(state, item, event, effects) {
+  const template = chooseMonster(item.label);
+  const monster = {
+    id: `monster-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key: item.label.toLowerCase(),
+    label: item.label,
+    status: item.status,
+    name: template.name,
+    element: template.element,
+    sprite: template.sprite,
+    maxHp: template.hp,
+    hp: template.hp,
+    dying: false,
+    appearedAt: event.at
+  };
+  state.monsters.push(monster);
+  state.spawned += 1;
+  pushLog(state, "monster_appeared", monster.label, event);
+  effects.push({ type: "monster_appeared", monster });
+  return monster;
+}
+
+function finishMonster(state, monster, event, effects) {
+  removeMonster(state, monster);
+  state.defeated.push({ ...monster, hp: 0, dying: false, defeatedAt: event.at });
+  state.defeatedCount += 1;
+  pushLog(state, "monster_defeated", monster.label, event);
+  effects.push({ type: "monster_defeated", monsterId: monster.id, finisher: true });
+}
+
+function removeMonster(state, monster) {
+  state.monsters = state.monsters.filter((m) => m.id !== monster.id);
+}
+
+// --- 攻撃（HP は演出専用、殺傷力なし）---
+
+function normalAttack(state, event, effects) {
+  ensureActive(state, event, effects);
+  state.steps += 1;
+  const target = currentTarget(state);
+  if (target) {
+    damage(state, target, NORMAL_DAMAGE, "normal", "", event, effects);
+  } else {
+    step(state, event, effects);
+  }
+}
+
+function skillAttack(state, event, effects) {
+  ensureActive(state, event, effects);
+  state.attacks += 1;
+  const target = currentTarget(state);
+  const skill = event.toolName || "技";
+  if (target) {
+    damage(state, target, SKILL_DAMAGE, "skill", skill, event, effects);
+  } else {
+    step(state, event, effects);
+  }
+}
+
+function damage(state, monster, amount, kind, skill, event, effects) {
+  if (monster.dying) {
+    // 瀕死：これ以上削れない。よろける→立ち上がる（ヨーヨー禁止）
+    pushLog(state, "stagger", monster.label, event);
+    effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: 0, stagger: true });
+    return;
+  }
+  const applied = Math.max(0, Math.min(amount, monster.hp - HP_FLOOR));
+  monster.hp -= applied;
+  effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied });
+  pushLog(state, "attack", `${skill || kind} -${applied}`, event);
+  if (monster.hp <= HP_FLOOR) {
+    monster.dying = true;
+    pushLog(state, "monster_dying", monster.label, event);
+    effects.push({ type: "monster_dying", monsterId: monster.id });
+  }
+}
+
+function counter(state, event, effects) {
+  ensureActive(state, event, effects);
+  const target = currentTarget(state);
+  pushLog(state, "counter", event.toolName || event.summary, event);
+  effects.push({ type: "counter", skill: event.toolName, monsterId: target ? target.id : null });
+}
+
+// --- フェーズ遷移 ---
+
+function townReset(state, event, effects) {
+  state.active = false;
+  state.phase = "idle";
+  pushLog(state, "session_start", "拠点に到着", event);
+  effects.push({ type: "session_start", track: "field" });
+}
+
+function beginTurn(state, event, effects) {
+  state.active = true;
+  state.turn += 1;
+  pushLog(state, "adventure_started", `Turn ${state.turn} started`, event);
+  effects.push({ type: "adventure_started", track: "adventure", turn: state.turn });
+}
+
+function ensureActive(state, event, effects) {
+  if (state.active) return;
+  state.active = true;
+  pushLog(state, "adventure_started", "冒険再開", event);
+  effects.push({ type: "adventure_started", track: "adventure", turn: state.turn });
+}
+
+function finishTurn(state, event, effects) {
+  const remaining = state.monsters.length;
+  if (remaining === 0) {
+    state.active = false;
+    state.phase = "complete";
+    pushLog(state, "turn_completed", `Turn ${state.turn} completed`, event);
+    effects.push({ type: "turn_completed", track: "field" });
+  } else {
+    state.phase = hasEngaged(state) ? "battle" : "field";
+    pushLog(state, "turn_blocked", `${remaining} monsters remain`, event);
+    effects.push({ type: "turn_blocked", remaining });
+  }
+}
+
+function hold(state, event, effects) {
+  pushLog(state, "hold", event.summary, event);
+  effects.push({ type: "hold" });
+}
+
+function ally(state, event, effects, type) {
+  ensureActive(state, event, effects);
+  pushLog(state, type, event.summary, event);
+  effects.push({ type });
+}
+
+function ambient(state, event, effects, type) {
+  pushLog(state, type, event.summary, event);
+  effects.push({ type });
+}
+
+function step(state, event, effects) {
+  pushLog(state, "step", event.summary, event);
+  effects.push({ type: "step" });
+}
+
+// --- 派生 ---
+
+function currentTarget(state) {
+  return state.monsters.find((m) => m.status === "in_progress") || null;
+}
+
+function hasEngaged(state) {
+  return state.monsters.some((m) => m.status === "in_progress");
 }
 
 function trackForState(state) {
@@ -74,6 +298,16 @@ function trackForState(state) {
   if (state.active && state.phase === "field") return "adventure";
   return "field";
 }
+
+function chooseMonster(label) {
+  const text = String(label).toLowerCase();
+  if (/build|compile|tsc|vite|webpack|rollup|bundle|deploy|ci/.test(text)) return MONSTER_CATALOG[2];
+  if (/type|logic|refactor|design|architect|test|assert|algorithm/.test(text)) return MONSTER_CATALOG[3];
+  if (/syntax|lint|format|style|doc|comment|rename/.test(text)) return MONSTER_CATALOG[0];
+  return MONSTER_CATALOG[1];
+}
+
+// --- 正規化 ---
 
 export function normalizeHookEvent(input = {}) {
   const raw = input.raw && typeof input.raw === "object" ? input.raw : {};
@@ -104,189 +338,84 @@ export function normalizeHookEvent(input = {}) {
     event,
     toolName,
     summary: trimLine(String(summary), 96),
+    todoItems: extractTodoItems(toolName, toolInput),
+    exitCode: extractExitCode(raw),
     raw
   };
 }
 
-export function detectFailure(raw = {}, event = "") {
-  if (event.endsWith("Failure")) return true;
-  if (event === "PermissionDenied") return true;
-  if (raw.error || raw.is_error || raw.isError) return true;
+// TodoWrite / update_plan の payload を [{label, status}] に正規化（docs §6）。
+function extractTodoItems(toolName, toolInput) {
+  const arrayKey = TODO_TOOLS[toolName];
+  if (!arrayKey || !toolInput || typeof toolInput !== "object") return null;
+  const arr = toolInput[arrayKey];
+  if (!Array.isArray(arr)) return null;
+
+  const items = arr
+    .map((it) => ({
+      label: String((it && (it.content ?? it.step ?? it.label ?? it.title)) || "").trim(),
+      status: normalizeStatus(it && it.status)
+    }))
+    .filter((it) => it.label);
+  return items.length ? items : null;
+}
+
+function normalizeStatus(status) {
+  const value = String(status || "").toLowerCase();
+  if (/^(completed|complete|done)$/.test(value)) return "completed";
+  if (/^(in[_-]?progress|active|running|started)$/.test(value)) return "in_progress";
+  return "pending";
+}
+
+// 失敗検知は exit code と明示的なエラーフラグのみ（旧版の単語マッチ正規表現は廃止）。
+export function detectFailure(event) {
+  const name = event.event || "";
+  if (name.endsWith("Failure")) return true;
+  if (name === "PermissionDenied") return true;
+
+  const raw = event.raw || {};
+  if (raw.error || raw.is_error || raw.isError || raw.success === false) return true;
 
   const response =
-    raw.tool_response ||
-    raw.toolResponse ||
-    raw.tool_result ||
-    raw.toolResult ||
-    raw.result ||
-    raw.output ||
-    raw.response ||
-    {};
+    raw.tool_response || raw.toolResponse || raw.tool_result || raw.result || raw.output || {};
+  if (response && typeof response === "object") {
+    if (response.error || response.is_error || response.isError || response.success === false) {
+      return true;
+    }
+  }
 
-  if (response.error || response.is_error || response.isError) return true;
-  if (response.success === false || raw.success === false) return true;
+  const code = event.exitCode;
+  return code !== null && code !== undefined && code !== 0;
+}
 
-  const exitCode = firstNumber([
+function extractExitCode(raw) {
+  const response =
+    raw.tool_response || raw.toolResponse || raw.tool_result || raw.result || raw.output || {};
+  const candidates = [
     raw.exit_code,
     raw.exitCode,
-    response.exit_code,
-    response.exitCode,
-    response.status,
+    response && response.exit_code,
+    response && response.exitCode,
+    response && response.status,
     raw.status
-  ]);
-  if (exitCode !== null && exitCode !== 0) return true;
-
-  const text = [
-    raw.stderr,
-    raw.message,
-    response.stderr,
-    response.text,
-    response.content,
-    typeof response === "string" ? response : ""
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return /\b(error|failed|failure|exception|traceback|panic|fatal)\b/i.test(text);
-}
-
-function startTurn(state, event, effects) {
-  beginTurn(state, event, effects);
-}
-
-function beginTurn(state, event, effects) {
-  state.active = true;
-  state.phase = "field";
-  state.turn += 1;
-  state.progress = 0;
-  state.steps = 0;
-  state.monsters = [];
-  pushLog(state, "adventure_started", `Turn ${state.turn} started`, event);
-  effects.push({ type: "adventure_started", track: "adventure" });
-}
-
-function stepAdventure(state, event, effects, options = {}) {
-  if (!state.active) {
-    beginTurn(state, event, effects);
+  ];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
   }
-
-  state.steps += 1;
-
-  if (state.monsters.length > 0) {
-    const baseDamage = options.successfulTool ? 28 : options.taskEvent ? 18 : 12;
-    damageMonster(state, event, baseDamage, effects);
-    return;
-  }
-
-  const progressGain = options.ambient ? 3 : options.successfulTool ? 7 : 5;
-  state.progress = Math.min(100, state.progress + progressGain);
-  state.phase = "field";
-  pushLog(state, "step", event.summary, event);
-  effects.push({ type: "step", progressGain });
+  return null;
 }
 
-function spawnMonster(state, event, effects) {
-  if (!state.active) {
-    beginTurn(state, event, effects);
-  }
-
-  const signature = monsterSignature(event);
-  const existing = state.monsters.find((monster) => monster.signature === signature);
-
-  state.phase = "battle";
-  state.errorsFound += existing ? 0 : 1;
-
-  if (existing) {
-    existing.hp = Math.min(existing.maxHp, existing.hp + 14);
-    existing.enraged = true;
-    pushLog(state, "monster_enraged", `${existing.name} resisted`, event);
-    effects.push({ type: "monster_enraged", monsterId: existing.id });
-    return;
-  }
-
-  const template = chooseMonster(event);
-  const monster = {
-    id: `monster-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    signature,
-    name: template.name,
-    element: template.element,
-    sprite: template.sprite,
-    maxHp: template.hp,
-    hp: template.hp,
-    title: buildMonsterTitle(event),
-    appearedAt: event.at,
-    enraged: false
-  };
-
-  state.monsters.push(monster);
-  pushLog(state, "monster_appeared", monster.title, event);
-  effects.push({ type: "monster_appeared", monster });
-}
-
-function damageMonster(state, event, amount, effects) {
-  const monster = state.monsters[0];
-  if (!monster) return;
-
-  monster.hp = Math.max(0, monster.hp - amount);
-  pushLog(state, "damage", `${monster.name} -${amount}`, event);
-  effects.push({ type: "damage", monsterId: monster.id, amount });
-
-  if (monster.hp === 0) {
-    state.monsters.shift();
-    state.defeated.push({ ...monster, defeatedAt: event.at });
-    state.errorsDefeated += 1;
-    pushLog(state, "monster_defeated", monster.name, event);
-    effects.push({ type: "monster_defeated", monsterId: monster.id });
-  }
-
-  if (state.monsters.length === 0) {
-    state.phase = "field";
-    state.progress = Math.min(100, state.progress + 12);
-    effects.push({ type: "field_restored", track: "adventure" });
-  } else {
-    state.phase = "battle";
-  }
-}
-
-function finishTurn(state, event, effects) {
-  if (state.monsters.length === 0) {
-    state.active = false;
-    state.phase = "complete";
-    state.progress = 100;
-    pushLog(state, "turn_completed", `Turn ${state.turn} completed`, event);
-    effects.push({ type: "turn_completed", track: "field" });
-    return;
-  }
-
-  state.phase = "battle";
-  pushLog(state, "turn_blocked", `${state.monsters.length} errors remain`, event);
-  effects.push({ type: "turn_blocked", remaining: state.monsters.length });
-}
-
-function chooseMonster(event) {
-  const text = `${event.toolName} ${event.summary}`.toLowerCase();
-  if (/build|compile|tsc|vite|webpack|rollup|npm|pnpm|yarn/.test(text)) return MONSTER_CATALOG[2];
-  if (/type|undefined|null|logic|assert|test|merge|rebase|conflict/.test(text)) return MONSTER_CATALOG[3];
-  if (/syntax|parse|lint|format/.test(text)) return MONSTER_CATALOG[0];
-  return MONSTER_CATALOG[1];
-}
-
-function buildMonsterTitle(event) {
-  const source = event.summary || event.toolName || event.event;
-  return trimLine(source.replace(/\s+/g, " "), 72);
-}
-
-function monsterSignature(event) {
-  const text = `${event.provider}:${event.toolName}:${event.summary}`.toLowerCase();
-  return text.replace(/[^a-z0-9:_-]+/g, " ").trim().slice(0, 120);
-}
+// --- ユーティリティ ---
 
 function pushLog(state, type, message, event) {
   state.log.push({
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     at: event.at,
     type,
-    message,
+    message: trimLine(String(message || ""), 96),
     provider: event.provider,
     event: event.event
   });
@@ -294,16 +423,6 @@ function pushLog(state, type, message, event) {
 
 function cloneState(state) {
   return JSON.parse(JSON.stringify(state || createInitialState()));
-}
-
-function firstNumber(values) {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) {
-      return Number(value);
-    }
-  }
-  return null;
 }
 
 function trimLine(value, max) {

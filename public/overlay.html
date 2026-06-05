@@ -26,20 +26,24 @@
       </header>
 
       <section class="stage">
+        <div id="roster" class="roster" data-active="false" aria-hidden="true"></div>
+
         <div class="hero" aria-hidden="true">
           <img id="heroImage" src="/assets/sprites/hero.png" alt="" />
         </div>
-        <div class="monster" aria-hidden="true">
+        <div id="monsterStage" class="monster" data-active="false" data-dying="false" aria-hidden="true">
           <div class="enemy-status">
             <div class="enemy-meta">
               <span id="monsterName"></span>
               <strong id="monsterHp"></strong>
             </div>
+            <div class="enemy-label" id="monsterLabel"></div>
             <div class="enemy-meter"><span id="hpFill"></span></div>
           </div>
           <img id="monsterImage" src="/assets/sprites/slime.png" alt="" />
         </div>
         <canvas id="fxCanvas" width="440" height="300"></canvas>
+        <div id="toast" class="toast" aria-hidden="true"></div>
       </section>
     </main>
     <script type="module" src="/overlay.js"></script>

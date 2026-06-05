@@ -1,14 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createInitialState, reduceHookEvent } from "../server/adventure-state.mjs";
+import { createInitialState, reduceHookEvent, detectFailure, normalizeHookEvent } from "../server/adventure-state.mjs";
 
-test("starts an adventure from user prompt", () => {
+// 設計の正典: docs/design-todo-rpg.md（TODO 項目＝モンスター モデル）
+
+function todoWrite(todos) {
+  return { provider: "claude", event: "PostToolUse", raw: { tool_name: "TodoWrite", tool_input: { todos } } };
+}
+function updatePlan(plan) {
+  return { provider: "codex", event: "PostToolUse", raw: { tool_name: "update_plan", tool_input: { plan } } };
+}
+
+test("UserPromptSubmit starts a turn in the field", () => {
   const { state, effects } = reduceHookEvent(createInitialState(), {
-    provider: "manual",
+    provider: "claude",
     event: "UserPromptSubmit",
-    raw: { prompt: "fix the test" }
+    raw: { prompt: "fix the bug" }
   });
-
   assert.equal(state.active, true);
   assert.equal(state.phase, "field");
   assert.equal(state.currentTrack, "adventure");
@@ -16,81 +24,198 @@ test("starts an adventure from user prompt", () => {
   assert.equal(effects[0].type, "adventure_started");
 });
 
-test("spawns a monster when a tool result fails", () => {
-  let result = reduceHookEvent(createInitialState(), {
-    provider: "manual",
-    event: "UserPromptSubmit",
-    raw: {}
-  });
-
-  result = reduceHookEvent(result.state, {
-    provider: "manual",
-    event: "PostToolUse",
-    raw: {
-      tool_name: "Bash",
-      tool_input: { command: "npm test" },
-      tool_response: { exit_code: 1, stderr: "Error: broken assertion" }
-    }
-  });
-
-  assert.equal(result.state.phase, "battle");
-  assert.equal(result.state.currentTrack, "battle");
-  assert.equal(result.state.monsters.length, 1);
-  assert.equal(result.effects[0].type, "monster_appeared");
+test("TodoWrite spawns monsters; in_progress becomes the battle", () => {
+  const { state } = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "audit routes", status: "in_progress" },
+      { content: "extract handlers", status: "pending" },
+      { content: "add tests", status: "pending" }
+    ])
+  );
+  assert.equal(state.monsters.length, 3);
+  assert.equal(state.phase, "battle");
+  const engaged = state.monsters.find((m) => m.status === "in_progress");
+  assert.equal(engaged.label, "audit routes");
 });
 
-test("successful steps damage and defeat monsters", () => {
-  let result = reduceHookEvent(createInitialState(), {
-    provider: "manual",
-    event: "PostToolUseFailure",
-    raw: { tool_name: "Bash", tool_input: { command: "npm run build" } }
-  });
+test("Codex update_plan drives the same model (provider parity)", () => {
+  const { state } = reduceHookEvent(
+    createInitialState(),
+    updatePlan([
+      { step: "audit routes", status: "completed" },
+      { step: "extract handlers", status: "in_progress" },
+      { step: "add tests", status: "pending" }
+    ])
+  );
+  // completed 項目はトドメ済みとして名簿に残らない
+  assert.equal(state.monsters.length, 2);
+  assert.equal(state.defeatedCount, 0); // 初出の completed はスポーン前なので撃破カウントはしない
+  assert.equal(state.monsters.find((m) => m.status === "in_progress").label, "extract handlers");
+});
+
+test("completing a TODO item is the finishing blow even with HP remaining", () => {
+  let result = reduceHookEvent(createInitialState(), todoWrite([{ content: "ship feature", status: "in_progress" }]));
+  const monster = result.state.monsters[0];
+  assert.equal(monster.hp, monster.maxHp); // 攻撃前、満タン
+
+  result = reduceHookEvent(result.state, todoWrite([{ content: "ship feature", status: "completed" }]));
+  assert.equal(result.state.monsters.length, 0);
+  assert.equal(result.state.defeatedCount, 1);
+  const finisher = result.effects.find((e) => e.type === "monster_defeated");
+  assert.equal(finisher.finisher, true);
+});
+
+test("HP cannot kill: attacks floor the monster into a dying state, only completion kills", () => {
+  let result = reduceHookEvent(createInitialState(), todoWrite([{ content: "hard task", status: "in_progress" }]));
 
   let guard = 0;
-  while (result.state.monsters.length > 0 && guard < 20) {
-    result = reduceHookEvent(result.state, {
-      provider: "manual",
-      event: "PostToolUse",
-      raw: { tool_name: "Bash", tool_response: { exit_code: 0 } }
-    });
+  while (!result.state.monsters[0].dying && guard < 100) {
+    result = reduceHookEvent(result.state, { provider: "claude", event: "PostToolUse", raw: { tool_name: "Edit" } });
     guard += 1;
   }
+  const monster = result.state.monsters[0];
+  assert.equal(monster.dying, true);
+  assert.ok(monster.hp >= 1, "HP は最低でも 1 で張り付く（殺せない）");
+  assert.equal(result.state.monsters.length, 1, "瀕死でも撃破されない");
 
-  assert.equal(result.state.monsters.length, 0);
-  assert.equal(result.state.phase, "field");
-  assert.equal(result.state.currentTrack, "adventure");
-  assert.equal(result.state.errorsDefeated, 1);
+  // さらに殴っても倒れない（ヨーヨーせず stagger）
+  const more = reduceHookEvent(result.state, { provider: "claude", event: "PostToolUse", raw: { tool_name: "Bash" } });
+  assert.equal(more.state.monsters.length, 1);
+  assert.ok(more.effects.some((e) => e.type === "attack" && e.stagger === true));
+
+  // completed で初めて撃破
+  const done = reduceHookEvent(more.state, todoWrite([{ content: "hard task", status: "completed" }]));
+  assert.equal(done.state.monsters.length, 0);
+  assert.equal(done.state.defeatedCount, 1);
 });
 
-test("turn completes only when no monsters remain", () => {
-  let result = reduceHookEvent(createInitialState(), {
-    provider: "manual",
-    event: "UserPromptSubmit",
-    raw: {}
-  });
+test("PreToolUse = normal attack, PostToolUse = skill attack named after the tool", () => {
+  let result = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
 
-  result = reduceHookEvent(result.state, { provider: "manual", event: "Stop", raw: {} });
+  result = reduceHookEvent(result.state, { provider: "claude", event: "PreToolUse", raw: { tool_name: "Grep" } });
+  const normal = result.effects.find((e) => e.type === "attack");
+  assert.equal(normal.kind, "normal");
 
-  assert.equal(result.state.active, false);
-  assert.equal(result.state.phase, "complete");
-  assert.equal(result.state.currentTrack, "field");
+  result = reduceHookEvent(result.state, { provider: "claude", event: "PostToolUse", raw: { tool_name: "Edit" } });
+  const skill = result.effects.find((e) => e.type === "attack");
+  assert.equal(skill.kind, "skill");
+  assert.equal(skill.skill, "Edit");
 });
 
-test("late tool events start a clean new turn after completion", () => {
-  let result = reduceHookEvent(createInitialState(), {
-    provider: "manual",
-    event: "UserPromptSubmit",
-    raw: {}
+test("Claude failure (PostToolUseFailure event) triggers a counterattack, not a spawn", () => {
+  let result = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
+  result = reduceHookEvent(result.state, {
+    provider: "claude",
+    event: "PostToolUseFailure",
+    raw: { tool_name: "Bash", tool_input: { command: "npm test" } }
   });
-  result = reduceHookEvent(result.state, { provider: "manual", event: "Stop", raw: {} });
+  assert.equal(result.state.monsters.length, 1, "失敗で新モンスターは湧かない");
+  assert.ok(result.effects.some((e) => e.type === "counter"));
+});
+
+test("a PostToolUse payload that carries a structured non-zero exit code triggers a counterattack", () => {
+  // exit code を構造化フィールドで持つ payload（manual/合成、または将来そうなった場合）にのみ効く。
+  let result = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
   result = reduceHookEvent(result.state, {
     provider: "manual",
     event: "PostToolUse",
-    raw: { tool_name: "Bash", tool_response: { exit_code: 0 } }
+    raw: { tool_name: "Bash", tool_input: { command: "npm test" }, tool_response: { exit_code: 1 } }
   });
+  assert.ok(result.effects.some((e) => e.type === "counter"));
+});
 
-  assert.equal(result.state.turn, 2);
-  assert.equal(result.state.progress, 7);
-  assert.equal(result.state.steps, 1);
+test("REAL Codex failure payloads carry no outcome, so failure is NOT detected (verified limitation, docs §7.2)", () => {
+  // 実機検証: Codex の PostToolUse は tool_response が出力文字列のみ。exit_code も status も無い。
+  // exit 7 でも tool_response は "BYE\n"。成功と失敗が区別できない＝検知不能。
+  const codexFail = normalizeHookEvent({
+    provider: "codex",
+    event: "PostToolUse",
+    raw: { tool_name: "Bash", tool_input: { command: "sh -c 'echo BYE; exit 7'" }, tool_response: "BYE\n" }
+  });
+  assert.equal(detectFailure(codexFail), false);
+
+  let result = reduceHookEvent(createInitialState(), updatePlan([{ step: "task", status: "in_progress" }]));
+  result = reduceHookEvent(result.state, {
+    provider: "codex",
+    event: "PostToolUse",
+    raw: { tool_name: "Bash", tool_input: { command: "sh -c 'echo BYE; exit 7'" }, tool_response: "BYE\n" }
+  });
+  // 失敗を検知できないので counter ではなく skill 攻撃（成功扱い）になる
+  assert.ok(result.effects.some((e) => e.type === "attack" && e.kind === "skill"));
+  assert.ok(!result.effects.some((e) => e.type === "counter"));
+});
+
+test("benign output containing the word 'error' is NOT a failure (false-positive fix)", () => {
+  // 旧 detectFailure の単語マッチ廃止。exit 0 の成功は failure 扱いしない。
+  const event = normalizeHookEvent({
+    provider: "claude",
+    event: "PostToolUse",
+    raw: { tool_name: "Read", tool_response: { exit_code: 0, content: "Error handling is documented in errors.md" } }
+  });
+  assert.equal(detectFailure(event), false);
+
+  const result = reduceHookEvent(
+    reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }])).state,
+    {
+      provider: "claude",
+      event: "PostToolUse",
+      raw: { tool_name: "Read", tool_response: { exit_code: 0, content: "Error: this is just file text" } }
+    }
+  );
+  // counter ではなく skill 攻撃になる
+  assert.ok(result.effects.some((e) => e.type === "attack" && e.kind === "skill"));
+  assert.ok(!result.effects.some((e) => e.type === "counter"));
+});
+
+test("Stop completes only when no monsters remain", () => {
+  let result = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
+
+  let blocked = reduceHookEvent(result.state, { provider: "claude", event: "Stop", raw: {} });
+  assert.equal(blocked.state.phase, "battle");
+  assert.ok(blocked.effects.some((e) => e.type === "turn_blocked"));
+
+  const cleared = reduceHookEvent(
+    reduceHookEvent(result.state, todoWrite([{ content: "task", status: "completed" }])).state,
+    { provider: "claude", event: "Stop", raw: {} }
+  );
+  assert.equal(cleared.state.active, false);
+  assert.equal(cleared.state.phase, "complete");
+});
+
+test("an item removed from the plan (not completed) makes the monster flee", () => {
+  let result = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "keep", status: "in_progress" },
+      { content: "drop", status: "pending" }
+    ])
+  );
+  assert.equal(result.state.monsters.length, 2);
+
+  result = reduceHookEvent(result.state, todoWrite([{ content: "keep", status: "in_progress" }]));
+  assert.equal(result.state.monsters.length, 1);
+  assert.ok(result.effects.some((e) => e.type === "monster_fled"));
+});
+
+test("in_progress -> pending makes the monster retreat (back to exploration)", () => {
+  let result = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
+  assert.equal(result.state.phase, "battle");
+
+  result = reduceHookEvent(result.state, todoWrite([{ content: "task", status: "pending" }]));
   assert.equal(result.state.phase, "field");
+  assert.ok(result.effects.some((e) => e.type === "retreat"));
+});
+
+test("no-TODO session stays in peaceful exploration and completes, never entering battle (docs §2 policy = accept)", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  assert.equal(r.state.phase, "field");
+  r = reduceHookEvent(r.state, { provider: "claude", event: "PreToolUse", raw: { tool_name: "Read" } });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "PostToolUse", raw: { tool_name: "Read" } });
+  assert.equal(r.state.monsters.length, 0);
+  assert.equal(r.state.phase, "field"); // 戦闘にならず探検のまま
+  assert.ok(r.effects.some((e) => e.type === "step"));
+  r = reduceHookEvent(r.state, { provider: "claude", event: "Stop", raw: {} });
+  assert.equal(r.state.phase, "complete");
+  assert.equal(r.state.active, false);
 });
