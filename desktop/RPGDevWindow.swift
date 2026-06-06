@@ -9,6 +9,7 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
     private var stageView: NSView?
     private let designSize = NSSize(width: 1024, height: 768)
     private var players: [String: AVPlayer] = [:]
+    private var sfxPlayers: [String: AVAudioPlayer] = [:]
     private var loopObservers: [NSObjectProtocol] = []
     private var audioEnabled = false
     private var activeTrack = "silence"
@@ -142,6 +143,10 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
             audioEnabled = enabled
         }
 
+        if let sfx = body["sfx"] as? String {
+            playSfx(name: sfx)
+        }
+
         if audioEnabled {
             play(track: activeTrack)
         } else {
@@ -150,7 +155,15 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
     }
 
     private func prepareAudioPlayers(baseUrl: String) {
-        let urls = ["field", "adventure", "battle"]
+        let urls = [
+            "field",
+            "adventure",
+            "battle",
+            "dungeon-adventure",
+            "dungeon-battle",
+            "castle-adventure",
+            "castle-battle"
+        ]
 
         for name in urls {
             guard let url = audioUrl(name: name, baseUrl: baseUrl) else { continue }
@@ -168,6 +181,13 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
                 }
                 loopObservers.append(observer)
             }
+        }
+
+        for name in ["monster-appear", "monster-defeat"] {
+            guard let url = audioUrl(name: name, baseUrl: baseUrl),
+                  let player = try? AVAudioPlayer(contentsOf: url) else { continue }
+            player.prepareToPlay()
+            sfxPlayers[name] = player
         }
     }
 
@@ -200,8 +220,16 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
             }
         }
 
-        selectedPlayer.volume = track == "field" ? 0.68 : 0.74
+        selectedPlayer.volume = track == "dungeon-adventure" ? 0.86 : track.contains("battle") ? 0.74 : track.contains("adventure") ? 0.72 : 0.68
         selectedPlayer.play()
+    }
+
+    private func playSfx(name: String) {
+        guard let player = sfxPlayers[name] else { return }
+        player.stop()
+        player.currentTime = 0
+        player.volume = 1.0
+        player.play()
     }
 
     private func stopAllAudio() {

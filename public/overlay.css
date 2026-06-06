@@ -202,6 +202,21 @@ body[data-phase="battle"] .stage {
   image-rendering: pixelated;
 }
 
+.monster img {
+  position: relative;
+  z-index: 1;
+  transform: scale(var(--monster-sprite-scale, 1));
+  transform-origin: center center;
+}
+
+.monster[data-sprite="goblin"] {
+  --monster-sprite-scale: 0.8;
+}
+
+.monster[data-sprite="slime"] {
+  --monster-sprite-scale: 0.5;
+}
+
 body[data-phase="idle"] .hero,
 body[data-phase="complete"] .hero {
   left: 34%;
@@ -225,11 +240,41 @@ body[data-phase="complete"] .hero {
   filter: drop-shadow(0 13px 9px rgba(0, 0, 0, 0.42));
 }
 
+.monster::before,
+.monster::after {
+  position: absolute;
+  inset: -16% -18%;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0;
+}
+
+.monster::before {
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at center, rgba(226, 255, 205, 0.58) 0 11%, rgba(117, 220, 179, 0.32) 12% 18%, transparent 20%),
+    conic-gradient(from 18deg, transparent 0 13%, rgba(135, 255, 215, 0.64) 15% 19%, transparent 21% 36%, rgba(255, 221, 128, 0.72) 38% 43%, transparent 45% 61%, rgba(160, 128, 255, 0.62) 64% 69%, transparent 71% 100%);
+  filter: blur(0.5px) drop-shadow(0 0 17px rgba(128, 255, 215, 0.54));
+  transform: scale(0.42) rotate(-26deg);
+}
+
+.monster::after {
+  background:
+    radial-gradient(circle at 24% 66%, rgba(226, 232, 211, 0.44) 0 7%, transparent 15%),
+    radial-gradient(circle at 37% 29%, rgba(189, 171, 255, 0.38) 0 6%, transparent 14%),
+    radial-gradient(circle at 63% 72%, rgba(165, 240, 211, 0.36) 0 8%, transparent 16%),
+    radial-gradient(circle at 78% 34%, rgba(255, 217, 126, 0.34) 0 5%, transparent 13%);
+  filter: blur(5px);
+  transform: translateY(14px) scale(0.72);
+}
+
 .enemy-status {
   position: absolute;
   left: 50%;
   top: -18px;
-  display: flex;
+  z-index: 2;
+  display: none;
   justify-content: center;
   transform: translateX(-50%);
   filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.48));
@@ -255,6 +300,192 @@ body[data-phase="battle"] .monster {
   opacity: 1;
   transform: translate(-50%, -50%) scale(0.8); /* モンスターを 2 割縮小 */
   animation: monsterBattleIdle 0.9s steps(2) infinite;
+}
+
+#monsterStage.monster[data-action="appear"] {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(0.8);
+  animation: monsterAppear 0.64s cubic-bezier(0.18, 0.86, 0.26, 1), monsterBattleIdle 0.9s steps(2) 0.64s infinite;
+}
+
+#monsterStage.monster[data-action="appear"]::before {
+  animation: monsterPortalOpen 0.64s ease-out;
+}
+
+#monsterStage.monster[data-action="appear"]::after {
+  animation: monsterArrivalSmoke 0.68s ease-out;
+}
+
+#monsterStage.monster[data-action="defeat"] {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -50%) scale(0.8);
+  animation: monsterDefeat 0.58s cubic-bezier(0.3, 0, 0.22, 1) forwards;
+}
+
+#monsterStage.monster[data-action="defeat"]::before {
+  animation: monsterDefeatFlash 0.58s ease-out forwards;
+}
+
+#monsterStage.monster[data-action="defeat"]::after {
+  animation: monsterDefeatShards 0.58s steps(4, end) forwards;
+}
+
+.monster-impact {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 6;
+  width: 66%;
+  height: 59%;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.54);
+  transform-origin: center center;
+  will-change: opacity, transform, filter;
+}
+
+.monster-impact::before,
+.monster-impact::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.impact-fire {
+  border-radius: 48% 48% 42% 42%;
+  background:
+    radial-gradient(ellipse at 50% 72%, rgba(255, 245, 196, 0.95) 0 12%, transparent 26%),
+    conic-gradient(from -28deg at 50% 60%, transparent 0 7%, rgba(255, 236, 128, 0.96) 8% 14%, rgba(255, 92, 32, 0.88) 17% 23%, transparent 26% 35%, rgba(255, 190, 50, 0.94) 38% 47%, rgba(255, 55, 32, 0.86) 50% 57%, transparent 60% 69%, rgba(255, 222, 78, 0.92) 72% 79%, rgba(255, 67, 30, 0.84) 82% 88%, transparent 92% 100%);
+  filter:
+    blur(0.2px)
+    drop-shadow(0 0 16px rgba(255, 56, 24, 0.95))
+    drop-shadow(0 0 34px rgba(255, 156, 36, 0.82));
+  animation: monsterImpactFire 0.74s cubic-bezier(0.16, 0.82, 0.22, 1) forwards;
+}
+
+.impact-fire::before {
+  inset: 5% 13% 2%;
+  border-radius: 46% 46% 38% 38%;
+  background:
+    radial-gradient(ellipse at 24% 78%, rgba(255, 248, 198, 0.92) 0 8%, transparent 21%),
+    radial-gradient(ellipse at 48% 52%, rgba(255, 218, 78, 0.9) 0 9%, transparent 24%),
+    radial-gradient(ellipse at 73% 70%, rgba(255, 113, 42, 0.86) 0 11%, transparent 26%),
+    linear-gradient(0deg, rgba(255, 46, 24, 0.72), transparent 68%);
+  transform-origin: center bottom;
+  animation: monsterImpactFireTongues 0.74s ease-out forwards;
+}
+
+.impact-fire::after {
+  inset: 18% 8% 6%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 18% 76%, rgba(255, 206, 74, 0.86) 0 4%, transparent 9%),
+    radial-gradient(circle at 34% 35%, rgba(255, 88, 28, 0.9) 0 5%, transparent 11%),
+    radial-gradient(circle at 64% 27%, rgba(255, 238, 128, 0.86) 0 4%, transparent 10%),
+    radial-gradient(circle at 82% 68%, rgba(255, 70, 24, 0.78) 0 6%, transparent 13%);
+  animation: monsterImpactSparks 0.74s ease-out forwards;
+}
+
+.impact-earth {
+  background:
+    radial-gradient(ellipse at 50% 72%, rgba(91, 52, 24, 0.84) 0 12%, rgba(153, 114, 58, 0.62) 13% 24%, transparent 42%),
+    radial-gradient(ellipse at 50% 56%, rgba(255, 229, 146, 0.7) 0 7%, transparent 18%);
+  filter:
+    drop-shadow(0 0 14px rgba(255, 204, 105, 0.68))
+    drop-shadow(0 12px 10px rgba(0, 0, 0, 0.36));
+  animation: monsterImpactEarth 0.78s cubic-bezier(0.12, 0.78, 0.18, 1) forwards;
+}
+
+.impact-earth::before {
+  inset: 10% 8% 0;
+  background:
+    radial-gradient(circle at 17% 60%, #6c4327 0 5%, transparent 5.5%),
+    radial-gradient(circle at 31% 30%, #c18a45 0 7%, transparent 7.5%),
+    radial-gradient(circle at 48% 70%, #8e5b2f 0 9%, transparent 9.5%),
+    radial-gradient(circle at 64% 38%, #d7aa65 0 6%, transparent 6.5%),
+    radial-gradient(circle at 81% 62%, #76502f 0 8%, transparent 8.5%);
+  filter:
+    drop-shadow(-16px -22px 0 rgba(151, 98, 50, 0.92))
+    drop-shadow(19px -18px 0 rgba(214, 164, 84, 0.86))
+    drop-shadow(-24px 18px 0 rgba(91, 61, 35, 0.88))
+    drop-shadow(25px 16px 0 rgba(120, 84, 45, 0.88));
+  animation: monsterImpactRocks 0.78s steps(4, end) forwards;
+}
+
+.impact-earth::after {
+  inset: 26% 7% 10%;
+  border: 10px solid rgba(238, 197, 110, 0.78);
+  border-right-color: rgba(111, 82, 47, 0.48);
+  border-bottom-color: rgba(111, 82, 47, 0.38);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 18px rgba(255, 231, 158, 0.44),
+    0 0 22px rgba(255, 206, 102, 0.52);
+  animation: monsterImpactShockRing 0.78s ease-out forwards;
+}
+
+.impact-wind {
+  background:
+    linear-gradient(128deg, transparent 10%, rgba(232, 255, 249, 0.96) 13% 17%, rgba(110, 255, 224, 0.72) 18% 23%, transparent 26%),
+    linear-gradient(148deg, transparent 24%, rgba(255, 255, 255, 0.92) 28% 31%, rgba(148, 241, 255, 0.68) 32% 36%, transparent 40%),
+    linear-gradient(116deg, transparent 47%, rgba(223, 255, 209, 0.96) 51% 54%, rgba(77, 222, 255, 0.62) 55% 60%, transparent 64%);
+  filter:
+    drop-shadow(0 0 12px rgba(196, 255, 226, 0.92))
+    drop-shadow(0 0 28px rgba(93, 223, 255, 0.66));
+  animation: monsterImpactWind 0.66s ease-out forwards;
+}
+
+.impact-wind::before {
+  inset: 11% 0;
+  border: 5px solid rgba(210, 255, 236, 0.72);
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  transform: rotate(-24deg);
+  animation: monsterImpactWindRing 0.66s ease-out forwards;
+}
+
+.impact-wind::after {
+  inset: 3% 8%;
+  background:
+    linear-gradient(35deg, transparent 37%, rgba(255, 255, 255, 0.95) 39% 42%, transparent 45%),
+    linear-gradient(-36deg, transparent 42%, rgba(178, 255, 222, 0.88) 45% 48%, transparent 51%),
+    linear-gradient(18deg, transparent 57%, rgba(120, 236, 255, 0.76) 60% 63%, transparent 66%);
+  animation: monsterImpactWindCross 0.66s ease-out forwards;
+}
+
+.impact-water {
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 50% 58%, rgba(235, 255, 255, 0.94) 0 9%, rgba(99, 227, 255, 0.78) 10% 20%, transparent 42%),
+    radial-gradient(ellipse at 50% 73%, rgba(49, 136, 255, 0.48) 0 12%, transparent 36%);
+  filter:
+    drop-shadow(0 0 15px rgba(103, 221, 255, 0.98))
+    drop-shadow(0 0 32px rgba(83, 131, 255, 0.66));
+  animation: monsterImpactWater 0.76s cubic-bezier(0.12, 0.82, 0.2, 1) forwards;
+}
+
+.impact-water::before {
+  inset: 22% 6% 13%;
+  border: 8px solid rgba(208, 252, 255, 0.82);
+  border-top-color: rgba(68, 220, 255, 0.46);
+  border-left-color: rgba(72, 142, 255, 0.4);
+  border-radius: 50%;
+  animation: monsterImpactWaterRing 0.76s ease-out forwards;
+}
+
+.impact-water::after {
+  inset: 0 4%;
+  background:
+    radial-gradient(circle at 16% 73%, rgba(228, 255, 255, 0.98) 0 4%, transparent 8%),
+    radial-gradient(circle at 29% 29%, rgba(88, 225, 255, 0.94) 0 5%, transparent 10%),
+    radial-gradient(circle at 47% 16%, rgba(228, 255, 255, 0.9) 0 4%, transparent 9%),
+    radial-gradient(circle at 67% 31%, rgba(96, 149, 255, 0.84) 0 6%, transparent 12%),
+    radial-gradient(circle at 84% 69%, rgba(211, 252, 255, 0.98) 0 5%, transparent 11%),
+    radial-gradient(circle at 53% 86%, rgba(67, 213, 255, 0.82) 0 5%, transparent 10%);
+  animation: monsterImpactDroplets 0.76s ease-out forwards;
 }
 
 body[data-phase="battle"] .hero {
@@ -319,6 +550,363 @@ body[data-phase="battle"] .hero {
   }
   50% {
     translate: 0 -5px;
+  }
+}
+
+@keyframes monsterAppear {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.34) rotate(-5deg);
+    filter:
+      brightness(2.4)
+      saturate(0.7)
+      blur(3px)
+      drop-shadow(0 0 26px rgba(147, 255, 215, 0.92));
+  }
+  38% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.88) rotate(2deg);
+    filter:
+      brightness(1.8)
+      saturate(1.35)
+      blur(0)
+      drop-shadow(0 0 21px rgba(255, 226, 134, 0.82));
+  }
+  62% {
+    transform: translate(-50%, -50%) scale(0.76) rotate(-1deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.8) rotate(0deg);
+    filter: drop-shadow(0 13px 9px rgba(0, 0, 0, 0.42));
+  }
+}
+
+@keyframes monsterPortalOpen {
+  0% {
+    opacity: 0;
+    transform: scale(0.22) rotate(-46deg);
+  }
+  28% {
+    opacity: 0.98;
+    transform: scale(0.96) rotate(14deg);
+  }
+  66% {
+    opacity: 0.74;
+    transform: scale(1.12) rotate(42deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.34) rotate(72deg);
+  }
+}
+
+@keyframes monsterArrivalSmoke {
+  0% {
+    opacity: 0;
+    transform: translateY(22px) scale(0.52);
+  }
+  34% {
+    opacity: 0.84;
+    transform: translateY(6px) scale(0.92);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-18px) scale(1.32);
+  }
+}
+
+@keyframes monsterDefeat {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.8) rotate(0deg);
+    filter:
+      brightness(1.12)
+      saturate(1.18)
+      drop-shadow(0 13px 9px rgba(0, 0, 0, 0.42));
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.86) rotate(-2deg);
+    filter:
+      brightness(2.55)
+      saturate(0.65)
+      drop-shadow(0 0 28px rgba(255, 255, 255, 0.92));
+  }
+  42% {
+    opacity: 0.78;
+    transform: translate(-50%, -53%) scale(0.74, 0.86) rotate(5deg);
+    filter:
+      brightness(1.72)
+      saturate(1.45)
+      contrast(1.3)
+      drop-shadow(0 0 18px rgba(183, 236, 255, 0.84));
+  }
+  70% {
+    opacity: 0.38;
+    transform: translate(-50%, -58%) scale(0.9, 0.56) rotate(-7deg);
+    filter:
+      brightness(1.28)
+      saturate(0.72)
+      blur(1px)
+      drop-shadow(0 0 16px rgba(255, 217, 132, 0.58));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -64%) scale(1.1, 0.28) rotate(10deg);
+    filter:
+      brightness(1.8)
+      saturate(0)
+      blur(5px)
+      drop-shadow(0 0 0 rgba(0, 0, 0, 0));
+  }
+}
+
+@keyframes monsterDefeatFlash {
+  0% {
+    opacity: 0;
+    transform: scale(0.64) rotate(0deg);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1.08) rotate(20deg);
+  }
+  48% {
+    opacity: 0.42;
+    transform: scale(1.28) rotate(74deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.55) rotate(128deg);
+  }
+}
+
+@keyframes monsterDefeatShards {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.72);
+    filter: blur(1px);
+  }
+  20% {
+    opacity: 0.9;
+    transform: translateY(-6px) scale(0.98);
+  }
+  58% {
+    opacity: 0.62;
+    transform: translateY(-24px) scale(1.16);
+    filter: blur(2px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-46px) scale(1.34);
+    filter: blur(5px);
+  }
+}
+
+@keyframes monsterImpactFire {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -45%) scale(0.28) rotate(-8deg);
+  }
+  16% {
+    opacity: 1;
+  }
+  48% {
+    opacity: 1;
+    transform: translate(-50%, -53%) scale(1.08) rotate(3deg);
+    filter:
+      brightness(1.18)
+      blur(0.1px)
+      drop-shadow(0 0 20px rgba(255, 56, 24, 1))
+      drop-shadow(0 0 42px rgba(255, 156, 36, 0.9));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -64%) scale(1.32) rotate(9deg);
+    filter:
+      brightness(1.35)
+      blur(2px)
+      drop-shadow(0 0 20px rgba(255, 92, 24, 0.36));
+  }
+}
+
+@keyframes monsterImpactFireTongues {
+  0% {
+    opacity: 0;
+    transform: scale(0.52, 0.2) translateY(24px);
+  }
+  28% {
+    opacity: 1;
+    transform: scale(0.94, 1.08) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.12, 1.44) translateY(-28px);
+  }
+}
+
+@keyframes monsterImpactSparks {
+  0% {
+    opacity: 0;
+    transform: scale(0.54);
+  }
+  22% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.52) rotate(28deg);
+  }
+}
+
+@keyframes monsterImpactEarth {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -45%) scale(0.28);
+  }
+  14% {
+    opacity: 1;
+  }
+  44% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -54%) scale(1.32);
+    filter:
+      blur(2px)
+      drop-shadow(0 0 10px rgba(255, 204, 105, 0.32));
+  }
+}
+
+@keyframes monsterImpactRocks {
+  0% {
+    opacity: 0;
+    transform: translateY(28px) scale(0.42);
+  }
+  18% {
+    opacity: 1;
+  }
+  58% {
+    opacity: 1;
+    transform: translateY(-16px) scale(1.14) rotate(-8deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-38px) scale(1.36) rotate(14deg);
+  }
+}
+
+@keyframes monsterImpactShockRing {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  22% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+
+@keyframes monsterImpactWind {
+  0% {
+    opacity: 0;
+    transform: translate(-64%, -46%) scale(0.3) rotate(-15deg);
+  }
+  12% {
+    opacity: 1;
+  }
+  58% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.1) rotate(-7deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-36%, -56%) scale(1.34) rotate(8deg);
+    filter:
+      blur(1.4px)
+      drop-shadow(0 0 14px rgba(196, 255, 226, 0.42));
+  }
+}
+
+@keyframes monsterImpactWindRing {
+  0% {
+    opacity: 0;
+    transform: scale(0.28) rotate(-48deg);
+  }
+  22% {
+    opacity: 0.96;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.42) rotate(86deg);
+  }
+}
+
+@keyframes monsterImpactWindCross {
+  0% {
+    opacity: 0;
+    transform: translate(-30px, 20px) scale(0.42);
+  }
+  24% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(34px, -24px) scale(1.28);
+  }
+}
+
+@keyframes monsterImpactWater {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -44%) scale(0.22);
+  }
+  15% {
+    opacity: 1;
+  }
+  48% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -56%) scale(1.34);
+    filter:
+      blur(1.5px)
+      drop-shadow(0 0 16px rgba(103, 221, 255, 0.46));
+  }
+}
+
+@keyframes monsterImpactWaterRing {
+  0% {
+    opacity: 0;
+    transform: scale(0.24);
+  }
+  24% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.48);
+  }
+}
+
+@keyframes monsterImpactDroplets {
+  0% {
+    opacity: 0;
+    transform: scale(0.42);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.62) translateY(-18px);
   }
 }
 
@@ -518,6 +1106,10 @@ body[data-phase="battle"] .hero {
   visibility: hidden;
 }
 
+#monsterStage[data-active="false"][data-action="defeat"] {
+  visibility: visible;
+}
+
 /* TODO 本文ラベル */
 .enemy-label {
   margin-top: 2px;
@@ -637,7 +1229,7 @@ body[data-phase="battle"] .hero {
 .slash-mark {
   position: absolute;
   left: 50%;
-  top: 39%;
+  top: 48%;
   z-index: 11;
   width: min(58vw, 230px);
   height: 80px;
@@ -657,10 +1249,10 @@ body[data-phase="battle"] .hero {
   top: 34px;
   height: 13px;
   border-radius: 999px;
-  background: linear-gradient(90deg, transparent, #ffffff 18%, #fff0a2 48%, #7fe0ff 76%, transparent);
+  background: linear-gradient(90deg, transparent, #fffdf0 18%, #ffe98a 48%, #f0b73a 76%, transparent);
   box-shadow:
     0 0 18px rgba(255, 241, 168, 0.95),
-    0 0 32px rgba(113, 215, 255, 0.55);
+    0 0 32px rgba(255, 188, 54, 0.58);
 }
 
 .slash-mark::after {
@@ -679,11 +1271,11 @@ body[data-phase="battle"] .hero {
 
 .slash-skill::before {
   height: 18px;
-  background: linear-gradient(90deg, transparent, #fff 14%, #ffd15c 38%, #ff5c57 58%, #71d7ff 82%, transparent);
+  background: linear-gradient(90deg, transparent, #fff 14%, #ffe98a 34%, #ffd15c 56%, #d98d24 82%, transparent);
   box-shadow:
     0 0 24px rgba(255, 209, 92, 1),
-    0 0 46px rgba(255, 92, 87, 0.82),
-    0 0 64px rgba(113, 215, 255, 0.54);
+    0 0 46px rgba(255, 177, 64, 0.82),
+    0 0 64px rgba(214, 130, 28, 0.5);
 }
 
 @keyframes slashSweep {
@@ -890,6 +1482,22 @@ body[data-phase="battle"] .ally-water[data-action="assist"] {
   animation: allyWaterAssist 0.42s ease-out, allyWaterFloat 2.2s ease-in-out 0.42s infinite;
 }
 
+body[data-phase="battle"] .ally-fire[data-action="assist"] img {
+  animation: allyFireAssistGlow 0.42s ease-out;
+}
+
+body[data-phase="battle"] .ally-earth[data-action="assist"] img {
+  animation: allyEarthAssistGlow 0.42s ease-out;
+}
+
+body[data-phase="battle"] .ally-wind[data-action="assist"] img {
+  animation: allyWindAssistGlow 0.42s ease-out;
+}
+
+body[data-phase="battle"] .ally-water[data-action="assist"] img {
+  animation: allyWaterAssistGlow 0.42s ease-out;
+}
+
 body[data-phase="battle"] .ally-water[data-action="stagger"] {
   animation: allyWaterStagger 0.38s ease-out, allyWaterFloat 2.2s ease-in-out 0.38s infinite;
 }
@@ -967,6 +1575,87 @@ body[data-phase="battle"] .ally span {
   }
   70% {
     transform: translateY(-3px) translateX(5px) rotate(11deg);
+  }
+}
+
+@keyframes allyFireAssistGlow {
+  0%,
+  100% {
+    filter: brightness(1) saturate(1) drop-shadow(0 0 0 rgba(255, 94, 35, 0));
+  }
+  38% {
+    filter:
+      brightness(1.75)
+      saturate(1.65)
+      drop-shadow(0 0 16px rgba(255, 45, 28, 0.95))
+      drop-shadow(0 0 30px rgba(255, 152, 46, 0.78));
+  }
+  68% {
+    filter:
+      brightness(1.35)
+      saturate(1.35)
+      drop-shadow(0 0 10px rgba(255, 184, 62, 0.78));
+  }
+}
+
+@keyframes allyEarthAssistGlow {
+  0%,
+  100% {
+    filter: brightness(1) saturate(1) drop-shadow(0 0 0 rgba(160, 188, 70, 0));
+  }
+  42% {
+    filter:
+      brightness(1.42)
+      saturate(1.32)
+      sepia(0.18)
+      drop-shadow(0 0 14px rgba(224, 183, 76, 0.88))
+      drop-shadow(0 0 24px rgba(111, 184, 82, 0.64));
+  }
+  72% {
+    filter:
+      brightness(1.18)
+      saturate(1.18)
+      drop-shadow(0 0 10px rgba(151, 198, 86, 0.62));
+  }
+}
+
+@keyframes allyWindAssistGlow {
+  0%,
+  100% {
+    filter: brightness(1) saturate(1) drop-shadow(0 0 0 rgba(144, 255, 228, 0));
+  }
+  34% {
+    filter:
+      brightness(1.72)
+      saturate(1.38)
+      drop-shadow(0 0 15px rgba(191, 255, 194, 0.9))
+      drop-shadow(0 0 28px rgba(108, 238, 255, 0.72));
+  }
+  58% {
+    filter:
+      brightness(1.32)
+      saturate(1.18)
+      drop-shadow(0 0 11px rgba(135, 255, 226, 0.72));
+  }
+}
+
+@keyframes allyWaterAssistGlow {
+  0%,
+  100% {
+    filter: brightness(1) saturate(1) drop-shadow(0 0 0 rgba(88, 207, 255, 0));
+  }
+  40% {
+    filter:
+      brightness(1.65)
+      saturate(1.42)
+      drop-shadow(0 0 16px rgba(66, 218, 255, 0.94))
+      drop-shadow(0 0 30px rgba(107, 145, 255, 0.66));
+  }
+  70% {
+    filter:
+      brightness(1.24)
+      saturate(1.22)
+      drop-shadow(0 0 11px rgba(125, 239, 255, 0.74));
   }
 }
 

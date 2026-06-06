@@ -161,6 +161,11 @@ h1 {
   opacity: 0.35;
 }
 
+body[data-adventure-stage="dungeon"] .skyline,
+body[data-adventure-stage="castle"] .skyline {
+  opacity: 0;
+}
+
 .battle-flash {
   position: absolute;
   inset: 0;

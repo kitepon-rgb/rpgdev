@@ -58,10 +58,11 @@ test("TodoWrite updates the quest list for display but does NOT spawn monsters",
   );
   assert.equal(state.monsters.length, 0, "TODO からはモンスターは湧かない");
   assert.deepEqual(state.quest, [
-    { label: "audit routes", status: "in_progress" },
-    { label: "extract handlers", status: "pending" },
-    { label: "add tests", status: "completed" }
+    { label: "audit routes", status: "in_progress", stage: "field" },
+    { label: "extract handlers", status: "pending", stage: "dungeon" },
+    { label: "add tests", status: "completed", stage: "castle" }
   ]);
+  assert.equal(state.adventureStage, "field");
   // in_progress TODO があってもモンスターが居なければ戦闘ではない（探索）。
   assert.equal(state.phase, "field");
 });
@@ -76,6 +77,7 @@ test("Codex update_plan also only updates the quest list, no monsters (provider 
   );
   assert.equal(state.monsters.length, 0);
   assert.equal(state.quest.length, 2);
+  assert.deepEqual(state.quest.map((q) => q.stage), ["field", "dungeon"]);
 });
 
 test("with no TODO, UserPromptSubmit shows the user input as a single in_progress quest", () => {
@@ -84,7 +86,87 @@ test("with no TODO, UserPromptSubmit shows the user input as a single in_progres
     event: "UserPromptSubmit",
     raw: { prompt: "ログイン機能を作る" }
   });
-  assert.deepEqual(r.state.quest, [{ label: "ログイン機能を作る", status: "in_progress", synthetic: true }]);
+  assert.deepEqual(r.state.quest, [
+    { label: "ログイン機能を作る", status: "in_progress", synthetic: true, stage: "field" }
+  ]);
+  assert.equal(r.state.adventureStage, "field");
+});
+
+test("quest stages split TODOs across field, dungeon, and castle with smaller tail stages", () => {
+  const cases = [
+    { count: 1, stages: ["field"] },
+    { count: 2, stages: ["field", "dungeon"] },
+    { count: 3, stages: ["field", "dungeon", "castle"] },
+    { count: 4, stages: ["field", "field", "dungeon", "castle"] },
+    { count: 5, stages: ["field", "field", "dungeon", "dungeon", "castle"] }
+  ];
+
+  for (const { count, stages } of cases) {
+    const todos = Array.from({ length: count }, (_, index) => ({
+      content: `task ${index + 1}`,
+      status: index === 0 ? "in_progress" : "pending"
+    }));
+    const { state } = reduceHookEvent(createInitialState(), todoWrite(todos));
+    assert.deepEqual(state.quest.map((q) => q.stage), stages, `${count} TODO stage split`);
+    assert.equal(state.adventureStage, "field");
+  }
+});
+
+test("adventureStage follows the first unfinished TODO stage", () => {
+  const { state } = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "task 1", status: "completed" },
+      { content: "task 2", status: "completed" },
+      { content: "task 3", status: "in_progress" },
+      { content: "task 4", status: "pending" },
+      { content: "task 5", status: "pending" }
+    ])
+  );
+  assert.deepEqual(state.quest.map((q) => q.stage), ["field", "field", "dungeon", "dungeon", "castle"]);
+  assert.equal(state.adventureStage, "dungeon");
+});
+
+test("Codex update_plan uses the same quest stage split as TodoWrite", () => {
+  const plan = Array.from({ length: 5 }, (_, index) => ({
+    step: `step ${index + 1}`,
+    status: index < 4 ? "completed" : "in_progress"
+  }));
+  const { state } = reduceHookEvent(createInitialState(), updatePlan(plan));
+  assert.deepEqual(state.quest.map((q) => q.stage), ["field", "field", "dungeon", "dungeon", "castle"]);
+  assert.equal(state.adventureStage, "castle");
+});
+
+test("stage-specific BGM is used for dungeon and castle exploration and battles", () => {
+  let dungeon = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "task 1", status: "completed" },
+      { content: "task 2", status: "completed" },
+      { content: "task 3", status: "in_progress" },
+      { content: "task 4", status: "pending" },
+      { content: "task 5", status: "pending" }
+    ])
+  );
+  assert.equal(dungeon.state.currentTrack, "dungeon-adventure");
+  __setChance(chanceSeq(0, 0));
+  dungeon = reduceHookEvent(dungeon.state, pre());
+  assert.equal(dungeon.state.currentTrack, "dungeon-battle");
+
+  let castle = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "task 1", status: "completed" },
+      { content: "task 2", status: "completed" },
+      { content: "task 3", status: "completed" },
+      { content: "task 4", status: "completed" },
+      { content: "task 5", status: "in_progress" }
+    ])
+  );
+  assert.equal(castle.state.currentTrack, "castle-adventure");
+  __setChance(chanceSeq(0, 0));
+  castle = reduceHookEvent(castle.state, pre());
+  assert.equal(castle.state.currentTrack, "castle-battle");
 });
 
 test("a real TodoWrite replaces the synthetic user-input quest", () => {
@@ -194,6 +276,19 @@ test("PreToolUse = normal attack, PostToolUse = skill attack named after the too
   assert.equal(skill.skill, "Edit");
 });
 
+test("PostToolUse skill attack uses the command summary when available", () => {
+  __setChance(chanceSeq(0, 0)); // 最初の Pre で出現させる（出現のみ）
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, pre()); // 出現
+  const res = reduceHookEvent(r.state, {
+    provider: "claude",
+    event: "PostToolUse",
+    raw: { tool_name: "Bash", tool_input: { command: "npm test" } }
+  });
+  const skill = res.effects.find((e) => e.type === "attack" && e.kind === "skill");
+  assert.equal(skill.skill, "npm test");
+});
+
 test("one Hook does exactly one action (spawn XOR summon XOR attack — never combined)", () => {
   // 出現の Hook は攻撃も召喚もしない
   __setChance(chanceSeq(0, 0));
@@ -240,23 +335,24 @@ test("reinforcement summons at most one spirit per tool call, distinct elements,
   assert.equal(new Set(r.state.allies.map((a) => a.element)).size, 4, "属性は全て異なる（重複なし）");
 });
 
-test("SubagentStart summons a spirit; SubagentStop returns it (LIFO), spurious Stop is silent", () => {
+test("SubagentStart summons a spirit; SubagentStop returns the first spirit (FIFO), spurious Stop is silent", () => {
   let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
   r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
   assert.equal(r.state.allies.length, 1);
   assert.ok(r.effects.some((e) => e.type === "ally_summon" && e.ally));
+  const firstAllyId = r.state.allies[0].id;
   r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
   assert.equal(r.state.allies.length, 2);
   r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStop", raw: {} });
   assert.equal(r.state.allies.length, 1);
-  assert.ok(r.effects.some((e) => e.type === "ally_return"));
+  assert.ok(r.effects.some((e) => e.type === "ally_return" && e.allyId === firstAllyId));
   r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStop", raw: {} });
   assert.equal(r.state.allies.length, 0);
   const extra = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStop", raw: {} });
   assert.ok(!extra.effects.some((e) => e.type === "ally_return"));
 });
 
-test("present spirits assist the hero's attack on the encounter (extra cosmetic damage)", () => {
+test("present spirits assist only PostToolUse attacks on the encounter", () => {
   __setChance(chanceSeq(0, 0)); // linked エンカウントを1体出す（攻撃で倒れない＝HP 比較できる）
   let base = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }])).state;
   base = reduceHookEvent(base, pre()).state; // 出現(linked) + 1撃（chanceSeq 消費）
@@ -268,12 +364,17 @@ test("present spirits assist the hero's attack on the encounter (extra cosmetic 
 
   const withAlly = reduceHookEvent(base, { provider: "claude", event: "SubagentStart", raw: {} });
   const hp1 = withAlly.state.monsters[0].hp;
+  const preAttack = reduceHookEvent(withAlly.state, pre("Read"));
+  assert.ok(!preAttack.effects.some((e) => e.type === "attack" && e.kind === "ally"));
+
   const assisted = reduceHookEvent(withAlly.state, post("Read"));
   const assistedDrop = hp1 - assisted.state.monsters[0].hp;
 
   assert.equal(hp1, hp0, "召喚自体は攻撃しない");
   assert.ok(assistedDrop > soloDrop, "精霊がいる方が多く削れる");
-  assert.ok(assisted.effects.some((e) => e.type === "attack" && e.kind === "ally"));
+  const allyAttack = assisted.effects.find((e) => e.type === "attack" && e.kind === "ally");
+  assert.ok(allyAttack);
+  assert.equal(allyAttack.allyElement, withAlly.state.allies[0].element);
 });
 
 test("Claude failure (PostToolUseFailure) triggers a counter, not a spawn", () => {

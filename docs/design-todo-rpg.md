@@ -1,10 +1,11 @@
 # RPGDev 再設計メモ：ランダムエンカウント モデル
 
-最終更新: 2026-06-06
+最終更新: 2026-06-07
 ステータス: **実装済み・検証済み**。現行コードは ランダムエンカウント モデルへ移行済み。
 このドキュメントは、設計判断・実機調査・実装ステータスの単一の記録。
 
 モデルは「エラー＝モンスター」→「TODO＝モンスター」→「ランダムエンカウント」と変遷した（最新は本ドキュメントの記述）。
+v0.3.0 でランダムエンカウント モデルの上に **冒険ステージ（field / dungeon / castle）** を載せた（§2.1）。
 
 各項目に **[決定]** / **[検証済]** / **[仮定・要確認]** / **[実装済み]** などの状態を明記する。憶測を確定と混ぜない。
 
@@ -53,7 +54,10 @@ TODO は戦闘の源ではなく「クエストの一覧表示」＋「紐づく
 ## 2. フェーズ設計 [決定]
 
 4フェーズ：`idle`（街・待機）/ `field`（探索）/ `battle`（戦闘）/ `complete`（クリア）。
-BGM トラック（`currentTrack`）は `field` / `adventure` / `battle`。
+BGM トラック（`currentTrack`）は冒険ステージ（§2.1）と phase の積で決まる7種：
+`field`（拠点・序盤探索）/ `adventure`（序盤探索の進行）/ `battle`（序盤戦闘）/
+`dungeon-adventure` / `dungeon-battle` / `castle-adventure` / `castle-battle`。
+`trackForState` が `adventureStage` と phase から1トラックを選ぶ。
 
 フェーズはもう TODO ステータスには対応しない。**エンカウントのモンスターが画面に居る時だけ `battle`** になる：
 
@@ -70,6 +74,25 @@ BGM トラック（`currentTrack`）は `field` / `adventure` / `battle`。
 
 - エンカウントは PreToolUse ごとに 20% で1体だけ出現する。出現中は `battle`、討伐すると `field`（敵が居なければ）へ戻る。
 - 探検（field）と戦闘（battle）の対比はエンカウントの有無で自然に生まれる。
+
+---
+
+## 2.1 冒険ステージ（biome：field → dungeon → castle）[実装済み]
+
+phase（idle/field/battle/complete）とは独立に、**冒険の「場所」を表す `adventureStage`** を持つ。
+`field`（草原・序盤）/ `dungeon`（洞窟・中盤）/ `castle`（城・終盤）の3段で、背景画像と BGM が切り替わる。
+クエスト（TODO）の進捗に応じて自然に奥へ進む演出で、TODO が無いセッションでは常に `field`。
+
+- **TODO をステージに割り当てる**（`assignQuestStages` / `questStageCounts`）：
+  TODO 一覧を元の順序のまま field→dungeon→castle の3区画へ均等割りする。割り切れない端数は**前のステージ（field 側）を厚く**配る
+  （例：1件=[field]、2件=[field,dungeon]、3件=[field,dungeon,castle]、4件=[field,field,dungeon,castle]、5件=[field,field,dungeon,dungeon,castle]）。
+  各クエスト項目は `stage` フィールドを持つ（`{ label, status, stage }`）。
+- **現在地＝最初の未完了 TODO のステージ**（`currentAdventureStage`）：completed を消化していくほど奥（dungeon→castle）へ進む。
+  全完了なら最後の項目のステージ。TODO 不在（合成クエスト含む）や未知の値は `field` にフォールバック。
+- **BGM/背景はステージ×phase で決まる**：`trackForState` がステージ別の探索/戦闘トラックを返し（§2）、
+  フロントは `adventureStage` から背景（`field.png` / `dungeon.png` / `castle.png`）を選ぶ。dungeon/castle では skyline を隠す。
+- ステージはあくまで TODO 進捗ベースの**演出**で、討伐条件（§3）やエンカウント確率には影響しない。
+- `SessionStart`（拠点リセット）で `adventureStage` は `field` に戻る。
 
 ---
 
@@ -90,7 +113,7 @@ BGM トラック（`currentTrack`）は `field` / `adventure` / `battle`。
 ### 攻撃＝ツールフック（1 Hook = 1 アクション）[決定]
 - **1つの Hook では「出現 / 召喚 / 攻撃 / 前進」のいずれか1つだけ**を実行する（出現→攻撃→召喚を同一 Hook で連鎖させない＝演出上の違和感を排除）。
 - **PreToolUse**：敵不在なら 20% で出現（出たらそれだけ／出なければ前進）。敵在席なら 20% で精霊増援（召喚したらそれだけ）／召喚しなければ通常攻撃（`NORMAL_DAMAGE`, 演出）。
-- **PostToolUse → スキル攻撃。技名＝ツール名**（`SKILL_DAMAGE`, 演出, 例：「Editの斬撃」「Grepの探索」）。出現・増援の判定はしない（Pre のみ）。
+- **PostToolUse → スキル攻撃。技名＝コマンド要約 or ツール名**（`SKILL_DAMAGE`, 演出）。`event.summary`（Bash の `command` 等を整形した要約）があればそれ、無ければツール名（例：Bash で `npm test` を実行→技名「npm test」、無ければ「Edit」）。出現・増援の判定はしない（Pre のみ）。
 - 攻撃も増援召喚も、敵（エンカウント）が居なければ起きない（敵不在 Hook は前進のみ）。トドメになった攻撃は、その帰結として撃破＋精霊退場を伴う（同一アクションの結果であり別アクションではない）。
 - 技名＝ツール名はプロバイダで品揃えが違う（後述）。未知ツールは生のツール名をそのまま技名に出す
   （握りつぶして通常攻撃に丸めない）。表示名マップは任意。
@@ -101,12 +124,13 @@ BGM トラック（`currentTrack`）は `field` / `adventure` / `battle`。
 - **Codex は失敗を payload に出さない**ので検知不能＝反撃しない（§5/§7）。
 
 ### 精霊（仲間 allies）[実装済み]
-- 戦闘中、**ツール使用ごと（PreToolUse）に 20% で1体だけ増援**。さらに **SubagentStart でも1体参戦**。
+- 戦闘中、**ツール使用ごと（PreToolUse）に 10% で1体だけ増援**（`BATTLE_SUMMON_CHANCE`）。さらに **SubagentStart でも1体参戦**。
 - 常に1体ずつ追加し、**属性の重複は避ける**（火 `Ignis` / 地 `Terra` / 風 `Sylph` / 水 `Aqua`）。**上限4体**。
   `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
-- 在席中の精霊は現在の敵に**追撃する**（演出。`attack` effect, `kind:"ally"`, `allyId` 付き。討伐の 5撃にはカウントしない）。
+- 在席中の精霊は **PostToolUse（スキル攻撃）の時だけ**現在の敵に**追撃する**（演出。`attack` effect, `kind:"ally"`, `allyId` + `allyElement` 付き。討伐の 5撃にはカウントしない）。
+  PreToolUse の通常攻撃では追撃しない（攻撃が二重に出て煩雑になるのを避ける）。フロントは `allyElement` で属性別の追撃エフェクト（火/地/風/水）を出す。
 - **モンスターを倒すたびに精霊は全員消滅**する（戦闘終了で退場）。
-- `SubagentStop` で1体帰還（LIFO。hook payload が個体 id を持つとは限らないため）。
+- `SubagentStop` で1体帰還（**FIFO＝最初に参戦した精霊から離脱**。hook payload が個体 id を持つとは限らないため、出た順に帰す）。
   在席ゼロでの Stop は無反応（黙って成功扱いにしない＝effect を出さない）。
 
 ---
@@ -122,13 +146,13 @@ BGM トラック（`currentTrack`）は `field` / `adventure` / `battle`。
 |---|---|---|
 | SessionStart | 待機 | 拠点起動・状態ロード・BGM=town（quest/monsters/allies をクリア） |
 | UserPromptSubmit | 待機→探検 | クエスト受注、フィールドへ、BGM=field、ターン開始 |
-| PreToolUse | 探検/戦闘 | 通常攻撃（前振り）＋20% エンカウント出現判定＋戦闘中なら 20% 精霊増援判定 |
+| PreToolUse | 探検/戦闘 | 通常攻撃（前振り）＋20% エンカウント出現判定＋戦闘中なら 10% 精霊増援判定 |
 | PermissionRequest | 保留 | 足止め「!」、判断待ちの硬直 |
 | PostToolUse | ★中核 | スキル攻撃＋クエスト一覧更新＋成否分岐（下記） |
 | PreCompact | 演出 | 「記憶が霞む／霧」長期戦の区切り |
 | PostCompact | 演出 | 「霧が晴れる」状態を再同期 |
-| SubagentStart | 戦闘 | 精霊が1体参戦（`state.allies` に追加）。戦闘中は hero 攻撃に追撃（§3 精霊） |
-| SubagentStop | 戦闘 | 精霊が帰還（LIFO で1体離脱） |
+| SubagentStart | 戦闘 | 精霊が1体参戦（`state.allies` に追加）。PostToolUse 時に追撃（§3 精霊） |
+| SubagentStop | 戦闘 | 精霊が帰還（FIFO で1体離脱＝最初に出た精霊から） |
 | Stop | →待機 | ターン終了。linkedTodo=false の在席エンカウントを討伐。未完了TODO無ければ街へ |
 
 **PostToolUse の中の分岐：**
@@ -281,7 +305,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ---
 
-## 9. 実装ステータス（2026-06-06 更新・ランダムエンカウント モデル）
+## 9. 実装ステータス（2026-06-07 更新・ランダムエンカウント モデル + 冒険ステージ v0.3.0）
 
 - **reducer：実装済み・検証済み。** `server/adventure-state.mjs` をランダムエンカウント モデルへ。
   - 旧 `detectFailure` の単語マッチ正規表現は廃止。Claude の失敗イベント名（PostToolUseFailure/PermissionDenied）と
@@ -291,31 +315,40 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - 出現時に `linkedTodo` を決定（出現時 in_progress TODO あり=true / なし=false）。討伐条件はこのフラグで分岐：
     - `linkedTodo=false` → hero の攻撃 **5撃**、または **ターン終了（Stop）** で討伐。
     - `linkedTodo=true` → 攻撃では倒れず、TODO が1つ `completed` になった時に討伐。in_progress TODO が消えたら `linkedTodo` 解除。
-  - TODO ツール（`tool_name ∈ {TodoWrite, update_plan}`）は `state.quest`（label+status のスナップショット）を更新するだけ。
-    新たに completed になった項目があれば紐づくエンカウントを討伐。
-  - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝ツール名）。出現・増援の判定は PreToolUse のみ。
+  - TODO ツール（`tool_name ∈ {TodoWrite, update_plan}`）は `state.quest`（label+status+stage のスナップショット）を更新するだけ。
+    新たに completed になった項目があれば紐づくエンカウントを討伐。**TODO を field/dungeon/castle の3区画へ均等割り**して各項目に `stage` を付与（§2.1）。
+  - **冒険ステージ**：`adventureStage`（field/dungeon/castle）＝最初の未完了 TODO のステージ。`trackForState` がステージ×phase で7種の BGM トラックを選ぶ。SessionStart で field に戻す（§2.1）。
+  - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝`event.summary`（コマンド要約）or ツール名）。出現・増援の判定は PreToolUse のみ。
   - **1 Hook = 1 アクション**：1つの Hook では出現/召喚/攻撃/前進のいずれか1つだけ（同一 Hook で連鎖しない）。
-  - **TODO 未発生時はユーザー入力を1つの合成クエスト(`synthetic`, in_progress)として表示**し、TodoWrite で本物に置換。synthetic は表示専用で linkedTodo に数えない。
-  - 精霊：戦闘中の PreToolUse ごとに 20% で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
-    在席中は現在の敵に追撃（`attack` kind:"ally"、討伐の5撃には数えない）。
-    モンスター討伐ごとに精霊は全員消滅。SubagentStop で1体帰還（LIFO）、在席ゼロでの Stop は無反応。
-- **テスト：19/19 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
-  ターン終了討伐・linkedTodo の completed 討伐・provider parity・精霊 増援/参戦/重複回避/上限4/追撃/討伐で消滅/離脱 等）。
+  - **TODO 未発生時はユーザー入力を1つの合成クエスト(`synthetic`, in_progress, stage:"field")として表示**し、TodoWrite で本物に置換。synthetic は表示専用で linkedTodo に数えない。
+  - 精霊：戦闘中の PreToolUse ごとに **10%** で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
+    在席中は **PostToolUse（スキル攻撃）の時だけ**現在の敵に追撃（`attack` kind:"ally"・`allyElement` 付き、討伐の5撃には数えない）。
+    モンスター討伐ごとに精霊は全員消滅。SubagentStop で1体帰還（**FIFO＝最初に出た精霊から**）、在席ゼロでの Stop は無反応。
+- **テスト：28/28 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
+  ターン終了討伐・linkedTodo の completed 討伐・provider parity・冒険ステージ割り当て/追従・ステージ別 BGM・コマンド要約の技名・
+  精霊 増援/参戦/重複回避/上限4/PostToolUse 限定追撃/討伐で消滅/FIFO 離脱 等）。
 - **フロントエンド：新 state/effect に配線済み。**
   - `public/overlay.html` / `overlay.js` / `overlay.css`：エンカウントのモンスターを画面中央の戦闘相手に、
-    在席精霊を属性ごとの定位置に、現在の敵ラベルを表示。新 effect（monster_appeared/attack(kind,skill,ally)/counter/
+    在席精霊を属性ごとの定位置に表示。新 effect（monster_appeared/attack(kind,skill,ally,allyElement)/counter/
     monster_defeated/turn_completed/turn_blocked/ally_summon/ally_return/compact_pre/compact_post/hold/step 等）を
-    トースト＋パーティクル＋フラッシュで表示。
-    通常/スキル攻撃は斬撃・揺れ・技名カットイン付き。瀕死点滅・画面全体の赤点滅・「よろけ」表示は廃止。
-  - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。常に1体ずつ再生し、
-    1つ終わってから **0.1秒** 空けて次へ。出現/召喚/帰還/クリア等の即時演出はキューを占有しない。詰まり防止に攻撃アニメは最大10件で間引く。
+    パーティクル＋フラッシュ＋カットインで表示。スキル攻撃は斬撃・揺れ・技名カットイン付き。瀕死点滅・画面全体の赤点滅・「よろけ」表示は廃止。
+  - **冒険ステージの背景切替**：`adventureStage` で背景を `field.png`/`dungeon.png`/`castle.png` に切替（idle/complete は `town.png`）。dungeon/castle では skyline を隠す（`public/styles.css` / `overlay.css`）。
+  - **出現/撃破の専用演出**：モンスター出現＝ポータル＋煙＋着地アニメ（`data-action="appear"`）、撃破＝発光＋破片の消滅アニメ（`data-action="defeat"`）。
+    撃破中はワールド演出（背景/BGM/フェーズ反映）を約1.8秒保留し、撃破アニメを最後まで見せてから次の状態へ切替（`holdWorldVisuals`）。
+  - **属性別の追撃エフェクト**：精霊の追撃（`kind:"ally"`）は `allyElement`（fire/earth/wind/water）ごとに専用のパーティクル＋CSS インパクト＋効果音を出し分ける。
+  - **効果音（SFX）**：出現＝`monster-appear.wav`、撃破＝`monster-defeat.wav`。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
+  - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。**攻撃は固定 1 秒間隔**、その他は「アニメ目安 + 0.1秒」で次へ。
+    出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect が来たらキュー内の未再生の攻撃を破棄し、撃破演出を優先。詰まり防止に攻撃アニメは最大10件で間引く。
   - **クエストトラッカー UI**：MMO ミッション風パネルを画面中央上に表示。未着手 ◇ / 進行中 ◆ / 達成 ✓。
     全項目完了 or idle では非表示。
   - **ヘッダーは1行**：「RPGDev ◆ <フェーズ>」。RPGDev は金グラデのゲームタイトル（フェーズ名と同サイズ、菱形セパレータ）。ヘッダー高 60px。
   - **戦闘配置**：勇者は左下（戦闘時 +10%）、モンスター中央（-20%）、精霊は属性ごとに固定（水=左上, 風=右上, 火=右端・下げ気味, 地=中央下）。モンスター名は1.7倍。
   - 仲間精霊スプライトを追加：火/地/風/水。`Aqua`（水）は `ally-water-facing-slit.png`。
-  - `public/app.js`（Web ビュー）：新 state/effect に追従（精霊含む）。
-  - `adventure.wav` / `battle.wav` は `scripts/render-bgm.mjs` の更新から再生成済み。
+  - `public/app.js`（Web ビュー）：新 state/effect に追従（精霊・冒険ステージの背景切替を含む）。
+  - **BGM：7トラックを `scripts/render-bgm.mjs` から生成**（`field` / `adventure` / `battle` / `dungeon-adventure` / `dungeon-battle` / `castle-adventure` / `castle-battle`）。
+    ステージごとに BPM・調・編成を変えてある（dungeon=不穏・低速、castle=荘厳・行進調）。生成器は決定的（乱数なし）。
+    `public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm 管轄外の効果音（生成器では作らない別アセット）。
+  - **デスクトップ（Swift `RPGDevWindow.swift`）**：7 BGM トラックをプリロードし、`monster-appear`/`monster-defeat` を `AVAudioPlayer` でネイティブ再生（JS↔Swift ブリッジの `sfx` メッセージ）。
   - フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
 - 実機検証の生データ：`tmp/codex-probe/`（gitignore 対象、`hook-capture.log` / `probe*-events.jsonl`）。
   ※ 検証中に `~/.codex/auth.json` を `tmp/codex-home/` にコピーしたが、機密のため削除済み。

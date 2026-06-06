@@ -16,6 +16,7 @@ const audioButton = document.querySelector("#audioButton");
 const resetButton = document.querySelector("#resetButton");
 const startButton = document.querySelector("#startButton");
 const startGate = document.querySelector("#startGate");
+const sceneBg = document.querySelector("#sceneBg");
 const canvas = document.querySelector("#fxCanvas");
 const ctx = canvas.getContext("2d");
 
@@ -24,6 +25,12 @@ const phaseText = {
   field: "探索",
   battle: "戦闘",
   complete: "一区切り"
+};
+
+const stageBackgrounds = {
+  field: "/assets/field.png",
+  dungeon: "/assets/dungeon.png",
+  castle: "/assets/castle.png"
 };
 
 let currentState = null;
@@ -82,6 +89,9 @@ function connectEvents() {
 
 function renderState(state) {
   document.body.dataset.phase = state.phase;
+  const stage = adventureStage(state);
+  document.body.dataset.adventureStage = stage;
+  if (sceneBg) sceneBg.src = stageBackgrounds[stage];
   phaseLabel.textContent = phaseText[state.phase] || state.phase;
   trackLabel.textContent = `BGM: ${state.currentTrack}`;
 
@@ -115,6 +125,11 @@ function renderState(state) {
 
   renderLog(state.log || []);
   setTrack(state.currentTrack);
+}
+
+function adventureStage(state) {
+  const stage = state?.adventureStage || "field";
+  return stageBackgrounds[stage] ? stage : "field";
 }
 
 function renderLog(log) {

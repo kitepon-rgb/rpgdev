@@ -12,6 +12,10 @@ const resetButton = document.querySelector("#resetButton");
 const fieldAudio = document.querySelector("#fieldAudio");
 const adventureAudio = document.querySelector("#adventureAudio");
 const battleAudio = document.querySelector("#battleAudio");
+const dungeonAdventureAudio = document.querySelector("#dungeonAdventureAudio");
+const dungeonBattleAudio = document.querySelector("#dungeonBattleAudio");
+const castleAdventureAudio = document.querySelector("#castleAdventureAudio");
+const castleBattleAudio = document.querySelector("#castleBattleAudio");
 const canvas = document.querySelector("#fxCanvas");
 const stage = document.querySelector(".stage");
 const ctx = canvas.getContext("2d");
@@ -21,6 +25,12 @@ const phaseText = {
   field: "探索",
   battle: "戦闘",
   complete: "Clear"
+};
+
+const stageBackgrounds = {
+  field: "/assets/field.png",
+  dungeon: "/assets/dungeon.png",
+  castle: "/assets/castle.png"
 };
 
 const spriteByName = {
@@ -35,7 +45,11 @@ const svgSpriteNames = new Set();
 const TRACK_FILES = {
   field: fieldAudio,
   adventure: adventureAudio,
-  battle: battleAudio
+  battle: battleAudio,
+  "dungeon-adventure": dungeonAdventureAudio,
+  "dungeon-battle": dungeonBattleAudio,
+  "castle-adventure": castleAdventureAudio,
+  "castle-battle": castleBattleAudio
 };
 
 const MUSIC = {
@@ -90,6 +104,11 @@ const MUSIC = {
 let currentTrack = "silence";
 let particles = [];
 let shakeTimer = null;
+let monsterActionTimer = null;
+let lastRenderedMonster = null;
+let worldVisualsHeld = false;
+let pendingWorldState = null;
+let pendingWorldTimer = null;
 let audio = {
   enabled: false,
   ctx: null,
@@ -106,8 +125,16 @@ let audio = {
 
 new EventSource("/events").addEventListener("state", (message) => {
   const payload = JSON.parse(message.data);
+  const effectList = payload.effects || [];
+  if (effectList.some((effect) => effect.type === "monster_defeated")) {
+    holdWorldVisuals(payload.state);
+  }
+  prepareMonsterEffects(effectList);
   render(payload.state);
-  effects(payload.effects || []);
+  effects(effectList);
+  if (worldVisualsHeld) {
+    scheduleWorldVisualRelease();
+  }
 });
 
 audioButton.addEventListener("click", async () => {
@@ -136,10 +163,41 @@ resetButton?.addEventListener("click", async () => {
 requestAnimationFrame(draw);
 
 function render(state) {
+  if (worldVisualsHeld) {
+    pendingWorldState = state;
+  } else {
+    applyWorldVisuals(state);
+  }
+
+  const monsters = state.monsters || [];
+  const target = monsters.find((m) => m.status === "in_progress") || null;
+  renderRoster(state.quest || [], state.phase);
+  renderAllies(state.allies || []);
+
+  if (!target) {
+    // 探検中（in_progress なし）または待機: 戦闘相手を出さない
+    if (monsterStage.dataset.action === "defeat" || monsterStage.dataset.action === "defeat-pending") return;
+    monsterStage.dataset.active = "false";
+    monsterStage.dataset.dying = "false";
+    monsterName.textContent = "";
+    return;
+  }
+
+  const sprite = monsterSprite(target);
+  monsterStage.dataset.active = "true";
+  monsterStage.dataset.dying = target.dying ? "true" : "false";
+  setMonsterSprite(sprite);
+  monsterName.textContent = "";
+  lastRenderedMonster = { ...target, sprite };
+}
+
+function applyWorldVisuals(state) {
   document.body.dataset.phase = state.phase;
+  const stageName = adventureStage(state);
+  document.body.dataset.adventureStage = stageName;
   phaseLabel.textContent = phaseText[state.phase] || state.phase;
   const isResting = state.phase === "idle" || state.phase === "complete";
-  sceneBg.src = isResting ? "/assets/town.png" : "/assets/field.png";
+  sceneBg.src = isResting ? "/assets/town.png" : stageBackgrounds[stageName];
   heroImage.src = state.phase === "battle"
     ? "/assets/sprites/hero-battle.png"
     : isResting
@@ -151,25 +209,32 @@ function render(state) {
     audioButton.classList.add("is-on");
   }
   setTrack(currentTrack);
+}
 
-  const monsters = state.monsters || [];
-  const target = monsters.find((m) => m.status === "in_progress") || null;
-  renderRoster(state.quest || [], state.phase);
-  renderAllies(state.allies || []);
-
-  if (!target) {
-    // 探検中（in_progress なし）または待機: 戦闘相手を出さない
-    monsterStage.dataset.active = "false";
-    monsterStage.dataset.dying = "false";
-    monsterName.textContent = "";
-    return;
+function holdWorldVisuals(state) {
+  worldVisualsHeld = true;
+  pendingWorldState = state;
+  if (pendingWorldTimer) {
+    window.clearTimeout(pendingWorldTimer);
+    pendingWorldTimer = null;
   }
+}
 
-  const sprite = monsterSprite(target);
-  monsterStage.dataset.active = "true";
-  monsterStage.dataset.dying = target.dying ? "true" : "false";
-  monsterImage.src = `/assets/sprites/${sprite}.png`;
-  monsterName.textContent = target.name;
+function scheduleWorldVisualRelease() {
+  if (pendingWorldTimer) return;
+  pendingWorldTimer = window.setTimeout(() => {
+    pendingWorldTimer = null;
+    worldVisualsHeld = false;
+    if (!pendingWorldState) return;
+    const state = pendingWorldState;
+    pendingWorldState = null;
+    applyWorldVisuals(state);
+  }, 1820);
+}
+
+function adventureStage(state) {
+  const stage = state?.adventureStage || "field";
+  return stageBackgrounds[stage] ? stage : "field";
 }
 
 // パネルが溢れないように表示する最大行数（超過分は最古の達成項目だけ畳む）。
@@ -276,11 +341,13 @@ function monsterSprite(monster) {
   return "goblin";
 }
 
-// 攻撃アニメは常に1体ずつ（勇者を含む）。前のアニメが終わってから 0.1 秒空けて次へ。
+// 攻撃アニメは常に1体ずつ（勇者を含む）。攻撃キューは 1 秒間隔で次へ。
 // 演出はグローバルなキューで直列化し、複数バッチが重なって連続再生されないようにする。
 let fxQueue = [];
 let fxBusy = false;
+let monsterDefeatInProgress = false;
 const ANIM_GAP = 100; // アニメ間の空き（0.1 秒）
+const ATTACK_QUEUE_INTERVAL_MS = 1000;
 const MAX_QUEUED_ATTACKS = 10; // 詰まりすぎ防止（超過した攻撃アニメは間引く）
 
 // そのエフェクトのアニメが終わるまでの目安(ms)。0 は即時（アニメ枠を占有せず次へ）。
@@ -301,12 +368,26 @@ function fxAnimMs(effect) {
 }
 
 function effects(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  if (list.some((effect) => effect.type === "monster_appeared")) {
+    monsterDefeatInProgress = false;
+  }
+  const defeatIndex = list.findIndex((effect) => effect.type === "monster_defeated");
+  if (defeatIndex >= 0) {
+    fxQueue = fxQueue.filter((effect) => effect.type !== "attack");
+  }
+
   for (const effect of list) {
+    if (monsterDefeatInProgress && effect.type === "attack") continue;
     if (effect.type === "attack") {
       const queued = fxQueue.reduce((n, e) => (e.type === "attack" ? n + 1 : n), 0);
       if (queued >= MAX_QUEUED_ATTACKS) continue; // 間引き
     }
     fxQueue.push(effect);
+    if (effect.type === "monster_defeated") {
+      monsterDefeatInProgress = true;
+      fxQueue = fxQueue.filter((queued) => queued.type !== "attack");
+    }
   }
   pumpFx();
 }
@@ -315,26 +396,39 @@ function pumpFx() {
   if (fxBusy) return;
   while (fxQueue.length) {
     const effect = fxQueue.shift();
+    if (monsterDefeatInProgress && effect.type === "attack") continue;
     playEffect(effect);
     const anim = fxAnimMs(effect);
     if (anim > 0) {
-      // この1体のアニメが終わる + 0.1秒 待ってから次のエフェクトへ。
+      // 攻撃キューは固定 1 秒、その他はアニメ目安 + 0.1 秒待って次へ。
       fxBusy = true;
       window.setTimeout(() => {
         fxBusy = false;
         pumpFx();
-      }, anim + ANIM_GAP);
+      }, fxQueueDelayMs(effect, anim));
       return;
     }
     // anim === 0 の即時エフェクトは待たずに続けて処理。
   }
 }
 
+function fxQueueDelayMs(effect, anim) {
+  return effect.type === "attack" ? ATTACK_QUEUE_INTERVAL_MS : anim + ANIM_GAP;
+}
+
 function playEffect(effect) {
   switch (effect.type) {
     case "monster_appeared":
-      burst(0.5, 0.46, "#ff5c57", 38);
-      sting([43, 47, 50]);
+      if (effect.monster) {
+        const sprite = monsterSprite(effect.monster);
+        lastRenderedMonster = { ...effect.monster, sprite };
+        setMonsterSprite(sprite);
+        monsterName.textContent = "";
+        monsterStage.dataset.active = "true";
+      }
+      setMonsterAction("appear", 700);
+      monsterAppearImpact();
+      monsterAppearSound();
       break;
     case "engage":
       flash("#ff8a4c");
@@ -344,45 +438,42 @@ function playEffect(effect) {
     case "attack":
       if (effect.kind === "ally") {
         pulseAlly(effect.allyId, effect.stagger ? "stagger" : "assist");
-        if (!effect.stagger) {
-          burst(0.5, 0.5, "#7fe0ff", 16);
-          showToast(`${formatSkillName(effect.skill)}!`, "ally");
-        }
+        const element = allyElement(effect);
+        spawnMonsterImpact(element);
+        allyElementImpact(element, effect.stagger);
+        shakeStage(effect.stagger ? "light" : "hit");
+        sting(allyElementNotes(element, effect.stagger));
         break;
       }
       if (effect.kind === "skill") {
         slash("skill");
         shakeStage(effect.stagger ? "light" : "skill");
-        burst(0.55, 0.42, effect.stagger ? "#d8c7ff" : "#ffd15c", effect.stagger ? 18 : 34);
-        burst(0.52, 0.5, "#7fe0ff", effect.stagger ? 10 : 18);
+        monsterBurst(effect.stagger ? "#d8c7ff" : "#ffd15c", effect.stagger ? 18 : 34);
+        monsterBurst("#f0b73a", effect.stagger ? 10 : 18);
         showSkillBanner(effect.skill || "SKILL");
         sting(effect.stagger ? [76, 71] : [83, 79, 76]);
       } else {
         slash("normal");
         shakeStage(effect.stagger ? "light" : "hit");
-        burst(0.52, 0.44, effect.stagger ? "#9fb8c8" : "#ffe9a8", effect.stagger ? 12 : 24);
-        if (!effect.stagger) showToast("斬撃", "hit");
+        monsterBurst(effect.stagger ? "#9fb8c8" : "#ffe9a8", effect.stagger ? 12 : 24);
         sting(effect.stagger ? [72] : [76, 74]);
       }
       break;
     case "counter":
       flash("#ff3b3b");
       burst(0.34, 0.5, "#ff4d4d", 28);
-      showToast("反撃!", "counter");
       sting([45, 40]);
       break;
     case "monster_dying":
       flash("#c8a0ff");
-      showToast("瀕死", "dying");
       break;
     case "monster_defeated":
-      burst(0.5, 0.42, "#7dd873", 58);
-      showToast(effect.finisher ? "撃破!" : "撃破", "win");
-      sting([72, 76, 79, 84]);
+      holdDefeatedMonster();
+      monsterDefeatImpact();
+      monsterDefeatSound();
       break;
     case "monster_fled":
       burst(0.5, 0.46, "#9aa6b2", 16);
-      showToast("逃走", "info");
       break;
     case "retreat":
       showToast("後退", "info");
@@ -419,6 +510,7 @@ function playEffect(effect) {
 }
 
 function showToast(text, kind) {
+  if (isMonsterTextSuppressed()) return;
   if (!toast || !text) return;
   const item = document.createElement("div");
   item.className = `toast-item toast-${kind || "info"}`;
@@ -440,14 +532,19 @@ function showSkillBanner(skill) {
   window.setTimeout(() => item.remove(), 980);
 }
 
+function isMonsterTextSuppressed() {
+  if (!monsterStage) return false;
+  return monsterStage.dataset.active === "true" || Boolean(monsterStage.dataset.action);
+}
+
 function formatSkillName(value) {
   const text = String(value || "SKILL")
     .replace(/^functions\./, "")
     .replace(/^mcp__/, "")
     .replaceAll("_", " ")
     .trim();
-  if (!text) return "SKILL";
-  return text.length > 18 ? `${text.slice(0, 17)}...` : text;
+  const firstWord = text.split(/\s+/).find(Boolean) || "SKILL";
+  return firstWord.length > 18 ? `${firstWord.slice(0, 17)}...` : firstWord;
 }
 
 function allySpritePath(sprite) {
@@ -466,6 +563,117 @@ function pulseAlly(allyId, kind) {
   }, 520);
 }
 
+function prepareMonsterEffects(list) {
+  if (!Array.isArray(list)) return;
+  if (!list.some((effect) => effect.type === "monster_defeated")) return;
+  primeDefeatedMonster();
+}
+
+function primeDefeatedMonster() {
+  const monster = lastRenderedMonster;
+  if (monster) {
+    const sprite = monsterSprite(monster);
+    setMonsterSprite(sprite);
+    monsterName.textContent = "";
+  }
+  monsterStage.dataset.active = "true";
+  monsterStage.dataset.dying = "false";
+  if (monsterStage.dataset.action !== "defeat") {
+    monsterStage.dataset.action = "defeat-pending";
+  }
+}
+
+function setMonsterAction(action, duration) {
+  if (!monsterStage) return;
+  if (monsterActionTimer) window.clearTimeout(monsterActionTimer);
+  delete monsterStage.dataset.action;
+  void monsterStage.offsetWidth;
+  monsterStage.dataset.action = action;
+  monsterActionTimer = window.setTimeout(() => {
+    if (monsterStage.dataset.action === action) delete monsterStage.dataset.action;
+  }, duration);
+}
+
+function holdDefeatedMonster() {
+  const monster = lastRenderedMonster;
+  if (monster) {
+    const sprite = monsterSprite(monster);
+    setMonsterSprite(sprite);
+    monsterName.textContent = "";
+  }
+  monsterStage.dataset.active = "true";
+  monsterStage.dataset.dying = "false";
+  setMonsterAction("defeat", 820);
+  window.setTimeout(() => {
+    if (monsterStage.dataset.action === "defeat") return;
+    monsterStage.dataset.active = "false";
+    monsterName.textContent = "";
+  }, 840);
+}
+
+function setMonsterSprite(sprite) {
+  const name = spriteByName[sprite] || "goblin";
+  monsterStage.dataset.sprite = name;
+  monsterImage.src = `/assets/sprites/${name}.png`;
+}
+
+function allyElement(effect) {
+  if (effect.allyElement) return effect.allyElement;
+  const card = effect.allyId ? allies?.querySelector(`[data-ally-id="${effect.allyId}"]`) : null;
+  if (!card) return "spirit";
+  for (const element of ["fire", "earth", "wind", "water"]) {
+    if (card.classList.contains(`ally-${element}`)) return element;
+  }
+  return "spirit";
+}
+
+function allyElementNotes(element, stagger) {
+  if (stagger) return [71, 67];
+  const notes = {
+    fire: [52, 64, 76],
+    earth: [43, 50, 55],
+    wind: [74, 78, 86],
+    water: [62, 69, 74]
+  };
+  return notes[element] || [64, 67, 71];
+}
+
+function allyElementImpact(element, stagger = false) {
+  const center = monsterCanvasCenter();
+  switch (element) {
+    case "fire":
+      fireImpact(stagger, center);
+      break;
+    case "earth":
+      earthImpact(stagger, center);
+      break;
+    case "wind":
+      windImpact(stagger, center);
+      break;
+    case "water":
+      waterImpact(stagger, center);
+      break;
+    default:
+      burstAt(center.x, center.y, stagger ? "#9fb8c8" : "#7fe0ff", stagger ? 10 : 18);
+      break;
+  }
+}
+
+function spawnMonsterImpact(element) {
+  if (!stage) return;
+  const known = ["fire", "earth", "wind", "water"].includes(element) ? element : "spirit";
+  const center = monsterStageCenter();
+  const size = monsterImpactSize();
+  const item = document.createElement("div");
+  item.className = `monster-impact impact-${known}`;
+  item.style.left = `${center.x}px`;
+  item.style.top = `${center.y}px`;
+  item.style.width = `${size.width}px`;
+  item.style.height = `${size.height}px`;
+  stage.appendChild(item);
+  window.setTimeout(() => item.remove(), 900);
+}
+
 function shakeStage(kind) {
   if (!stage) return;
   stage.dataset.shake = kind;
@@ -481,10 +689,114 @@ function summonBurst() {
   burst(0.28, 0.62, "#ffe08a", 26);
 }
 
+function monsterAppearImpact() {
+  const rect = canvas.getBoundingClientRect();
+  const baseX = rect.width * 0.5;
+  const baseY = rect.height * 0.46;
+  flash("#7a4dff");
+  for (let index = 0; index < 4; index += 1) {
+    particles.push({
+      kind: "ring",
+      x: baseX,
+      y: baseY + 18,
+      vx: 0,
+      vy: 0,
+      life: 18 + index * 5,
+      maxLife: 18 + index * 5,
+      color: index % 2 === 0 ? "#b96cff" : "#ff5c57",
+      size: 46 + index * 24
+    });
+  }
+  for (let index = 0; index < 42; index += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    particles.push({
+      kind: "smoke",
+      x: baseX + Math.cos(angle) * randomRange(12, 54),
+      y: baseY + Math.sin(angle) * randomRange(8, 36),
+      vx: Math.cos(angle) * randomRange(0.4, 1.8),
+      vy: Math.sin(angle) * randomRange(0.2, 1.2) - 0.7,
+      life: randomRange(24, 46),
+      maxLife: 46,
+      color: index % 2 === 0 ? "#6d4aa8" : "#ff6a6a",
+      size: randomRange(8, 22)
+    });
+  }
+  for (let index = 0; index < 30; index += 1) {
+    particles.push({
+      x: baseX + randomRange(-70, 70),
+      y: baseY + randomRange(-50, 54),
+      vx: randomRange(-1.8, 1.8),
+      vy: randomRange(-2.8, -0.2),
+      life: randomRange(20, 38),
+      color: index % 2 === 0 ? "#ffd15c" : "#c58cff",
+      size: randomRange(2, 5)
+    });
+  }
+}
+
+function monsterDefeatImpact() {
+  const rect = canvas.getBoundingClientRect();
+  const baseX = rect.width * 0.5;
+  const baseY = rect.height * 0.45;
+  flash("#fff0a8");
+  for (let index = 0; index < 54; index += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    particles.push({
+      kind: "shard",
+      x: baseX + randomRange(-34, 34),
+      y: baseY + randomRange(-44, 48),
+      vx: Math.cos(angle) * randomRange(2.0, 6.2),
+      vy: Math.sin(angle) * randomRange(1.4, 5.2) - 1.7,
+      life: randomRange(24, 44),
+      maxLife: 44,
+      color: index % 4 === 0 ? "#fff7dd" : index % 4 === 1 ? "#ffd15c" : index % 4 === 2 ? "#7dd873" : "#9fb8c8",
+      size: randomRange(4, 11),
+      rotation: randomRange(0, Math.PI)
+    });
+  }
+  for (let index = 0; index < 3; index += 1) {
+    particles.push({
+      kind: "ring",
+      x: baseX,
+      y: baseY + 18,
+      vx: 0,
+      vy: 0,
+      life: 16 + index * 4,
+      maxLife: 16 + index * 4,
+      color: index === 0 ? "#fff7dd" : "#7dd873",
+      size: 54 + index * 30
+    });
+  }
+}
+
+function monsterAppearSound() {
+  if (postNativeAudio({ sfx: "monster-appear" })) return;
+  sting([26, 31, 36]);
+  if (!audio.enabled || !audio.ctx) return;
+  const time = audio.ctx.currentTime;
+  noiseAt(time, 0.24, 0.12, 260);
+  noteAt(26, time, 0.42, "sawtooth", 0.14);
+  noteAt(31, time + 0.08, 0.34, "triangle", 0.1);
+}
+
+function monsterDefeatSound() {
+  if (postNativeAudio({ sfx: "monster-defeat" })) return;
+  sting([31, 28, 24]);
+  if (!audio.enabled || !audio.ctx) return;
+  const time = audio.ctx.currentTime;
+  noiseAt(time, 0.34, 0.18, 320);
+  noiseAt(time + 0.18, 0.62, 0.12, 220);
+  noteAt(31, time, 0.6, "sawtooth", 0.14);
+  noteAt(24, time + 0.2, 0.9, "triangle", 0.1);
+}
+
 function spawnSlashMark(kind) {
   if (!stage) return;
+  const center = monsterStageCenter();
   const item = document.createElement("div");
   item.className = `slash-mark slash-${kind}`;
+  item.style.left = `${center.x}px`;
+  item.style.top = `${center.y}px`;
   stage.appendChild(item);
   window.setTimeout(() => item.remove(), 420);
 }
@@ -510,8 +822,15 @@ function resize() {
 
 function burst(xRatio, yRatio, color, count) {
   const rect = canvas.getBoundingClientRect();
-  const x = rect.width * xRatio;
-  const y = rect.height * yRatio;
+  burstAt(rect.width * xRatio, rect.height * yRatio, color, count);
+}
+
+function monsterBurst(color, count) {
+  const center = monsterCanvasCenter();
+  burstAt(center.x, center.y, color, count);
+}
+
+function burstAt(x, y, color, count) {
   for (let index = 0; index < count; index += 1) {
     const angle = Math.random() * Math.PI * 2;
     const speed = 1.2 + Math.random() * 3.4;
@@ -527,15 +846,178 @@ function burst(xRatio, yRatio, color, count) {
   }
 }
 
+function fireImpact(stagger, center = monsterCanvasCenter()) {
+  const baseX = center.x;
+  const baseY = center.y;
+  const count = stagger ? 18 : 38;
+  for (let index = 0; index < count; index += 1) {
+    particles.push({
+      kind: "flame",
+      x: baseX + randomRange(-17, 17),
+      y: baseY + randomRange(-3, 21),
+      vx: randomRange(-0.85, 0.85),
+      vy: randomRange(-4.4, -1.4),
+      life: randomRange(24, 42),
+      maxLife: 42,
+      color: index % 3 === 0 ? "#ffd15c" : index % 3 === 1 ? "#ff7a35" : "#ff3b27",
+      size: randomRange(4, 9)
+    });
+  }
+  particles.push({
+    kind: "ring",
+    x: baseX,
+    y: baseY + 10,
+    vx: 0,
+    vy: 0,
+    life: 18,
+    maxLife: 18,
+    color: "#ff7a35",
+    size: stagger ? 18 : 28
+  });
+}
+
+function earthImpact(stagger, center = monsterCanvasCenter()) {
+  const baseX = center.x;
+  const baseY = center.y;
+  const count = stagger ? 16 : 34;
+  for (let index = 0; index < count; index += 1) {
+    particles.push({
+      kind: "shard",
+      x: baseX + randomRange(-13, 13),
+      y: baseY + randomRange(-5, 11),
+      vx: randomRange(-3.6, 3.6),
+      vy: randomRange(-5.4, -1.1),
+      life: randomRange(24, 38),
+      maxLife: 38,
+      color: index % 3 === 0 ? "#d6b16a" : index % 3 === 1 ? "#7b6042" : "#9fc56a",
+      size: randomRange(2.5, 6),
+      rotation: randomRange(0, Math.PI)
+    });
+  }
+  particles.push({
+    kind: "ring",
+    x: baseX,
+    y: baseY + 6,
+    vx: 0,
+    vy: 0,
+    life: 14,
+    maxLife: 14,
+    color: "#d6b16a",
+    size: stagger ? 21 : 35
+  });
+}
+
+function windImpact(stagger, center = monsterCanvasCenter()) {
+  const baseX = center.x;
+  const baseY = center.y;
+  const count = stagger ? 2 : 4;
+  for (let index = 0; index < count; index += 1) {
+    particles.push({
+      slash: true,
+      x: baseX + randomRange(-16, 15),
+      y: baseY + index * 9.5 + randomRange(-5, 6),
+      vx: randomRange(0.6, 1.8),
+      vy: randomRange(-0.5, 0.4),
+      life: 16 + index * 2,
+      maxLife: 20,
+      color: index % 2 === 0 ? "#caff8a" : "#7fe0ff",
+      size: stagger ? 21 : 36,
+      thickness: stagger ? 2.5 : 4,
+      rotation: -0.78 + index * 0.26
+    });
+  }
+  for (let index = 0; index < (stagger ? 10 : 22); index += 1) {
+    particles.push({
+      x: baseX + randomRange(-30, 10),
+      y: baseY + randomRange(-17, 31),
+      vx: randomRange(2.6, 5.2),
+      vy: randomRange(-1.2, 1.2),
+      life: randomRange(14, 28),
+      color: index % 2 === 0 ? "#eaffd4" : "#99ffd0",
+      size: randomRange(1, 2.5)
+    });
+  }
+}
+
+function waterImpact(stagger, center = monsterCanvasCenter()) {
+  const baseX = center.x;
+  const baseY = center.y;
+  const count = stagger ? 18 : 42;
+  for (let index = 0; index < count; index += 1) {
+    particles.push({
+      kind: "droplet",
+      x: baseX + randomRange(-18, 18),
+      y: baseY + randomRange(-8, 13),
+      vx: randomRange(-3.4, 3.4),
+      vy: randomRange(-5.0, -0.8),
+      life: randomRange(20, 36),
+      maxLife: 36,
+      color: index % 3 === 0 ? "#d8fbff" : index % 3 === 1 ? "#72e8ff" : "#3aa7ff",
+      size: randomRange(1.5, 4)
+    });
+  }
+  particles.push({
+    kind: "wave",
+    x: baseX - 4,
+    y: baseY + 11,
+    vx: 0,
+    vy: 0,
+    life: 18,
+    maxLife: 18,
+    color: "#72e8ff",
+    size: stagger ? 21 : 34
+  });
+}
+
+function randomRange(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function monsterCanvasCenter() {
+  return monsterCenterRelativeTo(canvas);
+}
+
+function monsterStageCenter() {
+  return monsterCenterRelativeTo(stage);
+}
+
+function monsterImpactSize() {
+  const targetRect = monsterImage?.getBoundingClientRect() || monsterStage?.getBoundingClientRect();
+  if (!targetRect || targetRect.width <= 0 || targetRect.height <= 0) {
+    const stageRect = stage?.getBoundingClientRect();
+    return {
+      width: Math.max(1, (stageRect?.width || 1) * 0.2),
+      height: Math.max(1, (stageRect?.height || 1) * 0.2)
+    };
+  }
+  return {
+    width: Math.max(1, targetRect.width * 0.66),
+    height: Math.max(1, targetRect.height * 0.59)
+  };
+}
+
+function monsterCenterRelativeTo(container) {
+  const containerRect = container?.getBoundingClientRect();
+  const targetRect = monsterImage?.getBoundingClientRect() || monsterStage?.getBoundingClientRect();
+  if (!containerRect) return { x: 0, y: 0 };
+  if (!targetRect || targetRect.width <= 0 || targetRect.height <= 0) {
+    return { x: containerRect.width * 0.5, y: containerRect.height * 0.5 };
+  }
+  return {
+    x: targetRect.left - containerRect.left + targetRect.width * 0.5,
+    y: targetRect.top - containerRect.top + targetRect.height * 0.5
+  };
+}
+
 function slash(kind = "normal") {
-  const rect = canvas.getBoundingClientRect();
+  const center = monsterCanvasCenter();
   spawnSlashMark(kind);
   const baseColor = kind === "skill" ? "#ffd15c" : "#fff7dd";
-  const accentColor = kind === "skill" ? "#7fe0ff" : "#ffe9a8";
+  const accentColor = kind === "skill" ? "#f0b73a" : "#ffe9a8";
   for (let index = 0; index < (kind === "skill" ? 3 : 2); index += 1) {
     particles.push({
-      x: rect.width * (0.49 + index * 0.025),
-      y: rect.height * (0.39 + index * 0.035),
+      x: center.x + index * 10,
+      y: center.y + index * 8,
       vx: 0,
       vy: -0.3,
       life: 16 - index * 2,
@@ -548,8 +1030,8 @@ function slash(kind = "normal") {
     });
   }
   particles.push({
-    x: rect.width * 0.53,
-    y: rect.height * 0.47,
+    x: center.x,
+    y: center.y,
     vx: 0,
     vy: 0,
     life: 18,
@@ -601,7 +1083,7 @@ function draw() {
       ctx.lineTo(particle.size * 1.18, 0);
       ctx.stroke();
       ctx.restore();
-    } else if (particle.ring) {
+    } else if (particle.ring || particle.kind === "ring") {
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       ctx.strokeStyle = particle.color;
@@ -610,6 +1092,51 @@ function draw() {
       ctx.beginPath();
       ctx.arc(particle.x, particle.y, particle.size * progress, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.restore();
+    } else if (particle.kind === "wave") {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = particle.color;
+      ctx.lineWidth = 5;
+      ctx.lineCap = "round";
+      const progress = 1 - particle.life / (particle.maxLife || 18);
+      ctx.beginPath();
+      ctx.ellipse(particle.x, particle.y, particle.size * progress, particle.size * 0.28 * progress, -0.18, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    } else if (particle.kind === "flame") {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.translate(particle.x, particle.y);
+      const scale = Math.max(0.25, particle.life / (particle.maxLife || 42));
+      ctx.fillStyle = particle.color;
+      ctx.beginPath();
+      ctx.moveTo(0, -particle.size * 1.4 * scale);
+      ctx.lineTo(particle.size * 0.7 * scale, particle.size * 0.6 * scale);
+      ctx.lineTo(-particle.size * 0.6 * scale, particle.size * 0.7 * scale);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else if (particle.kind === "shard") {
+      ctx.save();
+      ctx.translate(particle.x, particle.y);
+      ctx.rotate((particle.rotation || 0) + particle.life * 0.08);
+      ctx.fillStyle = particle.color;
+      ctx.fillRect(-particle.size * 0.5, -particle.size * 0.35, particle.size, particle.size * 0.7);
+      ctx.restore();
+    } else if (particle.kind === "droplet") {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.beginPath();
+      ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (particle.kind === "smoke") {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.beginPath();
+      ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     } else {
       ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
@@ -643,7 +1170,7 @@ function setTrack(track) {
 
   const player = audio.players[track];
   if (!player) return;
-  player.volume = track === "battle" ? 0.74 : track === "adventure" ? 0.72 : 0.68;
+  player.volume = track === "dungeon-adventure" ? 0.86 : track.includes("battle") ? 0.74 : track.includes("adventure") ? 0.72 : 0.68;
   if (audio.activeTrack !== track) player.currentTime = 0;
   player.play().catch(() => {
     audio.enabled = false;
@@ -765,7 +1292,9 @@ function scheduleStep(track, step, time) {
 }
 
 function sting(notes) {
-  if (!audio.enabled || !audio.ctx) return;
+  if (!audio.enabled) return;
+  if (!audio.ctx) ensureEffectAudio();
+  if (!audio.ctx) return;
   notes.forEach((midi, index) => {
     noteAt(midi, audio.ctx.currentTime + index * 0.065, 0.1, "square", 0.16);
   });

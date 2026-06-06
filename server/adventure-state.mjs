@@ -17,7 +17,7 @@ const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃（演出用の HP 減少
 // ランダムエンカウント＆増援
 const ENCOUNTER_SPAWN_CHANCE = 0.2; // ツール使用(PreToolUse)毎にモンスターが出現する確率（TODO 有無に関わらず統一）
 const WILD_HITS_TO_DEFEAT = 5; // TODO 不在で出たエンカウントは hero の攻撃 N 回で討伐（HP は無関係）
-const BATTLE_SUMMON_CHANCE = 0.2; // 戦闘中、ツール使用(PreToolUse)毎に精霊が1体だけ増援する確率
+const BATTLE_SUMMON_CHANCE = 0.1; // 戦闘中、ツール使用(PreToolUse)毎に精霊が1体だけ増援する確率
 const MAX_ALLIES = 4; // 精霊の同時在席上限（表示枠・属性数＝4）
 
 // ゲーム確率の判定に使う乱数。テストから差し替え可能（id 生成の Math.random とは分離）。
@@ -32,12 +32,15 @@ const TODO_TOOLS = {
   update_plan: "plan" // Codex（実機検証済み）
 };
 
+const QUEST_STAGES = ["field", "dungeon", "castle"];
+
 export function createInitialState() {
   return {
     active: false,
     phase: "idle", // idle | field | battle | complete
     turn: 0,
-    currentTrack: "field", // field | adventure | battle
+    currentTrack: "field", // field | adventure | battle | dungeon-adventure | dungeon-battle | castle-adventure | castle-battle
+    adventureStage: "field", // field | dungeon | castle
     monsters: [], // 出現中のエンカウント（同時に最大1体）
     defeated: [],
     quest: [], // 最新 TodoWrite スナップショット（元の順序・status 付き）= クエスト一覧の表示用
@@ -66,6 +69,7 @@ export function reduceHookEvent(previousState, hookEvent) {
   if (!Array.isArray(state.defeated)) state.defeated = [];
   if (!Array.isArray(state.allies)) state.allies = [];
   if (!Array.isArray(state.quest)) state.quest = [];
+  if (!QUEST_STAGES.includes(state.adventureStage)) state.adventureStage = "field";
   const event = normalizeHookEvent(hookEvent);
   const effects = [];
 
@@ -122,6 +126,7 @@ export function reduceHookEvent(previousState, hookEvent) {
   if (state.active) {
     state.phase = hasEngaged(state) ? "battle" : "field";
   }
+  state.adventureStage = currentAdventureStage(state);
   state.currentTrack = trackForState(state);
   state.log = state.log.slice(-MAX_LOG);
   return { state, effects, normalized: event };
@@ -139,7 +144,7 @@ function reconcileQuest(state, event, effects) {
   );
 
   // クエスト一覧を最新スナップショットで更新（表示用）。モンスターは TODO からは湧かない。
-  state.quest = event.todoItems.map((it) => ({ label: it.label, status: it.status }));
+  state.quest = assignQuestStages(event.todoItems);
 
   // TODO を1項目でも完了したら、それに紐づくエンカウントを討伐。
   if (newlyCompleted) {
@@ -211,18 +216,17 @@ function normalAttack(state, event, effects) {
     step(state, event, effects);
     return;
   }
-  // モンスター在：精霊召喚（20%）か 通常攻撃 の片方だけ。召喚できたら今回は攻撃しない。
+  // モンスター在：精霊召喚（10%）か 通常攻撃 の片方だけ。召喚できたら今回は攻撃しない。
   if (maybeSummonReinforcement(state, event, effects)) return;
   const target = currentTarget(state);
   damage(state, target, NORMAL_DAMAGE, "normal", "", event, effects);
-  if (state.monsters.includes(target)) allyAssist(state, target, event, effects);
 }
 
 function skillAttack(state, event, effects) {
   ensureActive(state, event, effects);
   state.attacks += 1;
   const target = currentTarget(state);
-  const skill = event.toolName || "技";
+  const skill = event.summary || event.toolName || "技";
   if (target) {
     damage(state, target, SKILL_DAMAGE, "skill", skill, event, effects);
     if (state.monsters.includes(target)) allyAssist(state, target, event, effects);
@@ -247,9 +251,10 @@ function maybeSummonReinforcement(state, event, effects) {
 
 function damage(state, monster, amount, kind, skill, event, effects, ally = null) {
   const allyId = ally ? ally.id : undefined;
+  const allyElement = ally ? ally.element : undefined;
   const applied = Math.max(0, Math.min(amount, monster.hp));
   monster.hp = Math.max(0, monster.hp - amount); // HP は演出用
-  effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied, allyId });
+  effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied, allyId, allyElement });
   pushLog(state, "attack", `${skill || kind} -${applied}`, event);
 
   // 討伐条件: linkedTodo なら攻撃では倒れない（TODO 完了で討伐）。
@@ -276,6 +281,7 @@ function townReset(state, event, effects) {
   state.quest = [];
   state.monsters = [];
   state.allies = [];
+  state.adventureStage = "field";
   pushLog(state, "session_start", "拠点に到着", event);
   effects.push({ type: "session_start", track: "field" });
 }
@@ -287,7 +293,7 @@ function beginTurn(state, event, effects) {
   // TodoWrite/update_plan が来たら reconcileQuest が本物の TODO で置き換える。
   // synthetic は表示専用で、エンカウントの linkedTodo（討伐条件）には数えない。
   const prompt = userPromptText(event);
-  if (prompt) state.quest = [{ label: prompt, status: "in_progress", synthetic: true }];
+  if (prompt) state.quest = [{ label: prompt, status: "in_progress", synthetic: true, stage: "field" }];
   pushLog(state, "adventure_started", `Turn ${state.turn} started`, event);
   effects.push({ type: "adventure_started", track: "adventure", turn: state.turn });
 }
@@ -322,7 +328,7 @@ function hold(state, event, effects) {
   effects.push({ type: "hold" });
 }
 
-// SubagentStart でも精霊が1体参戦（攻撃時増援と同じ召喚）。SubagentStop で離脱（LIFO）。
+// SubagentStart でも精霊が1体参戦（攻撃時増援と同じ召喚）。SubagentStop で最初に出た精霊から離脱。
 // 精霊を1体召喚する。実際に追加できたら true、上限/全属性在席で何もしなければ false。
 function summonAlly(state, event, effects) {
   if (state.allies.length >= MAX_ALLIES) return false; // 上限（表示枠4）に達したら増援しない
@@ -346,7 +352,7 @@ function summonAlly(state, event, effects) {
 }
 
 function returnAlly(state, event, effects) {
-  const ally = state.allies.pop();
+  const ally = state.allies.shift();
   if (!ally) {
     // 参戦記録なしで Stop が来た場合は何もしない（黙って成功扱いにしない＝effect は出さない）
     return;
@@ -381,9 +387,54 @@ function hasRealTodoInProgress(state) {
   return state.quest.some((q) => q.status === "in_progress" && !q.synthetic);
 }
 
+function currentAdventureStage(state) {
+  const activeQuest = state.quest.find((q) => q.status !== "completed");
+  const finalQuest = state.quest[state.quest.length - 1];
+  const stage = activeQuest?.stage || finalQuest?.stage || "field";
+  return QUEST_STAGES.includes(stage) ? stage : "field";
+}
+
+function assignQuestStages(items) {
+  const counts = questStageCounts(items.length);
+  let stageIndex = 0;
+  let usedInStage = 0;
+
+  return items.map((it) => {
+    while (stageIndex < counts.length - 1 && usedInStage >= counts[stageIndex]) {
+      stageIndex += 1;
+      usedInStage = 0;
+    }
+    const stage = QUEST_STAGES[stageIndex] || "castle";
+    usedInStage += 1;
+    return { label: it.label, status: it.status, stage };
+  });
+}
+
+function questStageCounts(total) {
+  const stageCount = Math.min(QUEST_STAGES.length, Math.max(0, total));
+  if (stageCount === 0) return [];
+
+  const base = Math.floor(total / stageCount);
+  let remainder = total % stageCount;
+  return Array.from({ length: stageCount }, () => {
+    const count = base + (remainder > 0 ? 1 : 0);
+    remainder -= 1;
+    return count;
+  });
+}
+
 function trackForState(state) {
-  if (state.phase === "battle") return "battle";
-  if (state.active && state.phase === "field") return "adventure";
+  const stage = QUEST_STAGES.includes(state.adventureStage) ? state.adventureStage : "field";
+  if (state.phase === "battle") {
+    if (stage === "dungeon") return "dungeon-battle";
+    if (stage === "castle") return "castle-battle";
+    return "battle";
+  }
+  if (state.active && state.phase === "field") {
+    if (stage === "dungeon") return "dungeon-adventure";
+    if (stage === "castle") return "castle-adventure";
+    return "adventure";
+  }
   return "field";
 }
 
