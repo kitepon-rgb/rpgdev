@@ -48,6 +48,7 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
         window.isMovableByWindowBackground = false
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.isRestorable = false // 位置/サイズの復元は自前で行う（macOS 自動復元と競合させない）
         window.backgroundColor = NSColor.black
         // 4:3 維持は contentAspectRatio ではなく windowWillResize で行う（contentAspectRatio だと
         // 一部の辺からしか掴めなくなることがあるため）。これで全辺・全角から自然にリサイズできる。
@@ -76,6 +77,11 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
         self.webView = webView
         self.container = container
         self.stageView = stageView
+
+        // 前回終了時のウィンドウ位置・サイズを復元（ディスプレイ環境が変わっていたら既定位置のまま）。
+        if let restored = restoredWindowFrame() {
+            window.setFrame(restored, display: false)
+        }
         applyScale()
 
         if let url = URL(string: urlString) {
@@ -85,10 +91,41 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        saveWindowState() // 現在のフレーム＋ディスプレイ署名を記録（次回復元の基準）
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        saveWindowState()
+    }
+
+    // --- ウィンドウ位置・サイズの記憶（前回起動時の状態を復元。ディスプレイ環境が変わったらリセット） ---
+
+    // 全スクリーン構成の署名。モニタ追加/削除/解像度変更で変わる＝「ディスプレイ環境が変わった」。
+    private func screenSignature() -> String {
+        return NSScreen.screens.map { NSStringFromRect($0.frame) }.joined(separator: "|")
+    }
+
+    private func saveWindowState() {
+        guard let window = window, !window.isMiniaturized else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(NSStringFromRect(window.frame), forKey: "RPGDevWindowFrame")
+        defaults.set(screenSignature(), forKey: "RPGDevScreenSignature")
+    }
+
+    // 保存フレームを返す。ディスプレイ環境が変化／画面外／極端に小さい場合は nil（＝既定位置にリセット）。
+    private func restoredWindowFrame() -> NSRect? {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: "RPGDevScreenSignature") == screenSignature(),
+              let saved = defaults.string(forKey: "RPGDevWindowFrame") else { return nil }
+        let rect = NSRectFromString(saved)
+        guard rect.width >= 512, rect.height >= 384 else { return nil }
+        // どこかのスクリーンの可視領域と重なっていれば画面内とみなす。
+        let onScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(rect) }
+        return onScreen ? rect : nil
     }
 
     // 掴んだ方向（幅優先/高さ優先）に応じてコンテンツを 4:3 にスナップする。
@@ -113,6 +150,15 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
 
     func windowDidResize(_ notification: Notification) {
         applyScale()
+        saveWindowState()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        saveWindowState()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        saveWindowState()
     }
 
     // コンテンツ領域に合わせ、内部 1024x768 を等倍スケールで配置する（中身は 1024x768 のまま

@@ -226,7 +226,7 @@ function skillAttack(state, event, effects) {
   ensureActive(state, event, effects);
   state.attacks += 1;
   const target = currentTarget(state);
-  const skill = event.summary || event.toolName || "技";
+  const skill = skillName(event);
   if (target) {
     damage(state, target, SKILL_DAMAGE, "skill", skill, event, effects);
     if (state.monsters.includes(target)) allyAssist(state, target, event, effects);
@@ -567,4 +567,32 @@ function cloneState(state) {
 
 function trimLine(value, max) {
   return value.length > max ? `${value.slice(0, max - 1)}...` : value;
+}
+
+// PostToolUse のスキル技名は tool_name 基準で決める（コマンド/パッチ本文は一切見ない）。
+// これにより Codex の apply_patch（command が "*** Begin Patch …"）でも技名が "***" にならない。
+// - 通常ツール: アンダースコアを除いて各語頭を大文字（PascalCase）。Bash→Bash, apply_patch→ApplyPatch, spawn_agent→SpawnAgent。
+// - MCP (mcp__<server>__…__<action>): 動作の1つ手前の区画＝サーバ名を PascalCase（末尾 "mcp" は除去）。
+//   mcp__aiterm__pty_read→Aiterm, mcp__caveat__caveat_record→Caveat, mcp__codex_apps__x_hermes_mcp__generate_image→XHermes。
+function skillName(event) {
+  const tool = (event.toolName || "").trim();
+  if (!tool) return "技";
+  if (tool.startsWith("mcp__")) return mcpSkillName(tool);
+  return pascalCase(tool.replace(/^functions\./, "")) || "技";
+}
+
+function mcpSkillName(tool) {
+  const segments = tool.split("__").filter(Boolean); // ["mcp", <server…>, <action>]
+  // 末尾が動作、その1つ手前がサーバ区画（区画が無ければ mcp の次）。
+  const server = segments.length >= 3 ? segments[segments.length - 2] : segments[1] || "";
+  const cleaned = server.replace(/_?mcp$/i, ""); // 冗長な末尾 "mcp"/"_mcp" を除去（x_hermes_mcp→x_hermes）
+  return pascalCase(cleaned) || pascalCase(server) || "Mcp";
+}
+
+function pascalCase(value) {
+  return String(value)
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join("");
 }

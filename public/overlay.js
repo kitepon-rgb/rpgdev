@@ -346,8 +346,10 @@ function monsterSprite(monster) {
 let fxQueue = [];
 let fxBusy = false;
 let monsterDefeatInProgress = false;
+let appearAttackHoldUntil = 0; // この時刻(ms)まで attack の再生を保留（出現演出と被らせない）
 const ANIM_GAP = 100; // アニメ間の空き（0.1 秒）
 const ATTACK_QUEUE_INTERVAL_MS = 1000;
+const APPEAR_ATTACK_DELAY_MS = 4000; // 出現演出の再生開始から、攻撃キュー再生を待たせる時間（4 秒）
 const MAX_QUEUED_ATTACKS = 10; // 詰まりすぎ防止（超過した攻撃アニメは間引く）
 
 // そのエフェクトのアニメが終わるまでの目安(ms)。0 は即時（アニメ枠を占有せず次へ）。
@@ -401,8 +403,24 @@ function effects(list) {
 function pumpFx() {
   if (fxBusy) return;
   while (fxQueue.length) {
-    const effect = fxQueue.shift();
-    if (monsterDefeatInProgress && effect.type === "attack") continue;
+    const effect = fxQueue[0]; // まだ消費しない（保留判定のため覗くだけ）
+    if (monsterDefeatInProgress && effect.type === "attack") {
+      fxQueue.shift();
+      continue;
+    }
+    // 出現演出と被らせない：出現開始から APPEAR_ATTACK_DELAY_MS の間は攻撃キューを再生しない。
+    if (effect.type === "attack") {
+      const wait = appearAttackHoldUntil - Date.now();
+      if (wait > 0) {
+        fxBusy = true;
+        window.setTimeout(() => {
+          fxBusy = false;
+          pumpFx();
+        }, wait);
+        return; // shift せずに待つ（保留が明けてから同じ攻撃を再生）
+      }
+    }
+    fxQueue.shift();
     playEffect(effect);
     const anim = fxAnimMs(effect);
     if (anim > 0) {
@@ -425,6 +443,8 @@ function fxQueueDelayMs(effect, anim) {
 function playEffect(effect) {
   switch (effect.type) {
     case "monster_appeared":
+      // 出現開始時刻を基準に、以後 4 秒は攻撃キューの再生を保留する（出現演出と被らせない）。
+      appearAttackHoldUntil = Date.now() + APPEAR_ATTACK_DELAY_MS;
       if (effect.monster) {
         const sprite = monsterSprite(effect.monster);
         lastRenderedMonster = { ...effect.monster, sprite };
@@ -475,13 +495,13 @@ function playEffect(effect) {
       break;
     case "finisher":
       // 勇者の会心の一撃。撃破の直前に必ず1回流す（モンスターはまだ画面に居る）。
+      // トドメ演出ではスキル名称（技名カットイン）は出さない＝視覚演出と効果音のみ。
       flash("#fff4c2");
       slash("skill");
       window.setTimeout(() => slash("skill"), 150); // 二段斬りで会心らしさを出す
       shakeStage("skill");
       monsterBurst("#ffd15c", 40);
       monsterBurst("#fff7dd", 22);
-      showSkillBanner("会心の一撃");
       sting([79, 83, 86, 91]);
       break;
     case "monster_defeated":
@@ -554,14 +574,11 @@ function isMonsterTextSuppressed() {
   return monsterStage.dataset.active === "true" || Boolean(monsterStage.dataset.action);
 }
 
+// 技名は reducer 側で tool_name 基準に整形済み（PascalCase / MCP はサーバ名）。
+// ここでは表示用に長さを切り詰めるだけ（先頭単語抜き出し等の加工はしない）。
 function formatSkillName(value) {
-  const text = String(value || "SKILL")
-    .replace(/^functions\./, "")
-    .replace(/^mcp__/, "")
-    .replaceAll("_", " ")
-    .trim();
-  const firstWord = text.split(/\s+/).find(Boolean) || "SKILL";
-  return firstWord.length > 18 ? `${firstWord.slice(0, 17)}...` : firstWord;
+  const text = String(value || "SKILL").trim() || "SKILL";
+  return text.length > 18 ? `${text.slice(0, 17)}...` : text;
 }
 
 function allySpritePath(sprite) {

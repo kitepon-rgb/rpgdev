@@ -276,17 +276,35 @@ test("PreToolUse = normal attack, PostToolUse = skill attack named after the too
   assert.equal(skill.skill, "Edit");
 });
 
-test("PostToolUse skill attack uses the command summary when available", () => {
-  __setChance(chanceSeq(0, 0)); // 最初の Pre で出現させる（出現のみ）
-  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
-  r = reduceHookEvent(r.state, pre()); // 出現
-  const res = reduceHookEvent(r.state, {
-    provider: "claude",
-    event: "PostToolUse",
-    raw: { tool_name: "Bash", tool_input: { command: "npm test" } }
-  });
-  const skill = res.effects.find((e) => e.type === "attack" && e.kind === "skill");
-  assert.equal(skill.skill, "npm test");
+test("PostToolUse skill name is tool_name based (PascalCase; MCP→server; command body ignored)", () => {
+  const cases = [
+    // Bash は中で何を実行しても tool_name のまま（コマンド/パッチ本文は見ない）。
+    { tool_name: "Bash", tool_input: { command: "npm test" }, expected: "Bash" },
+    // Codex apply_patch の command は "*** Begin Patch …"。技名が "***" にならないこと。
+    { tool_name: "apply_patch", tool_input: { command: "*** Begin Patch\n*** Update File: x.txt\n" }, expected: "ApplyPatch" },
+    { tool_name: "spawn_agent", expected: "SpawnAgent" },
+    { tool_name: "view_image", expected: "ViewImage" },
+    { tool_name: "Edit", expected: "Edit" },
+    { tool_name: "WebFetch", expected: "WebFetch" },
+    // MCP はサーバ名（動作の1つ手前の区画）を PascalCase、末尾 "mcp" は除去。
+    { tool_name: "mcp__aiterm__pty_read", expected: "Aiterm" },
+    { tool_name: "mcp__caveat__caveat_record", expected: "Caveat" },
+    { tool_name: "mcp__node_repl__js", expected: "NodeRepl" },
+    { tool_name: "mcp__codex_apps__x_hermes_mcp__generate_image", expected: "XHermes" }
+  ];
+
+  for (const { tool_name, tool_input, expected } of cases) {
+    __setChance(chanceSeq(0, 0)); // 最初の Pre で出現させる（出現のみ）
+    let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+    r = reduceHookEvent(r.state, pre()); // 出現
+    const res = reduceHookEvent(r.state, {
+      provider: "claude",
+      event: "PostToolUse",
+      raw: { tool_name, tool_input: tool_input || {} }
+    });
+    const skill = res.effects.find((e) => e.type === "attack" && e.kind === "skill");
+    assert.equal(skill.skill, expected, `${tool_name} → ${expected}`);
+  }
 });
 
 test("one Hook does exactly one action (spawn XOR summon XOR attack — never combined)", () => {

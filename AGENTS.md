@@ -92,9 +92,10 @@ reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と
 state / effect に配線済み。overlay には精霊スプライト、斬撃、技名カットイン、揺れ、
 召喚/属性別追撃演出、ステージ別背景、出現（ポータル+煙）/撃破（発光+破片）アニメと効果音
 （`monster-appear.wav` / `monster-defeat.wav`）があり、攻撃/リアクションのアニメは全体共通の
-単一キューで直列化される（攻撃は固定1秒間隔、その他はアニメ目安+0.1秒で次へ。出現/召喚/帰還/
-クリア等の即時演出はキューを占有しない。撃破時は唐突に消さず、直前に会心の一撃（`finisher`＝斬撃）を
-必ず1回挿んでから撃破＋消滅を流す。撃破中はワールド演出を約1.8秒保留して撃破を見せる）。
+単一キューで直列化される（攻撃は固定1秒間隔、その他はアニメ目安+0.1秒で次へ。モンスター出現の
+演出開始から4秒間は攻撃キューを再生しない＝出現演出と直後のスキル攻撃を被らせない。出現/召喚/帰還/
+クリア等の即時演出はキューを占有しない。撃破時は唐突に消さず、直前に会心の一撃（`finisher`＝斬撃。
+技名テキストは出さず視覚演出のみ）を必ず1回挿んでから撃破＋消滅を流す。撃破中はワールド演出を約1.8秒保留して撃破を見せる）。
 勇者は常にモンスターより前面（`.hero` z-index > `.monster`）。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体。
 docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite payload、TODO無しセッション方針）は全て検証・決定済み。
 
@@ -130,8 +131,9 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
      なった時のみ討伐（in_progress TODO が消えると linkedTodo は解除）。
    - 攻撃/増援判定：PreToolUse は通常攻撃に加えて 20% エンカウント出現判定と、戦闘中は
-     10% 精霊増援判定を行う（1ツール呼び出し1回）。PostToolUse はスキル攻撃（技名＝コマンド要約 or
-     ツール名）のみで出現・増援判定はせず、在席精霊の追撃はこの PostToolUse 時のみ。
+     10% 精霊増援判定を行う（1ツール呼び出し1回）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
+     PascalCase / MCP はサーバ名。コマンド/パッチ本文は見ない＝apply_patch の「***」を回避）のみで
+     出現・増援判定はせず、在席精霊の追撃はこの PostToolUse 時のみ。
      `SubagentStart` でも精霊1体参戦、`SubagentStop` で FIFO 帰還（最初に出た精霊から）。
    ここの挙動を変えたら [test/adventure-state.test.mjs](test/adventure-state.test.mjs) を更新すること。
 
@@ -141,7 +143,9 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
    指して `open` する。Swift アプリはボーダーレスな `WKWebView`（`LSUIElement`/アクセサリ
    アプリ）で、`window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
    ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで `monster-appear` /
-   `monster-defeat` を `AVAudioPlayer` でワンショット再生）。
+   `monster-defeat` を `AVAudioPlayer` でワンショット再生）。ウィンドウの位置・サイズは終了/移動/
+   リサイズ時に `UserDefaults` に保存し、次回起動で復元する（ディスプレイ構成が変わったら既定位置に
+   リセット。`isRestorable=false` で macOS 自動復元と競合させず自前管理）。
 
 5. **2 つのフロントエンド、1 つのサーバ:**
    - `/` → [public/index.html](public/index.html) + [public/app.js](public/app.js) — フル Web ビュー。

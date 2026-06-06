@@ -113,7 +113,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 ### 攻撃＝ツールフック（1 Hook = 1 アクション）[決定]
 - **1つの Hook では「出現 / 召喚 / 攻撃 / 前進」のいずれか1つだけ**を実行する（出現→攻撃→召喚を同一 Hook で連鎖させない＝演出上の違和感を排除）。
 - **PreToolUse**：敵不在なら 20% で出現（出たらそれだけ／出なければ前進）。敵在席なら 20% で精霊増援（召喚したらそれだけ）／召喚しなければ通常攻撃（`NORMAL_DAMAGE`, 演出）。
-- **PostToolUse → スキル攻撃。技名＝コマンド要約 or ツール名**（`SKILL_DAMAGE`, 演出）。`event.summary`（Bash の `command` 等を整形した要約）があればそれ、無ければツール名（例：Bash で `npm test` を実行→技名「npm test」、無ければ「Edit」）。出現・増援の判定はしない（Pre のみ）。
+- **PostToolUse → スキル攻撃。技名＝tool_name 基準**（`SKILL_DAMAGE`, 演出）。`skillName()` が tool_name を整形する：通常ツールは PascalCase（アンダースコア除去＋各語頭大文字。`apply_patch`→ApplyPatch, `spawn_agent`→SpawnAgent, `Bash`→Bash）、MCP はサーバ名（動作の1つ手前の区画を PascalCase・末尾 "mcp" 除去。`mcp__aiterm__pty_read`→Aiterm, `mcp__codex_apps__x_hermes_mcp__generate_image`→XHermes）。**コマンド/パッチ本文は一切見ない**（Codex の `apply_patch` は command が "*** Begin Patch…" だが技名は「ApplyPatch」になり「***」にならない）。出現・増援の判定はしない（Pre のみ）。
 - 攻撃も増援召喚も、敵（エンカウント）が居なければ起きない（敵不在 Hook は前進のみ）。トドメになった攻撃は、その帰結として撃破＋精霊退場を伴う（同一アクションの結果であり別アクションではない）。
 - 技名＝ツール名はプロバイダで品揃えが違う（後述）。未知ツールは生のツール名をそのまま技名に出す
   （握りつぶして通常攻撃に丸めない）。表示名マップは任意。
@@ -318,14 +318,14 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - TODO ツール（`tool_name ∈ {TodoWrite, update_plan}`）は `state.quest`（label+status+stage のスナップショット）を更新するだけ。
     新たに completed になった項目があれば紐づくエンカウントを討伐。**TODO を field/dungeon/castle の3区画へ均等割り**して各項目に `stage` を付与（§2.1）。
   - **冒険ステージ**：`adventureStage`（field/dungeon/castle）＝最初の未完了 TODO のステージ。`trackForState` がステージ×phase で7種の BGM トラックを選ぶ。SessionStart で field に戻す（§2.1）。
-  - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝`event.summary`（コマンド要約）or ツール名）。出現・増援の判定は PreToolUse のみ。
+  - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝tool_name を `skillName()` で整形＝PascalCase / MCP はサーバ名。コマンドは見ない）。出現・増援の判定は PreToolUse のみ。
   - **1 Hook = 1 アクション**：1つの Hook では出現/召喚/攻撃/前進のいずれか1つだけ（同一 Hook で連鎖しない）。
   - **TODO 未発生時はユーザー入力を1つの合成クエスト(`synthetic`, in_progress, stage:"field")として表示**し、TodoWrite で本物に置換。synthetic は表示専用で linkedTodo に数えない。
   - 精霊：戦闘中の PreToolUse ごとに **10%** で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
     在席中は **PostToolUse（スキル攻撃）の時だけ**現在の敵に追撃（`attack` kind:"ally"・`allyElement` 付き、討伐の5撃には数えない）。
     モンスター討伐ごとに精霊は全員消滅。SubagentStop で1体帰還（**FIFO＝最初に出た精霊から**）、在席ゼロでの Stop は無反応。
 - **テスト：28/28 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
-  ターン終了討伐・linkedTodo の completed 討伐・provider parity・冒険ステージ割り当て/追従・ステージ別 BGM・コマンド要約の技名・
+  ターン終了討伐・linkedTodo の completed 討伐・provider parity・冒険ステージ割り当て/追従・ステージ別 BGM・技名は tool_name 基準（PascalCase/MCP→サーバ名・"***"回避）・
   精霊 増援/参戦/重複回避/上限4/PostToolUse 限定追撃/討伐で消滅/FIFO 離脱 等）。
 - **フロントエンド：新 state/effect に配線済み。**
   - `public/overlay.html` / `overlay.js` / `overlay.css`：エンカウントのモンスターを画面中央の戦闘相手に、
@@ -335,12 +335,12 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - **冒険ステージの背景切替**：`adventureStage` で背景を `field.png`/`dungeon.png`/`castle.png` に切替（idle/complete は `town.png`）。dungeon/castle では skyline を隠す（`public/styles.css` / `overlay.css`）。
   - **出現/撃破の専用演出**：モンスター出現＝ポータル＋煙＋着地アニメ（`data-action="appear"`）、撃破＝発光＋破片の消滅アニメ（`data-action="defeat"`）。
     撃破中はワールド演出（背景/BGM/フェーズ反映）を約1.8秒保留し、撃破アニメを最後まで見せてから次の状態へ切替（`holdWorldVisuals`）。
-  - **撃破前の会心の一撃（v0.3.1）**：`monster_defeated` をそのまま流すと「何もなく唐突に倒れる」ので、撃破の直前にフロント合成の `finisher`（勇者の会心の一撃＝斬撃＋フラッシュ＋強い揺れ＋「会心の一撃!!」カットイン＋効果音）を必ず1回差し込む。
+  - **撃破前の会心の一撃（v0.3.1〜）**：`monster_defeated` をそのまま流すと「何もなく唐突に倒れる」ので、撃破の直前にフロント合成の `finisher`（勇者の会心の一撃＝斬撃＋フラッシュ＋強い揺れ＋バースト＋効果音。**技名テキストのカットインは出さない**＝視覚演出と効果音のみ）を必ず1回差し込む。
     キュー直列化により会心斬撃が終わってから（モンスターはそれまで画面に残す）撃破＋消滅へ進む。討伐は攻撃以外（ターン終了 Stop・TODO完了）でも起きるため、reducer の `attack` 有無に関わらずフロント側で常時挿入する。
   - **属性別の追撃エフェクト**：精霊の追撃（`kind:"ally"`）は `allyElement`（fire/earth/wind/water）ごとに専用のパーティクル＋CSS インパクト＋効果音を出し分ける。
   - **効果音（SFX）**：出現＝`monster-appear.wav`、撃破＝`monster-defeat.wav`。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
   - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。**攻撃は固定 1 秒間隔**、その他は「アニメ目安 + 0.1秒」で次へ。
-    出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect が来たらキュー内の未再生の攻撃を破棄し、代わりに会心の一撃（`finisher`）を1つ挿んでから撃破演出へ進む。詰まり防止に攻撃アニメは最大10件で間引く。
+    **モンスター出現の演出開始から 4 秒間（`APPEAR_ATTACK_DELAY_MS`）は攻撃キューを再生しない**（出現演出と直後の PostToolUse スキル攻撃が被らないよう保留する）。出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect が来たらキュー内の未再生の攻撃を破棄し、代わりに会心の一撃（`finisher`）を1つ挿んでから撃破演出へ進む。詰まり防止に攻撃アニメは最大10件で間引く。
   - **クエストトラッカー UI**：MMO ミッション風パネルを画面中央上に表示。未着手 ◇ / 進行中 ◆ / 達成 ✓。
     全項目完了 or idle では非表示。
   - **ヘッダーは1行**：「RPGDev ◆ <フェーズ>」。RPGDev は金グラデのゲームタイトル（フェーズ名と同サイズ、菱形セパレータ）。ヘッダー高 60px。
@@ -352,6 +352,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
     ステージごとに BPM・調・編成を変えてある（dungeon=不穏・低速、castle=荘厳・行進調）。生成器は決定的（乱数なし）。
     `public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm 管轄外の効果音（生成器では作らない別アセット）。
   - **デスクトップ（Swift `RPGDevWindow.swift`）**：7 BGM トラックをプリロードし、`monster-appear`/`monster-defeat` を `AVAudioPlayer` でネイティブ再生（JS↔Swift ブリッジの `sfx` メッセージ）。
+  - **ウィンドウ位置・サイズの記憶**：終了/移動/リサイズ時に `window.frame` と全スクリーン署名を `UserDefaults`（`local.rpgdev.overlay`）へ保存し、次回起動時に「署名一致かつ画面内」なら復元、そうでなければ既定位置にリセット（ディスプレイ構成変更＝署名不一致でリセット）。macOS の自動ウィンドウ復元とは競合させない（`window.isRestorable = false`、復元は自前管理）。
   - フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
 - 実機検証の生データ：`tmp/codex-probe/`（gitignore 対象、`hook-capture.log` / `probe*-events.jsonl`）。
   ※ 検証中に `~/.codex/auth.json` を `tmp/codex-home/` にコピーしたが、機密のため削除済み。
