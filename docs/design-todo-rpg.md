@@ -305,7 +305,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ---
 
-## 9. 実装ステータス（2026-06-07 更新・ランダムエンカウント モデル + 冒険ステージ v0.3.0）
+## 9. 実装ステータス（2026-06-07 更新・ランダムエンカウント モデル + 冒険ステージ v0.3.0 / 撃破演出の磨き込み v0.3.1）
 
 - **reducer：実装済み・検証済み。** `server/adventure-state.mjs` をランダムエンカウント モデルへ。
   - 旧 `detectFailure` の単語マッチ正規表現は廃止。Claude の失敗イベント名（PostToolUseFailure/PermissionDenied）と
@@ -335,14 +335,17 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - **冒険ステージの背景切替**：`adventureStage` で背景を `field.png`/`dungeon.png`/`castle.png` に切替（idle/complete は `town.png`）。dungeon/castle では skyline を隠す（`public/styles.css` / `overlay.css`）。
   - **出現/撃破の専用演出**：モンスター出現＝ポータル＋煙＋着地アニメ（`data-action="appear"`）、撃破＝発光＋破片の消滅アニメ（`data-action="defeat"`）。
     撃破中はワールド演出（背景/BGM/フェーズ反映）を約1.8秒保留し、撃破アニメを最後まで見せてから次の状態へ切替（`holdWorldVisuals`）。
+  - **撃破前の会心の一撃（v0.3.1）**：`monster_defeated` をそのまま流すと「何もなく唐突に倒れる」ので、撃破の直前にフロント合成の `finisher`（勇者の会心の一撃＝斬撃＋フラッシュ＋強い揺れ＋「会心の一撃!!」カットイン＋効果音）を必ず1回差し込む。
+    キュー直列化により会心斬撃が終わってから（モンスターはそれまで画面に残す）撃破＋消滅へ進む。討伐は攻撃以外（ターン終了 Stop・TODO完了）でも起きるため、reducer の `attack` 有無に関わらずフロント側で常時挿入する。
   - **属性別の追撃エフェクト**：精霊の追撃（`kind:"ally"`）は `allyElement`（fire/earth/wind/water）ごとに専用のパーティクル＋CSS インパクト＋効果音を出し分ける。
   - **効果音（SFX）**：出現＝`monster-appear.wav`、撃破＝`monster-defeat.wav`。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
   - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。**攻撃は固定 1 秒間隔**、その他は「アニメ目安 + 0.1秒」で次へ。
-    出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect が来たらキュー内の未再生の攻撃を破棄し、撃破演出を優先。詰まり防止に攻撃アニメは最大10件で間引く。
+    出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect が来たらキュー内の未再生の攻撃を破棄し、代わりに会心の一撃（`finisher`）を1つ挿んでから撃破演出へ進む。詰まり防止に攻撃アニメは最大10件で間引く。
   - **クエストトラッカー UI**：MMO ミッション風パネルを画面中央上に表示。未着手 ◇ / 進行中 ◆ / 達成 ✓。
     全項目完了 or idle では非表示。
   - **ヘッダーは1行**：「RPGDev ◆ <フェーズ>」。RPGDev は金グラデのゲームタイトル（フェーズ名と同サイズ、菱形セパレータ）。ヘッダー高 60px。
   - **戦闘配置**：勇者は左下（戦闘時 +10%）、モンスター中央（-20%）、精霊は属性ごとに固定（水=左上, 風=右上, 火=右端・下げ気味, 地=中央下）。モンスター名は1.7倍。
+    勇者は常にモンスターより前面に描く（`.hero` z-index=5 > `.monster` z-index=4。同値だと DOM 後勝ちで勇者が敵の裏に回るため。v0.3.1）。
   - 仲間精霊スプライトを追加：火/地/風/水。`Aqua`（水）は `ally-water-facing-slit.png`。
   - `public/app.js`（Web ビュー）：新 state/effect に追従（精霊・冒険ステージの背景切替を含む）。
   - **BGM：7トラックを `scripts/render-bgm.mjs` から生成**（`field` / `adventure` / `battle` / `dungeon-adventure` / `dungeon-battle` / `castle-adventure` / `castle-battle`）。

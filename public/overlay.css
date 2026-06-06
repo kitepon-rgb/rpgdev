@@ -186,7 +186,7 @@ body[data-phase="battle"] .stage {
   bottom: max(-178px, -45vh);
   width: min(82vw, 540px);
   height: min(95vh, 600px);
-  z-index: 4;
+  z-index: 5; /* モンスター(z-index:4)より必ず手前。同値だと DOM 後勝ちで勇者が裏に回るため */
   transform: translateX(-50%) translateY(0) rotate(0deg);
   transform-origin: center bottom;
   animation: heroWalkInPlace 0.72s ease-in-out infinite;

@@ -362,6 +362,8 @@ function fxAnimMs(effect) {
       return 320;
     case "monster_defeated":
       return 520;
+    case "finisher":
+      return 640; // 会心の一撃（斬撃）を見せ切ってから撃破へ進む
     default:
       return 0; // 出現・召喚・離脱・CLEAR 等はアニメを占有しない（即時）
   }
@@ -383,11 +385,15 @@ function effects(list) {
       const queued = fxQueue.reduce((n, e) => (e.type === "attack" ? n + 1 : n), 0);
       if (queued >= MAX_QUEUED_ATTACKS) continue; // 間引き
     }
-    fxQueue.push(effect);
     if (effect.type === "monster_defeated") {
+      // 唐突に消さない：撃破の前に勇者の会心の一撃（斬撃）を必ず1回差し込み、
+      // それが終わってから撃破＋消滅を流す。取りこぼした攻撃アニメは捨てる
+      // （finisher は "attack" ではないのでこのフィルタでは消えない）。
       monsterDefeatInProgress = true;
       fxQueue = fxQueue.filter((queued) => queued.type !== "attack");
+      fxQueue.push({ type: "finisher" });
     }
+    fxQueue.push(effect);
   }
   pumpFx();
 }
@@ -466,6 +472,17 @@ function playEffect(effect) {
       break;
     case "monster_dying":
       flash("#c8a0ff");
+      break;
+    case "finisher":
+      // 勇者の会心の一撃。撃破の直前に必ず1回流す（モンスターはまだ画面に居る）。
+      flash("#fff4c2");
+      slash("skill");
+      window.setTimeout(() => slash("skill"), 150); // 二段斬りで会心らしさを出す
+      shakeStage("skill");
+      monsterBurst("#ffd15c", 40);
+      monsterBurst("#fff7dd", 22);
+      showSkillBanner("会心の一撃");
+      sting([79, 83, 86, 91]);
       break;
     case "monster_defeated":
       holdDefeatedMonster();
