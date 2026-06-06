@@ -1,18 +1,18 @@
 # RPGDev 再設計メモ：TODO＝モンスター モデル
 
-最終更新: 2026-06-05
-ステータス: **設計＋実機検証フェーズ（未実装）**。現行コードはまだ旧モデル（error＝モンスター）のまま。
-このドキュメントは、その日の設計会話と実機調査の単一の記録。実装着手前の唯一の正典。
+最終更新: 2026-06-06
+ステータス: **実装済み・検証済み**。現行コードは TODO＝モンスター モデルへ移行済み。
+このドキュメントは、設計判断・実機調査・実装ステータスの単一の記録。
 
-各項目に **[決定]** / **[検証済]** / **[仮定・要確認]** / **[未着手]** を明記する。憶測を確定と混ぜない。
+各項目に **[決定]** / **[検証済]** / **[仮定・要確認]** / **[実装済み]** などの状態を明記する。憶測を確定と混ぜない。
 
 ---
 
 ## 0. なぜ作り直すか（旧モデルの破綻）
 
-**[検証済]** 現行の「エラー＝モンスター」は、失敗検知が壊れている。
+**[検証済]** 旧「エラー＝モンスター」モデルは、失敗検知が壊れていた。
 
-現行 `server/adventure-state.mjs` の `detectFailure` は、ツール出力テキストに
+旧 `server/adventure-state.mjs` の `detectFailure` は、ツール出力テキストに
 `/\b(error|failed|failure|exception|traceback|panic|fatal)\b/i` が含まれたら失敗扱いする。
 このリポジトリ自身の `.rpgdev/events.ndjson`（実運用ログ）を解析した結果：
 
@@ -68,9 +68,9 @@ TODO のステータス3状態がそのままフェーズに対応する：
   （実際の Claude/Codex セッションは TODO 無しも多い）。これは選択の結果であり穴ではない。
   将来もし物足りなければ「TODO無し時のみの別敵ソース」を**明示的に**足す余地はある（今は入れない）。
 
-その他のエッジ [未決定]：
-- completed されずに項目がリストから消える（TODO 組み替え）→ モンスター逃走/消滅。
-- in_progress → pending に戻る（後回し）→ 戦線離脱、フィールドへ。
+その他のエッジ [実装済み]：
+- completed されずに項目がリストから消える（TODO 組み替え）→ `monster_fled`。
+- in_progress → pending に戻る（後回し）→ `retreat`、フィールドへ。
 
 ---
 
@@ -107,6 +107,8 @@ TODO のステータス3状態がそのままフェーズに対応する：
   各仲間も現在の敵を追撃する（`attack` effect, `kind:"ally"`, `allyId` 付き）。
 - HP は演出なので**仲間も敵を殺せない**（HP_FLOOR / 瀕死は hero と同じ damage() が担保）。撃破は TODO completed のみ。
 - 敵が居ない探検中は仲間は攻撃しない（前進のみ）。
+- 仲間カタログは精霊4体：`Ignis`（火）, `Terra`（地）, `Sylph`（風）, `Aqua`（水）。
+  `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使い、戦闘画面では左上・勇者の上あたりに浮遊表示する。
 
 ---
 
@@ -169,11 +171,9 @@ TODO のステータス3状態がそのままフェーズに対応する：
   （manual/合成、将来仕様）にのみ効く。実機 Codex には効かない。
 - 旧 `detectFailure` の単語マッチ正規表現は**完全廃止**。これが偽モンスターの製造機だった。
 
-要決定 [未決定]：Codex の失敗→反撃をどうするか。
-(a) **Claude のみ反撃／Codex は失敗不可視**で割り切る（推奨・正直）。
-(b) `tool_response` の stderr テキストをヒューリスティック判定（＝廃止した単語マッチの再来。かつ
-    exit≠0 でも stderr 無し（silent fail）は取れない。非推奨）。
-(c) payload の `transcript_path`（rollout jsonl）を読んで成否を取る（重い・脆い・将来検討）。
+採用 [決定]：Codex の失敗→反撃は **Claude のみ反撃／Codex は失敗不可視** で割り切る。
+`tool_response` の stderr テキストをヒューリスティック判定する案は、廃止した単語マッチの再来なので採用しない。
+`transcript_path`（rollout jsonl）を読む案は重く脆いため、将来検討に留める。
 
 ---
 
@@ -267,7 +267,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ---
 
-## 8. 宿題（未着手の調査）
+## 8. 宿題（完了済みの調査）
 
 1. **[完了] Claude `TodoWrite` の payload 形を実機確認。** → §6 検証済。
    `tool_input = { todos: [{content, status, activeForm}] }`、status は3状態。reducer の仮定は正しかった。
@@ -281,27 +281,30 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ---
 
-## 9. 実装ステータス（2026-06-05 更新）
+## 9. 実装ステータス（2026-06-06 更新）
 
 - **reducer：実装済み・検証済み。** `server/adventure-state.mjs` を新モデルに全面書換。
   - 旧 `detectFailure` の単語マッチ正規表現は廃止。exit code ＋明示エラーフラグのみ。
   - PostToolUse で `tool_name ∈ {TodoWrite, update_plan}` を拾い、status 差分で
     spawn(pending)/engage(in_progress)/kill(completed) を駆動。
-  - 失敗信号は A案（Claude=PostToolUseFailure イベント / Codex=PostToolUse payload の exit code）→ `counter`。
+  - 失敗信号は Claude=PostToolUseFailure イベント、構造化 exit code を持つ manual/将来 payload → `counter`。
+    実機 Codex は失敗不可視なので成功扱い。
   - HP は演出専用（HP_FLOOR=1 で殺せない、瀕死=dying）。トドメは completed のみ。
   - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝ツール名）。
   - 仲間：SubagentStart で参戦（`state.allies`）/ SubagentStop で離脱（LIFO）。戦闘中は hero 攻撃に追撃（`attack` kind:"ally"）。仲間も殺せない（HP_FLOOR 準拠）。
 - **テスト：18/18 pass。** `test/adventure-state.test.mjs`（偽陽性修正・HP で殺せない・completed トドメ・provider parity・no-TODO・仲間 召喚/離脱/アシスト/殺せない/敵不在 等）。
 - **サーバ経由の E2E スモーク：確認済み。** `/hook`→`/state`→effects を実行し、
   TodoWrite→battle、Edit→attack(skill)、PostToolUseFailure→counter、completed→monster_defeated(finisher)+次の engage を確認。
-- **稼働サーバ：本日 新モデルへ再起動済み。** 旧コード（error=モンスター）が動いていて「TODO→戦闘にならない」問題が出ていたが、
+- **稼働サーバ：新モデルで確認済み。** 旧コード（error=モンスター）が動いていて「TODO→戦闘にならない」問題が出ていたが、
   サーバ再起動＋`/control/reset` で解消。稼働サーバの `/state` が新形式（`defeatedCount`/`allies`）であることを確認。
-- **フロントエンド：新 state/effect に配線済み（ビジュアルは仮）。**
+- **フロントエンド：新 state/effect に配線済み。**
   - `public/overlay.html` / `overlay.js` / `overlay.css`：target=in_progress を戦闘相手に、pending を待機列(`#roster`)に、
     在席仲間を `#allies` に、TODO 本文を `#monsterLabel` に表示。新 effect（engage/attack(kind,skill,ally)/counter/monster_dying/
-    monster_defeated(finisher)/monster_fled/retreat/turn_completed/ally_summon/ally_return/compact_*/hold）をトースト＋パーティクル＋フラッシュで仮表示。瀕死は点滅。
+    monster_defeated(finisher)/monster_fled/retreat/turn_completed/ally_summon/ally_return/compact_*/hold）をトースト＋パーティクル＋フラッシュで表示。瀕死は点滅。
+    通常/スキル攻撃は斬撃・揺れ・技名カットイン付き。
+  - 仲間精霊スプライトを追加：火/地/風/水。戦闘中は精霊ごとの配置を持ち、Aqua（水）は左上・勇者の上あたりに浮遊。
   - `public/app.js`（Web ビュー）：`progress`/`errorsDefeated` 廃止に追従、target/defeatedCount/label に対応、新 effect（仲間含む）対応。仲間は主に event log と追撃演出で表示。
-  - **未着手：** 画像・スプライト・凝った演出（Codex 側で対応予定）。`scripts/demo.mjs` は旧イベント形式のまま。
-    フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
+  - `adventure.wav` / `battle.wav` は `scripts/render-bgm.mjs` の更新から再生成済み。
+  - フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
 - 実機検証の生データ：`tmp/codex-probe/`（gitignore 対象、`hook-capture.log` / `probe*-events.jsonl`）。
   ※ 検証中に `~/.codex/auth.json` を `tmp/codex-home/` にコピーしたが、機密のため削除済み。

@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 概要
 
 RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風 macOS デスクトップ
-ウィンドウの演出に変換するツール。エラーでモンスターが出現し、解決ステップでダメージを
-与え、撃破するとフィールドが回復する。macOS 専用、Node 20+、全体が ESM
+ウィンドウの演出に変換するツール。TODO 項目をモンスターに見立て、`in_progress` の項目を
+現在の敵として表示し、ツール利用で攻撃、TODO が `completed` になると撃破する。
+macOS 専用、Node 20+、全体が ESM
 (`"type": "module"`)。JS のビルド/バンドル工程はなく、TypeScript も使っていない。
 
 ## コマンド
@@ -34,17 +35,18 @@ npm run demo                          # 起動中のサーバに対して擬似 
 - Claude に publish させるには `.claude/settings.local.json` の `permissions.allow` に `Bash(npm publish:*)` が必要（gitignore 対象なので無ければ足す）。`cd && npm publish` の複合だと許可パターンに当たらないので、`npm publish <repo path> --access public` の形で叩く。
 - **罠（もう再発しないが知っておく）**：npm の granular トークンは「まだ存在しないパッケージ」を作れない。**新規パッケージの初回 publish だけは対話 `npm login` + OTP が必須**（granular だと PUT 404、whoami 401）。既存パッケージの更新では起きない。トークンを何度替えても初回作成は通らないので、新規 publish で 404 が出たら token を疑う前に「初回は OTP」を思い出すこと。
 
-## 再設計中（重要）
+## 現行ゲームモデル（重要）
 
-ゲームモデルを「エラー＝モンスター」から「**TODO 項目＝モンスター**」へ作り直している。
-設計判断・Codex/Claude のフック実機検証結果・未着手の宿題は
+ゲームモデルは「エラー＝モンスター」ではなく「**TODO 項目＝モンスター**」。
+設計判断・Codex/Claude のフック実機検証結果・実装ステータスは
 [docs/design-todo-rpg.md](docs/design-todo-rpg.md) が単一の正典。reducer に手を入れる前に必ず読む。
 reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と
-そのテスト ([test/adventure-state.test.mjs](test/adventure-state.test.mjs)) は新モデルへ移行済み。
+そのテスト ([test/adventure-state.test.mjs](test/adventure-state.test.mjs)) は新モデル実装済み。
 フロントエンド（[public/overlay.js](public/overlay.js) / [public/app.js](public/app.js)）も
-新 state / effect に配線済み（ビジュアルは仮。画像・凝った演出は未着手）。
+新 state / effect に配線済み。overlay には精霊スプライト、斬撃、技名カットイン、揺れ、
+召喚/追撃演出がある。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体で、
+`Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite payload、TODO無しセッション方針）は全て検証・決定済み。
-残るのは画像/演出（Codex 側）と、ウィンドウ実起動での目視確認のみ。
 
 ## アーキテクチャ
 
@@ -66,13 +68,11 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
    `reduceHookEvent(prevState, hookEvent) → { state, effects, normalized }`。I/O なし。
    - `normalizeHookEvent` は Codex/Claude の多様なペイロード形状
      （`hook_event_name`、`tool_input.command` など）を 1 つの正規化イベントに平坦化する。
-   - `detectFailure` はヒューリスティック（イベント名のサフィックス、error/exit-code
-     フィールド、stderr/出力テキストの正規表現）で、`PostToolUse` がモンスターを
-     出現させるかを判定する。
+   - `detectFailure` は Claude の失敗イベント名と構造化された失敗/exit-code フィールドだけを見る。
+     出力テキストの `error` 単語マッチは偽陽性が多いため廃止済み。
    - フェーズ: `idle → field → battle → complete`。BGM トラック: `field / adventure / battle`。
-     モンスターは `MONSTER_CATALOG` から tool/summary テキストのキーワードで選ばれる。
-     同一の失敗が繰り返されると、新しいモンスターを追加するのではなく既存個体を
-     「enrage（強化）」させる。
+     モンスターは TodoWrite/update_plan の各項目から生まれ、項目ラベルのキーワードで
+     `MONSTER_CATALOG` から sprite/HP を選ぶ。HP は演出専用で、撃破は TODO `completed` のみ。
    ここの挙動を変えたら [test/adventure-state.test.mjs](test/adventure-state.test.mjs) を更新すること。
 
 4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs) + [desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift))。

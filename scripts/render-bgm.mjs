@@ -86,9 +86,9 @@ async function renderField(outPath) {
 }
 
 async function renderBattle(outPath) {
-  const bpm = 164;
+  const bpm = 178;
   const beat = 60 / bpm;
-  const bars = 24;
+  const bars = 32;
   const length = bars * 4 * beat;
   const mix = new Float32Array(Math.ceil((length + 0.4) * SAMPLE_RATE));
 
@@ -103,10 +103,14 @@ async function renderBattle(outPath) {
     chord("D2", "A2", "D3", "A3")
   ];
   const lead = [
-    "D4", "F4", "A4", "D5", "C#5", "A4", "F4", "D4",
-    "E4", "G4", "Bb4", "E5", "D5", "Bb4", "G4", "E4",
-    "F4", "A4", "C5", "F5", "E5", "C5", "A4", "F4",
-    "E4", "G4", "A4", "C#5", "D5", "C#5", "A4", "E4"
+    "D4", "A4", "D5", "F5", "E5", "C#5", "A4", "F4",
+    "D4", "F4", "A4", "C5", "Bb4", "G4", "E4", "C#4",
+    "D4", "A4", "D5", "F5", "G5", "F5", "E5", "C#5",
+    "Bb4", "D5", "F5", "A5", "G5", "F5", "D5", "Bb4",
+    "C5", "E5", "G5", "Bb5", "A5", "G5", "E5", "C5",
+    "A4", "C#5", "E5", "A5", "G5", "E5", "C#5", "A4",
+    "D5", "F5", "A5", "D6", "C#6", "A5", "F5", "D5",
+    "E5", "G5", "Bb5", "E6", "D6", "Bb5", "A5", "F5"
   ].map(note);
 
   for (let bar = 0; bar < bars; bar += 1) {
@@ -115,41 +119,47 @@ async function renderBattle(outPath) {
     const root = currentChord[0];
 
     currentChord.forEach((midi, index) => {
-      addNote(mix, midi + 12, start + index * 0.01, beat * 1.65, 0.052, "brass", -0.25 + index * 0.16);
-      addNote(mix, midi + 24, start + beat * 2 + index * 0.01, beat * 1.1, 0.034, "strings", 0.22 - index * 0.12);
+      addNote(mix, midi + 12, start + index * 0.01, beat * 1.65, 0.066, "brass", -0.25 + index * 0.16);
+      addNote(mix, midi + 24, start + beat * 2 + index * 0.01, beat * 1.1, 0.042, "strings", 0.22 - index * 0.12);
     });
+
+    if (bar % 4 === 0) {
+      addNoise(mix, start, 0.9, 0.095, "cymbal", 0);
+      addNote(mix, root + 36, start + beat * 0.04, beat * 0.8, 0.09, "brassLead", -0.05);
+      addNote(mix, root + 43, start + beat * 0.52, beat * 0.8, 0.078, "brassLead", 0.05);
+    }
 
     for (let step = 0; step < 16; step += 1) {
       const t = start + step * beat * 0.25;
       const degree = [0, 0, 2, 1, 0, 3, 2, 1, 0, 0, 2, 1, 3, 2, 1, 0][step];
-      addNote(mix, currentChord[degree] + 24, t, beat * 0.18, 0.03, "staccato", step % 2 ? 0.34 : -0.34);
+      addNote(mix, currentChord[degree] + 24, t, beat * 0.18, 0.041, "staccato", step % 2 ? 0.34 : -0.34);
     }
 
     for (let beatIndex = 0; beatIndex < 4; beatIndex += 1) {
       const t = start + beatIndex * beat;
-      addNote(mix, root, t, beat * 0.9, 0.14, "bass", -0.12);
-      addNote(mix, root + 12, t + beat * 0.5, beat * 0.38, 0.075, "bass", -0.08);
-      addNoise(mix, t, 0.1, beatIndex === 0 ? 0.13 : 0.075, "kick", -0.08);
-      addNoise(mix, t + beat * 0.5, 0.075, 0.045, "snare", 0.08);
+      addNote(mix, root, t, beat * 0.9, 0.17, "bass", -0.12);
+      addNote(mix, root + 12, t + beat * 0.5, beat * 0.38, 0.09, "bass", -0.08);
+      addNoise(mix, t, 0.1, beatIndex === 0 ? 0.155 : 0.092, "kick", -0.08);
+      addNoise(mix, t + beat * 0.5, 0.075, 0.066, "snare", 0.08);
     }
 
     for (let eighth = 0; eighth < 8; eighth += 1) {
-      addNoise(mix, start + eighth * beat * 0.5, 0.045, 0.028, "hat", eighth % 2 ? 0.22 : -0.22);
+      addNoise(mix, start + eighth * beat * 0.5, 0.045, 0.038, "hat", eighth % 2 ? 0.22 : -0.22);
     }
   }
 
   for (let index = 0; index < bars * 8; index += 1) {
     const midi = lead[index % lead.length];
     const t = index * beat * 0.5;
-    addNote(mix, midi, t, beat * 0.42, 0.092, "brassLead", 0.02);
-    addNote(mix, midi - 12, t + 0.008, beat * 0.36, 0.04, "horn", -0.12);
+    addNote(mix, midi, t, beat * 0.42, 0.118, "brassLead", 0.02);
+    addNote(mix, midi - 12, t + 0.008, beat * 0.36, 0.056, "horn", -0.12);
   }
 
   await writeWav(outPath, finalize(mix, 0.94));
 }
 
 async function renderAdventure(outPath) {
-  const bpm = 126;
+  const bpm = 132;
   const beat = 60 / bpm;
   const bars = 48;
   const length = bars * 4 * beat;
@@ -206,30 +216,30 @@ async function renderAdventure(outPath) {
     const root = roots[bar % roots.length];
 
     currentChord.forEach((midi, index) => {
-      addNote(mix, midi, start + index * 0.014, beat * 4.25, 0.064, "strings", -0.28 + index * 0.12);
-      addNote(mix, midi + 12, start + index * 0.012, beat * 4.0, 0.034, "warm", 0.24 - index * 0.1);
-      if (index > 1) addNote(mix, midi + 19, start + beat * 0.04 + index * 0.016, beat * 3.85, 0.018, "woodwind", 0.18 - index * 0.07);
+      addNote(mix, midi, start + index * 0.014, beat * 4.25, 0.072, "strings", -0.28 + index * 0.12);
+      addNote(mix, midi + 12, start + index * 0.012, beat * 4.0, 0.04, "warm", 0.24 - index * 0.1);
+      if (index > 1) addNote(mix, midi + 19, start + beat * 0.04 + index * 0.016, beat * 3.85, 0.024, "woodwind", 0.18 - index * 0.07);
     });
 
     if (bar % 4 === 0) {
-      currentChord.slice(1).forEach((midi, index) => addNote(mix, midi + 12, start + beat * 0.04 + index * 0.018, beat * 2.35, 0.088, "brass", -0.18 + index * 0.14));
-      addNote(mix, root + 24, start + beat * 0.02, beat * 0.62, 0.076, "brassLead", -0.08);
-      addNote(mix, root + 31, start + beat * 0.52, beat * 0.62, 0.068, "brassLead", 0.02);
-      addNote(mix, root + 36, start + beat * 1.02, beat * 1.3, 0.08, "brassLead", 0.08);
+      currentChord.slice(1).forEach((midi, index) => addNote(mix, midi + 12, start + beat * 0.04 + index * 0.018, beat * 2.35, 0.102, "brass", -0.18 + index * 0.14));
+      addNote(mix, root + 24, start + beat * 0.02, beat * 0.62, 0.09, "brassLead", -0.08);
+      addNote(mix, root + 31, start + beat * 0.52, beat * 0.62, 0.078, "brassLead", 0.02);
+      addNote(mix, root + 36, start + beat * 1.02, beat * 1.3, 0.094, "brassLead", 0.08);
     } else if (bar % 4 === 2) {
-      currentChord.slice(0, 4).forEach((midi, index) => addNote(mix, midi + 12, start + beat * 2.02 + index * 0.018, beat * 1.7, 0.07, "brass", 0.18 - index * 0.12));
+      currentChord.slice(0, 4).forEach((midi, index) => addNote(mix, midi + 12, start + beat * 2.02 + index * 0.018, beat * 1.7, 0.082, "brass", 0.18 - index * 0.12));
     }
 
-    if (bar % 8 === 0) addNoise(mix, start, 1.05, 0.085, "cymbal", 0);
-    else if (bar % 4 === 0) addNoise(mix, start, 0.72, 0.052, "cymbal", 0);
+    if (bar % 8 === 0) addNoise(mix, start, 1.05, 0.098, "cymbal", 0);
+    else if (bar % 4 === 0) addNoise(mix, start, 0.72, 0.064, "cymbal", 0);
 
     for (let beatIndex = 0; beatIndex < 4; beatIndex += 1) {
       const t = start + beatIndex * beat;
-      addNote(mix, root, t, beat * 1.16, 0.148, "bass", -0.14);
-      addNote(mix, root + 12, t + beat * 0.5, beat * 0.46, 0.068, "bass", -0.08);
-      addNote(mix, root + 19, t + beat * 0.76, beat * 0.32, 0.04, "bass", -0.06);
-      if (beatIndex === 0 || beatIndex === 2) addNoise(mix, t + 0.02, 0.22, 0.088, "timpani", -0.08);
-      if (beatIndex === 1 || beatIndex === 3) addNoise(mix, t + beat * 0.03, 0.08, 0.026, "snare", 0.06);
+      addNote(mix, root, t, beat * 1.16, 0.168, "bass", -0.14);
+      addNote(mix, root + 12, t + beat * 0.5, beat * 0.46, 0.078, "bass", -0.08);
+      addNote(mix, root + 19, t + beat * 0.76, beat * 0.32, 0.05, "bass", -0.06);
+      if (beatIndex === 0 || beatIndex === 2) addNoise(mix, t + 0.02, 0.22, 0.104, "timpani", -0.08);
+      if (beatIndex === 1 || beatIndex === 3) addNoise(mix, t + beat * 0.03, 0.08, 0.036, "snare", 0.06);
     }
 
     for (let step = 0; step < 16; step += 1) {
@@ -249,10 +259,10 @@ async function renderAdventure(outPath) {
     if (!event) return;
     const t = index * beat * 0.5;
     const phraseLift = Math.floor(index / melody.length) % 2 === 1 ? 0.012 : 0;
-    addNote(mix, event.midi, t, beat * event.length, (0.116 + phraseLift) * event.accent, "brassLead", 0.04);
-    addNote(mix, event.midi - 12, t + 0.014, beat * Math.min(event.length, 1.4), 0.06, "horn", -0.16);
-    addNote(mix, event.midi + 12, t + 0.02, beat * Math.min(event.length, 0.72), 0.034, "lead", 0.18);
-    if (event.accent > 1.12) addNote(mix, event.midi + 7, t + 0.024, beat * 0.62, 0.034, "brass", 0.12);
+    addNote(mix, event.midi, t, beat * event.length, (0.136 + phraseLift) * event.accent, "brassLead", 0.04);
+    addNote(mix, event.midi - 12, t + 0.014, beat * Math.min(event.length, 1.4), 0.074, "horn", -0.16);
+    addNote(mix, event.midi + 12, t + 0.02, beat * Math.min(event.length, 0.72), 0.044, "lead", 0.18);
+    if (event.accent > 1.12) addNote(mix, event.midi + 7, t + 0.024, beat * 0.62, 0.046, "brass", 0.12);
   });
 
   for (let index = 0; index < bars * 8; index += 1) {

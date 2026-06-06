@@ -38,10 +38,10 @@ export function createInitialState() {
 }
 
 const ALLY_CATALOG = [
-  { name: "Mage", sprite: "hero" },
-  { name: "Knight", sprite: "hero" },
-  { name: "Ranger", sprite: "hero" },
-  { name: "Cleric", sprite: "hero" }
+  { name: "Ignis", sprite: "ally-fire", element: "fire" },
+  { name: "Terra", sprite: "ally-earth", element: "earth" },
+  { name: "Sylph", sprite: "ally-wind", element: "wind" },
+  { name: "Aqua", sprite: "ally-water-facing-slit", element: "water" }
 ];
 const ALLY_DAMAGE = 6; // 仲間アシストの1撃（演出。HP_FLOOR は越えない＝仲間も殺せない）
 
@@ -300,6 +300,7 @@ function summonAlly(state, event, effects) {
     id: `ally-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name: template.name,
     sprite: template.sprite,
+    element: template.element,
     appearedAt: event.at
   };
   state.allies.push(ally);

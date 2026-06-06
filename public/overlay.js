@@ -16,6 +16,7 @@ const fieldAudio = document.querySelector("#fieldAudio");
 const adventureAudio = document.querySelector("#adventureAudio");
 const battleAudio = document.querySelector("#battleAudio");
 const canvas = document.querySelector("#fxCanvas");
+const stage = document.querySelector(".stage");
 const ctx = canvas.getContext("2d");
 
 const phaseText = {
@@ -31,6 +32,8 @@ const spriteByName = {
   orc: "orc",
   ogre: "ogre"
 };
+
+const svgSpriteNames = new Set();
 
 const TRACK_FILES = {
   field: fieldAudio,
@@ -89,6 +92,7 @@ const MUSIC = {
 
 let currentTrack = "silence";
 let particles = [];
+let shakeTimer = null;
 let audio = {
   enabled: false,
   ctx: null,
@@ -128,7 +132,7 @@ audioButton.addEventListener("click", async () => {
   setTrack(currentTrack);
 });
 
-resetButton.addEventListener("click", async () => {
+resetButton?.addEventListener("click", async () => {
   await fetch("/control/reset", { method: "POST" });
 });
 
@@ -195,11 +199,28 @@ function renderAllies(list) {
   if (!allies) return;
   if (!list.length) {
     allies.dataset.active = "false";
-    allies.textContent = "";
+    allies.replaceChildren();
     return;
   }
   allies.dataset.active = "true";
-  allies.textContent = `🛡 仲間 ${list.length}： ${list.map((a) => a.name).join(" ・ ")}`;
+  allies.replaceChildren(
+    ...list.slice(-4).map((ally, index) => {
+      const card = document.createElement("div");
+      card.className = `ally ally-${ally.element || "spirit"}`;
+      card.dataset.allyId = ally.id || "";
+      card.style.setProperty("--slot", index);
+
+      const image = document.createElement("img");
+      image.src = allySpritePath(ally.sprite);
+      image.alt = "";
+
+      const name = document.createElement("span");
+      name.textContent = ally.name || "Spirit";
+
+      card.append(image, name);
+      return card;
+    })
+  );
 }
 
 function monsterSprite(monster) {
@@ -225,22 +246,27 @@ function effects(list) {
         break;
       case "attack":
         if (effect.kind === "ally") {
-          // 仲間の追撃（毎回鳴るので軽く・スティングなし）
-          if (!effect.stagger) burst(0.5, 0.5, "#7fe0ff", 12);
+          pulseAlly(effect.allyId, effect.stagger ? "stagger" : "assist");
+          if (!effect.stagger) {
+            burst(0.5, 0.5, "#7fe0ff", 16);
+            showToast(`${formatSkillName(effect.skill)}!`, "ally");
+          }
           break;
         }
-        if (effect.stagger) {
-          burst(0.52, 0.46, "#9fb8c8", 10);
-          break;
-        }
-        slash();
         if (effect.kind === "skill") {
-          burst(0.52, 0.42, "#ffd15c", 26);
-          showToast(effect.skill || "SKILL", "skill");
-          sting([81, 76]);
+          slash("skill");
+          shakeStage(effect.stagger ? "light" : "skill");
+          burst(0.55, 0.42, effect.stagger ? "#d8c7ff" : "#ffd15c", effect.stagger ? 18 : 34);
+          burst(0.52, 0.5, "#7fe0ff", effect.stagger ? 10 : 18);
+          showSkillBanner(effect.skill || "SKILL");
+          if (effect.stagger) showToast("よろけ", "dying");
+          sting(effect.stagger ? [76, 71] : [83, 79, 76]);
         } else {
-          burst(0.52, 0.44, "#ffe9a8", 14);
-          sting([74]);
+          slash("normal");
+          shakeStage(effect.stagger ? "light" : "hit");
+          burst(0.52, 0.44, effect.stagger ? "#9fb8c8" : "#ffe9a8", effect.stagger ? 12 : 24);
+          showToast(effect.stagger ? "よろけ" : "斬撃", effect.stagger ? "dying" : "hit");
+          sting(effect.stagger ? [72] : [76, 74]);
         }
         break;
       case "counter":
@@ -274,8 +300,10 @@ function effects(list) {
         showToast(`未討伐 ${effect.remaining}`, "info");
         break;
       case "ally_summon":
-        showToast("仲間参戦", "info");
-        sting([64, 67, 71]);
+        summonBurst();
+        pulseAlly(effect.ally?.id, "summon");
+        showToast(`${effect.ally?.name || "仲間"} 召喚`, "ally");
+        sting([64, 67, 71, 76]);
         break;
       case "ally_return":
         showToast("仲間帰還", "info");
@@ -305,6 +333,65 @@ function showToast(text, kind) {
   window.setTimeout(() => item.classList.add("out"), 1100);
   window.setTimeout(() => item.remove(), 1500);
   while (toast.children.length > 4) toast.removeChild(toast.firstChild);
+}
+
+function showSkillBanner(skill) {
+  if (!stage) return;
+  const item = document.createElement("div");
+  item.className = "skill-cutin";
+  item.textContent = `${formatSkillName(skill)}!!`;
+  stage.appendChild(item);
+  window.setTimeout(() => item.classList.add("out"), 760);
+  window.setTimeout(() => item.remove(), 980);
+}
+
+function formatSkillName(value) {
+  const text = String(value || "SKILL")
+    .replace(/^functions\./, "")
+    .replace(/^mcp__/, "")
+    .replaceAll("_", " ")
+    .trim();
+  if (!text) return "SKILL";
+  return text.length > 18 ? `${text.slice(0, 17)}...` : text;
+}
+
+function allySpritePath(sprite) {
+  const name = String(sprite || "ally-fire");
+  const ext = svgSpriteNames.has(name) ? "svg" : "png";
+  return `/assets/sprites/${name}.${ext}`;
+}
+
+function pulseAlly(allyId, kind) {
+  if (!allies || !allyId) return;
+  const card = allies.querySelector(`[data-ally-id="${allyId}"]`);
+  if (!card) return;
+  card.dataset.action = kind;
+  window.setTimeout(() => {
+    if (card.dataset.action === kind) delete card.dataset.action;
+  }, 520);
+}
+
+function shakeStage(kind) {
+  if (!stage) return;
+  stage.dataset.shake = kind;
+  if (shakeTimer) window.clearTimeout(shakeTimer);
+  shakeTimer = window.setTimeout(() => {
+    delete stage.dataset.shake;
+  }, 260);
+}
+
+function summonBurst() {
+  flash("#7fe0ff");
+  burst(0.2, 0.72, "#7fe0ff", 38);
+  burst(0.28, 0.62, "#ffe08a", 26);
+}
+
+function spawnSlashMark(kind) {
+  if (!stage) return;
+  const item = document.createElement("div");
+  item.className = `slash-mark slash-${kind}`;
+  stage.appendChild(item);
+  window.setTimeout(() => item.remove(), 420);
 }
 
 let flashFrames = 0;
@@ -345,17 +432,36 @@ function burst(xRatio, yRatio, color, count) {
   }
 }
 
-function slash() {
+function slash(kind = "normal") {
   const rect = canvas.getBoundingClientRect();
+  spawnSlashMark(kind);
+  const baseColor = kind === "skill" ? "#ffd15c" : "#fff7dd";
+  const accentColor = kind === "skill" ? "#7fe0ff" : "#ffe9a8";
+  for (let index = 0; index < (kind === "skill" ? 3 : 2); index += 1) {
+    particles.push({
+      x: rect.width * (0.49 + index * 0.025),
+      y: rect.height * (0.39 + index * 0.035),
+      vx: 0,
+      vy: -0.3,
+      life: 16 - index * 2,
+      maxLife: 16 - index * 2,
+      color: index === 1 ? accentColor : baseColor,
+      size: kind === "skill" ? 38 + index * 7 : 31 + index * 5,
+      thickness: kind === "skill" ? 9 - index : 7 - index,
+      rotation: -0.66 + index * 0.38,
+      slash: true
+    });
+  }
   particles.push({
-    x: rect.width * 0.5,
-    y: rect.height * 0.38,
+    x: rect.width * 0.53,
+    y: rect.height * 0.47,
     vx: 0,
     vy: 0,
-    life: 10,
-    color: "#fff7dd",
-    size: 26,
-    slash: true
+    life: 18,
+    maxLife: 18,
+    color: accentColor,
+    size: kind === "skill" ? 58 : 38,
+    ring: true
   });
 }
 
@@ -384,8 +490,31 @@ function draw() {
     if (particle.slash) {
       ctx.save();
       ctx.translate(particle.x, particle.y);
-      ctx.rotate(-0.62);
-      ctx.fillRect(-particle.size, -4, particle.size * 2.7, 8);
+      ctx.rotate(particle.rotation || -0.62);
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = particle.color;
+      ctx.lineWidth = particle.thickness || 7;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(-particle.size * 1.15, 0);
+      ctx.lineTo(particle.size * 1.7, 0);
+      ctx.stroke();
+      ctx.lineWidth = Math.max(2, (particle.thickness || 7) * 0.42);
+      ctx.strokeStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.moveTo(-particle.size * 0.78, 0);
+      ctx.lineTo(particle.size * 1.18, 0);
+      ctx.stroke();
+      ctx.restore();
+    } else if (particle.ring) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = particle.color;
+      ctx.lineWidth = 4;
+      const progress = 1 - particle.life / (particle.maxLife || 18);
+      ctx.beginPath();
+      ctx.arc(particle.x, particle.y, particle.size * progress, 0, Math.PI * 2);
+      ctx.stroke();
       ctx.restore();
     } else {
       ctx.fillRect(particle.x, particle.y, particle.size, particle.size);

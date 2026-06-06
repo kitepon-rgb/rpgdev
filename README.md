@@ -62,7 +62,7 @@ Codex / Claude Code 側で project-local hooks の trust / review が必要な�
   - `TodoWrite` / `update_plan` → モンスター名簿を更新（`pending`＝待機列, `in_progress`＝現在の敵, `completed`＝撃破）
   - それ以外のツール → スキル攻撃（技名＝ツール名）。失敗時は敵が反撃
 - `PostToolUseFailure`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
-- `SubagentStart` / `SubagentStop`: 仲間が参戦 / 帰還。戦闘中は仲間も現在の敵を追撃する
+- `SubagentStart` / `SubagentStop`: 精霊の仲間が参戦 / 帰還。戦闘中は仲間も現在の敵を追撃する
 - `Stop`: 未完了の TODO（モンスター）が無ければ一区切り。残っていれば戦線維持
 
 モンスターの出現・撃破は TODO の状態変化だけが駆動します（エラーの単語マッチでは湧きません）。
@@ -84,9 +84,15 @@ npm run demo
 - 探索背景: `public/assets/field.png`
 - 勇者: `public/assets/sprites/hero.png`, `hero-relax.png`, `hero-battle.png`
 - モンスター: `public/assets/sprites/slime.png`, `goblin.png`, `orc.png`, `ogre.png`
+- 仲間精霊: `public/assets/sprites/ally-fire.png`, `ally-earth.png`, `ally-wind.png`, `ally-water-facing-slit.png`
+  （水精霊の別案として `ally-water.png`, `ally-water-facing.png` も同梱）
 - BGM: `public/audio/field.wav`, `adventure.wav`, `battle.wav`
 
-BGM は既存曲のメロディを使わないオリジナルのクラシック JRPG 調シーケンスです。
+BGM は既存曲のメロディを使わないオリジナルのクラシック JRPG 調シーケンスです。`adventure.wav` と
+`battle.wav` は `scripts/render-bgm.mjs` から生成され、戦闘・探索の厚みを出すアレンジにしています。
+
+デスクトップウィンドウは WKWebView なので、CSS/画像/JS を更新した後に既存ウィンドウへ反映されない時は
+ウィンドウを開き直してください。
 
 ## Development
 

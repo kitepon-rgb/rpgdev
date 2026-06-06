@@ -1,6 +1,6 @@
 # リリース手順（npm publish）
 
-最終更新: 2026-06-05。**rpgdev は 2026-06-05 に npm 初公開済み（v0.1.0）。**
+最終更新: 2026-06-06。**rpgdev は 2026-06-05 に npm 初公開済み（v0.1.0）。**
 ここに書いてあるのは「次回以降どう publish するか」と「初回でハマった罠（再発防止のための記録）」。
 
 ---
@@ -53,6 +53,8 @@
 
 ## メモ
 
-- パッケージは約 25MB（`public/audio/*.wav` と `public/assets/*.png` が主因）。軽量化するなら別バージョンで。
+- パッケージサイズは約 32MB（2026-06-06 時点の `npm pack --dry-run` で 32.2MB）。
+  `public/audio/*.wav` と `public/assets/*.png` が主因。精霊スプライトや再生成 BGM を追加した時は
+  `npm pack --dry-run` で同梱サイズを確認する。軽量化するなら別バージョンで。
 - `docs/` と `CLAUDE.md` は `package.json` の `files` に無いので npm には同梱されない（dev 用なので正しい）。
 - GitHub のタグと揃えるなら `git tag vX.Y.Z && git push origin vX.Y.Z`。
