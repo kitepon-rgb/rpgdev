@@ -5,8 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 概要
 
 RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風 macOS デスクトップ
-ウィンドウの演出に変換するツール。TODO 項目をモンスターに見立て、`in_progress` の項目を
-現在の敵として表示し、ツール利用で攻撃、TODO が `completed` になると撃破する。
+ウィンドウの演出に変換するツール。モンスターはツール使用ごとに一定確率で出現する
+**ランダムエンカウント**で、ツール利用が攻撃になる。撃破条件は出現時に紐づいた TODO の
+有無で変わる（攻撃5回／ターン終了で討伐、または紐づき TODO の完了で討伐）。TODO は
+クエスト一覧として表示しつつ、紐づきエンカウントの討伐トリガーにもなる。
 macOS 専用、Node 20+、全体が ESM
 (`"type": "module"`)。JS のビルド/バンドル工程はなく、TypeScript も使っていない。
 
@@ -37,15 +39,39 @@ npm run demo                          # 起動中のサーバに対して擬似 
 
 ## 現行ゲームモデル（重要）
 
-ゲームモデルは「エラー＝モンスター」ではなく「**TODO 項目＝モンスター**」。
+ゲームモデルは「TODO 項目＝モンスター」ではなく「**モンスター＝ランダムエンカウント**」。
+モンスターは TODO 項目から湧かない。ツール使用ごと（PreToolUse）に 20% の確率で出現する
+エンカウントで、同時に画面へ出るのは最大1体（2体同時出現はしない）。スプライト/HP は
+`MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダムに選ぶ（HP は演出専用）。`battle`
+フェーズになるのは「エンカウントのモンスターが画面に居る時」だけで、TODO があるだけでは
+戦闘にならない。
+
+各エンカウントは出現時の状況で `linkedTodo` フラグを持ち、討伐条件が変わる：
+- `linkedTodo=false`（出現時に in_progress の TODO 無し）：hero の攻撃 5回、または
+  ターン終了（Stop）で討伐。
+- `linkedTodo=true`（出現時に in_progress の TODO あり）：攻撃では倒れない。TODO 項目が
+  1つ `completed` になった時に討伐する。in_progress TODO が無くなると `linkedTodo` は解除され、
+  以後は5撃／ターン終了で倒せるようになる。
+
+TODO（TodoWrite / update_plan）は state.quest（label+status のスナップショット、元の順序）を
+更新するだけでモンスターは湧かさない。新たに `completed` になった項目があれば、紐づく
+（linkedTodo）エンカウントの討伐トリガーになる。
+
+精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 20% で1体だけ増援し、
+`SubagentStart` でも1体参戦する。常に1体ずつで属性の重複を避け（火 Ignis / 地 Terra /
+風 Sylph / 水 Aqua）、上限4体。現在の敵に追撃する（演出のみで討伐の5撃にはカウントしない）。
+モンスターを倒すたびに精霊は全員消滅し、`SubagentStop` で1体ずつ LIFO で帰還する。
+`Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
+
 設計判断・Codex/Claude のフック実機検証結果・実装ステータスは
 [docs/design-todo-rpg.md](docs/design-todo-rpg.md) が単一の正典。reducer に手を入れる前に必ず読む。
 reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と
-そのテスト ([test/adventure-state.test.mjs](test/adventure-state.test.mjs)) は新モデル実装済み。
+そのテスト ([test/adventure-state.test.mjs](test/adventure-state.test.mjs)) は実装済み。
 フロントエンド（[public/overlay.js](public/overlay.js) / [public/app.js](public/app.js)）も
-新 state / effect に配線済み。overlay には精霊スプライト、斬撃、技名カットイン、揺れ、
-召喚/追撃演出がある。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体で、
-`Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
+state / effect に配線済み。overlay には精霊スプライト、斬撃、技名カットイン、揺れ、
+召喚/追撃演出があり、攻撃/リアクションのアニメは全体共通の単一キューで直列化される
+（常に1体ずつ再生し、1つ終わってから 0.1秒 空けて次へ。出現/召喚/帰還/クリア等の即時演出は
+キューを占有しない）。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体。
 docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite payload、TODO無しセッション方針）は全て検証・決定済み。
 
 ## アーキテクチャ
@@ -71,8 +97,15 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
    - `detectFailure` は Claude の失敗イベント名と構造化された失敗/exit-code フィールドだけを見る。
      出力テキストの `error` 単語マッチは偽陽性が多いため廃止済み。
    - フェーズ: `idle → field → battle → complete`。BGM トラック: `field / adventure / battle`。
-     モンスターは TodoWrite/update_plan の各項目から生まれ、項目ラベルのキーワードで
-     `MONSTER_CATALOG` から sprite/HP を選ぶ。HP は演出専用で、撃破は TODO `completed` のみ。
+   - モンスターはランダムエンカウント：PreToolUse ごとに 20% で出現し（同時最大1体）、
+     `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）から sprite/HP をランダムに選ぶ。HP は演出専用。
+     TodoWrite/update_plan はモンスターを湧かさず、state.quest を更新するだけ。
+   - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` なら攻撃5回または
+     ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
+     なった時のみ討伐（in_progress TODO が消えると linkedTodo は解除）。
+   - 攻撃/増援判定：PreToolUse は通常攻撃に加えて 20% エンカウント出現判定と、戦闘中は
+     20% 精霊増援判定を行う（1ツール呼び出し1回）。PostToolUse はスキル攻撃のみで出現・
+     増援判定はしない。`SubagentStart` でも精霊1体参戦、`SubagentStop` で LIFO 帰還。
    ここの挙動を変えたら [test/adventure-state.test.mjs](test/adventure-state.test.mjs) を更新すること。
 
 4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs) + [desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift))。

@@ -1,16 +1,18 @@
-# RPGDev 再設計メモ：TODO＝モンスター モデル
+# RPGDev 再設計メモ：ランダムエンカウント モデル
 
 最終更新: 2026-06-06
-ステータス: **実装済み・検証済み**。現行コードは TODO＝モンスター モデルへ移行済み。
+ステータス: **実装済み・検証済み**。現行コードは ランダムエンカウント モデルへ移行済み。
 このドキュメントは、設計判断・実機調査・実装ステータスの単一の記録。
+
+モデルは「エラー＝モンスター」→「TODO＝モンスター」→「ランダムエンカウント」と変遷した（最新は本ドキュメントの記述）。
 
 各項目に **[決定]** / **[検証済]** / **[仮定・要確認]** / **[実装済み]** などの状態を明記する。憶測を確定と混ぜない。
 
 ---
 
-## 0. なぜ作り直すか（旧モデルの破綻）
+## 0. なぜ作り直すか（モデルの変遷）
 
-**[検証済]** 旧「エラー＝モンスター」モデルは、失敗検知が壊れていた。
+**[検証済]** 第1世代の「エラー＝モンスター」モデルは、失敗検知が壊れていた。
 
 旧 `server/adventure-state.mjs` の `detectFailure` は、ツール出力テキストに
 `/\b(error|failed|failure|exception|traceback|panic|fatal)\b/i` が含まれたら失敗扱いする。
@@ -21,94 +23,91 @@
   ファイルやコマンド出力に「error」という単語が入っていただけ。本物の失敗は実質1件のみ。
 - 皮肉：このプロジェクト自体が「error」という単語まみれなので、開発するほど偽モンスターが湧く。
 
-結論：単語マッチによる失敗検知は信号として信用できない。`detectFailure` の正規表現は廃止する。
-代わりに、より確実な実体＝**TODO 項目**をモンスターの源にする。
+結論：単語マッチによる失敗検知は信号として信用できない。`detectFailure` の正規表現は廃止した。
+
+**[検証済]** 第2世代の「TODO 項目＝モンスター」モデルは偽陽性は消えたが、別の地味さを抱えた。
+TodoWrite/update_plan を一度も使わないセッションではモンスターが一切湧かず、戦闘ゼロのまま終わる。
+実際の Claude/Codex セッションは TODO を使わないものも多く、「平和な探検」と割り切っても画が地味になりがちだった。
+また「モンスター＝TODO 項目」だと、TODO が常に戦闘の中心になり、ツール作業そのものが戦闘につながらない。
+
+**[決定]** 第3世代＝現行の「ランダムエンカウント」モデルへ移行した。
+モンスターは TODO からは湧かず、**ツール使用ごと（PreToolUse）に確率で出現する「エンカウント」**にした。
+これで TODO の有無に関わらず戦闘が起き、ツールを使うほど冒険が動く。
+TODO は戦闘の源ではなく「クエストの一覧表示」＋「紐づくエンカウントの討伐トリガー」に役割を変えた（§3）。
 
 ---
 
 ## 1. コアコンセプト [決定]
 
-**モンスター＝TODO 項目。** エラーではない。
+**モンスター＝ランダムエンカウント。** エラーでも TODO 項目でもない。
 
-- エージェントの TODO リスト（Claude の TodoWrite / Codex の update_plan）の各項目を1体のモンスターに対応させる。
-- ステータスでフェーズと戦況を表現する（下記マッピング）。
+- モンスターはツール使用ごと（PreToolUse）に **20% の確率で出現する「エンカウント」**。同時に出るのは最大1体（2体同時は無い）。
+- スプライト/HP は `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダムに選ぶ。HP は演出専用で殺傷力なし。
+- 各エンカウントは出現時に `linkedTodo` フラグを持つ：出現時に in_progress の TODO があれば `linkedTodo=true`、無ければ `false`。
+  このフラグで討伐条件が変わる（§3）。
+- **TODO（クエスト）はモンスターを湧かさない。** TODO は画面上のクエスト一覧表示と、紐づくエンカウントの討伐トリガーを担う（§3）。
 
 ---
 
 ## 2. フェーズ設計 [決定]
 
-3フェーズ（＋idle/complete）：**待機 / 探検 / 戦闘**。
+4フェーズ：`idle`（街・待機）/ `field`（探索）/ `battle`（戦闘）/ `complete`（クリア）。
+BGM トラック（`currentTrack`）は `field` / `adventure` / `battle`。
 
-TODO のステータス3状態がそのままフェーズに対応する：
+フェーズはもう TODO ステータスには対応しない。**エンカウントのモンスターが画面に居る時だけ `battle`** になる：
 
-| TODO status | 意味 | 演出 |
+| phase | 意味 | 演出 |
 |---|---|---|
-| （TODOリスト無し／プロンプト前） | 待機 | 街で休む。BGM=town |
-| `pending` | 待機列のモンスター | フィールド前方に敵影（まだ戦闘ではない） |
-| `in_progress` | **現在の戦闘相手** | 戦闘。常に1体（TodoWrite/update_plan とも in_progress は基本1個） |
-| `completed` | 撃破済み | 倒した跡 |
+| `idle` | 街・待機 | 街で休む。SessionStart で quest/monsters/allies をクリア |
+| `field` | 探索 | フィールドを進む。エンカウント未発生・敵不在 |
+| `battle` | 戦闘 | エンカウントのモンスターが画面に居る。常に最大1体 |
+| `complete` | クリア | 一区切り |
 
-**探検（field）が消えない設計** [決定]：
-- `in_progress` が無い瞬間＝探検。具体的には ①プロンプト→最初の TODO 生成までの下調べ、
-  ②1体 completed → 次が in_progress になるまでの間。
-- 探検を意図的に確保する2点：
-  1. 撃破直後に次戦闘へ即スナップさせない。completed→次 in_progress の間に「歩く間」を必ず一拍入れる。
-     （現行コードの `field_restored` 演出を、見える長さに育てる）
-  2. 下調べ窓（最初の TODO 前）をダンジョン入口の探索に当てる。
-- 探検は長さより対比。尺は短くてよい。
+**重要**：**TODO があるだけでは `battle` にならない。** モンスター（エンカウント）が出現して初めて戦闘になる。
+逆に TODO を一度も使わないセッションでも、ツールを使えば 20% でエンカウントが起きるので戦闘が発生しうる。
+（第2世代の「TODO無し＝戦闘ゼロ」問題はランダムエンカウントで解消した。§0 の変遷を参照。）
 
-**TODO無しセッションの方針 [決定：(a) 割り切り]**：TodoWrite/update_plan を一度も使わない
-セッションではモンスターが一切湧かない＝戦闘ゼロ。短いタスクや plan を使わない時に該当。
-→ **「TODO無し＝平和な探検」として割り切る**を採用。別の敵ソース（保険）は持たない。
-- 理由：フォールバック禁止の原則に沿う。エラーを敵にする旧モデルの偽陽性地獄に戻らない。
-  ゲームが一番生きるのは複数ステップの計画作業中で、短いタスクは平和な散歩、という割り切り。
-- 挙動（実装で確認・テスト済み）：街→フィールド探検（PreToolUse/PostToolUse は `step`＝前進）→
-  Stop で complete。戦闘フェーズに入らない。reducer はこの通り動く（追加実装なし）。
-- 正直な代償：TodoWrite/update_plan を使わないセッションは戦闘が一切起きず地味になる
-  （実際の Claude/Codex セッションは TODO 無しも多い）。これは選択の結果であり穴ではない。
-  将来もし物足りなければ「TODO無し時のみの別敵ソース」を**明示的に**足す余地はある（今は入れない）。
-
-その他のエッジ [実装済み]：
-- completed されずに項目がリストから消える（TODO 組み替え）→ `monster_fled`。
-- in_progress → pending に戻る（後回し）→ `retreat`、フィールドへ。
+- エンカウントは PreToolUse ごとに 20% で1体だけ出現する。出現中は `battle`、討伐すると `field`（敵が居なければ）へ戻る。
+- 探検（field）と戦闘（battle）の対比はエンカウントの有無で自然に生まれる。
 
 ---
 
 ## 3. 戦闘モデル [決定]
 
-### HP は演出のみ・殺傷力なし
-- HP＝「どれだけ手を入れたか」のゲージ。**HP では殺せない。**
-- HP が0に達しても、その TODO が in_progress のままなら **瀕死ステート**：片膝をつき、
-  わずかなHPでしがみつく。以後の攻撃は「よろける→立ち上がる」。バーは0付近に張り付く。
-  （HP0→全回復→また0 の「ヨーヨー」は禁止。ダメージを0に漸近させて回避するのが推奨）
-- 体感の狙い：「直った…と思ったらまだ落ちる」を表現する。チェックが付くまで死なない敵。
+### モンスター＝ランダムエンカウント
+- モンスターは TODO からは湧かない。**PreToolUse ごとに 20% の確率で1体だけ出現**する（2体同時は無い）。
+- スプライト/HP は `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダム。HP は演出専用で殺傷力なし。
+- 出現時に `linkedTodo` フラグを決める：出現時に in_progress の TODO があれば `linkedTodo=true`、無ければ `false`。
 
-### トドメ＝TODO 項目が completed になった時 [決定]
-- 撃破の唯一のトリガーは status が `completed` に変化した瞬間。
-- 残HP無視で必殺フィニッシュ。短い項目で HP が大量に残っていても、completed が来たら一気に撃破。
-  撃破は常に派手でよい。
+### 討伐条件＝linkedTodo で分岐 [決定]
+- **`linkedTodo=false`（TODO 不在で出現）**：hero の攻撃 **5回** で討伐、または **ターン終了（Stop）** で討伐。
+- **`linkedTodo=true`（in_progress TODO 中に出現）**：攻撃では倒れない。
+  **TODO 項目が1つ `completed` になった時に討伐**する。
+  in_progress TODO が無くなったら `linkedTodo` は解除され、その後は通常の 5撃／ターン終了で倒せる。
+- HP は演出専用で、HP では討伐しない（上の条件のみで討伐）。
 
 ### 攻撃＝ツールフック
-- **PreToolUse → 通常攻撃**（振りかぶり）。
-- **PostToolUse → スキル攻撃。技名＝ツール名**（例：「Editの斬撃」「Grepの探索」）。
+- **PreToolUse → 通常攻撃**（`NORMAL_DAMAGE`, 演出）。加えてこのフックで
+  ① 20% のエンカウント出現判定、② 戦闘中なら 20% の精霊増援判定を行う（1ツール呼び出しにつき各1回）。
+- **PostToolUse → スキル攻撃。技名＝ツール名**（`SKILL_DAMAGE`, 演出, 例：「Editの斬撃」「Grepの探索」）。
+  PostToolUse では出現・増援の判定はしない（出現/増援判定は Pre のみ）。
 - 1ツール呼び出し＝通常→スキルの2連撃コンボ。
-- **PostToolUse は成功/失敗で技の結果を割る** [決定]：
-  - 成功 → 技が決まる、in_progress モンスターにHPダメージ（演出）。
-  - 失敗 → 技が外れる/暴発 → **敵の反撃**（新モンスターは湧かさない。失敗の行き場は戦闘内反撃）。
 - 技名＝ツール名はプロバイダで品揃えが違う（後述）。未知ツールは生のツール名をそのまま技名に出す
   （握りつぶして通常攻撃に丸めない）。表示名マップは任意。
 
-### 仲間（SubagentStart / SubagentStop）[実装済み]
-- サブエージェントが起動すると仲間が参戦、終了すると離脱する。`state.allies` にエンティティを持つ。
-  - `SubagentStart` → 仲間を追加（`ally_summon` effect に ally 情報）。
-  - `SubagentStop` → 最後に参戦した仲間を帰還（LIFO。hook payload が個体 id を持つとは限らないため）。
-    在席ゼロで Stop が来たら何もしない（黙って成功扱いにしない＝effect を出さない）。
-- **仲間アシスト攻撃**：戦闘中（`in_progress` の敵がいる時）、hero の通常/スキル攻撃に続けて、在席中の
-  各仲間も現在の敵を追撃する（`attack` effect, `kind:"ally"`, `allyId` 付き）。
-- HP は演出なので**仲間も敵を殺せない**（HP_FLOOR / 瀕死は hero と同じ damage() が担保）。撃破は TODO completed のみ。
-- 敵が居ない探検中は仲間は攻撃しない（前進のみ）。
-- 仲間カタログは精霊4体：`Ignis`（火）, `Terra`（地）, `Sylph`（風）, `Aqua`（水）。
-  `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使い、戦闘画面では左上・勇者の上あたりに浮遊表示する。
+### 失敗→反撃（counter）[決定]
+- 失敗→敵の反撃。失敗信号は **Claude の `PostToolUseFailure` / `PermissionDenied` / 構造化された exit code 非0** のみ。
+- `detectFailure` はイベント名と構造化フラグだけを見る（出力テキストの単語マッチは廃止＝§0/§5）。
+- **Codex は失敗を payload に出さない**ので検知不能＝反撃しない（§5/§7）。
+
+### 精霊（仲間 allies）[実装済み]
+- 戦闘中、**ツール使用ごと（PreToolUse）に 20% で1体だけ増援**。さらに **SubagentStart でも1体参戦**。
+- 常に1体ずつ追加し、**属性の重複は避ける**（火 `Ignis` / 地 `Terra` / 風 `Sylph` / 水 `Aqua`）。**上限4体**。
+  `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
+- 在席中の精霊は現在の敵に**追撃する**（演出。`attack` effect, `kind:"ally"`, `allyId` 付き。討伐の 5撃にはカウントしない）。
+- **モンスターを倒すたびに精霊は全員消滅**する（戦闘終了で退場）。
+- `SubagentStop` で1体帰還（LIFO。hook payload が個体 id を持つとは限らないため）。
+  在席ゼロでの Stop は無反応（黙って成功扱いにしない＝effect を出さない）。
 
 ---
 
@@ -121,20 +120,21 @@ TODO のステータス3状態がそのままフェーズに対応する：
 
 | hook | フェーズ | 割り当て |
 |---|---|---|
-| SessionStart | 待機 | 拠点起動・状態ロード・BGM=town |
+| SessionStart | 待機 | 拠点起動・状態ロード・BGM=town（quest/monsters/allies をクリア） |
 | UserPromptSubmit | 待機→探検 | クエスト受注、フィールドへ、BGM=field、ターン開始 |
-| PreToolUse | 探検/戦闘 | 通常攻撃（前振り） |
+| PreToolUse | 探検/戦闘 | 通常攻撃（前振り）＋20% エンカウント出現判定＋戦闘中なら 20% 精霊増援判定 |
 | PermissionRequest | 保留 | 足止め「!」、判断待ちの硬直 |
-| PostToolUse | ★中核 | スキル攻撃＋名簿更新＋成否分岐（下記） |
+| PostToolUse | ★中核 | スキル攻撃＋クエスト一覧更新＋成否分岐（下記） |
 | PreCompact | 演出 | 「記憶が霞む／霧」長期戦の区切り |
-| PostCompact | 演出 | 「霧が晴れる」名簿を再同期 |
-| SubagentStart | 戦闘 | 仲間が参戦（`state.allies` に追加）。戦闘中は hero 攻撃に追撃（§3 仲間） |
-| SubagentStop | 戦闘 | 仲間が帰還（LIFO で1体離脱） |
-| Stop | →待機 | 一区切り。未完了TODO無ければ街へ、有れば戦線維持 |
+| PostCompact | 演出 | 「霧が晴れる」状態を再同期 |
+| SubagentStart | 戦闘 | 精霊が1体参戦（`state.allies` に追加）。戦闘中は hero 攻撃に追撃（§3 精霊） |
+| SubagentStop | 戦闘 | 精霊が帰還（LIFO で1体離脱） |
+| Stop | →待機 | ターン終了。linkedTodo=false の在席エンカウントを討伐。未完了TODO無ければ街へ |
 
 **PostToolUse の中の分岐：**
-- `tool_name` が TODOツール（後述）→ **モンスター名簿を更新**（pending/in_progress/completed を反映、撃破判定）。
-- 失敗 → 反撃。成功 → ダメージ/前進。
+- `tool_name` が TODOツール（後述）→ **クエスト一覧（`state.quest`）を更新**（label+status のスナップショット）。
+  新たに `completed` になった項目があれば、紐づく（`linkedTodo`）エンカウントを討伐する。モンスターは湧かさない。
+- 失敗 → 反撃（Claude のみ検知可）。成功 → スキル攻撃の演出。
 
 **共通縛りで捨てるもの（Claude専用、使わない）：** `Notification` `MessageDisplay` `FileChanged`
 `PermissionDenied` `StopFailure` `SessionEnd` `TaskCreated/Completed` `PostToolBatch` `Setup`
@@ -281,29 +281,38 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ---
 
-## 9. 実装ステータス（2026-06-06 更新）
+## 9. 実装ステータス（2026-06-06 更新・ランダムエンカウント モデル）
 
-- **reducer：実装済み・検証済み。** `server/adventure-state.mjs` を新モデルに全面書換。
-  - 旧 `detectFailure` の単語マッチ正規表現は廃止。exit code ＋明示エラーフラグのみ。
-  - PostToolUse で `tool_name ∈ {TodoWrite, update_plan}` を拾い、status 差分で
-    spawn(pending)/engage(in_progress)/kill(completed) を駆動。
-  - 失敗信号は Claude=PostToolUseFailure イベント、構造化 exit code を持つ manual/将来 payload → `counter`。
-    実機 Codex は失敗不可視なので成功扱い。
-  - HP は演出専用（HP_FLOOR=1 で殺せない、瀕死=dying）。トドメは completed のみ。
-  - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝ツール名）。
-  - 仲間：SubagentStart で参戦（`state.allies`）/ SubagentStop で離脱（LIFO）。戦闘中は hero 攻撃に追撃（`attack` kind:"ally"）。仲間も殺せない（HP_FLOOR 準拠）。
-- **テスト：18/18 pass。** `test/adventure-state.test.mjs`（偽陽性修正・HP で殺せない・completed トドメ・provider parity・no-TODO・仲間 召喚/離脱/アシスト/殺せない/敵不在 等）。
-- **サーバ経由の E2E スモーク：確認済み。** `/hook`→`/state`→effects を実行し、
-  TodoWrite→battle、Edit→attack(skill)、PostToolUseFailure→counter、completed→monster_defeated(finisher)+次の engage を確認。
-- **稼働サーバ：新モデルで確認済み。** 旧コード（error=モンスター）が動いていて「TODO→戦闘にならない」問題が出ていたが、
-  サーバ再起動＋`/control/reset` で解消。稼働サーバの `/state` が新形式（`defeatedCount`/`allies`）であることを確認。
+- **reducer：実装済み・検証済み。** `server/adventure-state.mjs` をランダムエンカウント モデルへ。
+  - 旧 `detectFailure` の単語マッチ正規表現は廃止。Claude の失敗イベント名（PostToolUseFailure/PermissionDenied）と
+    構造化 exit code 非0 のみ → `counter`。実機 Codex は失敗不可視なので成功扱い（反撃しない）。
+  - **モンスターは TODO からは湧かない。** PreToolUse ごとに 20% でエンカウントが1体だけ出現（最大1体）。
+    スプライト/HP は `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダム。HP は演出専用。
+  - 出現時に `linkedTodo` を決定（出現時 in_progress TODO あり=true / なし=false）。討伐条件はこのフラグで分岐：
+    - `linkedTodo=false` → hero の攻撃 **5撃**、または **ターン終了（Stop）** で討伐。
+    - `linkedTodo=true` → 攻撃では倒れず、TODO が1つ `completed` になった時に討伐。in_progress TODO が消えたら `linkedTodo` 解除。
+  - TODO ツール（`tool_name ∈ {TodoWrite, update_plan}`）は `state.quest`（label+status のスナップショット）を更新するだけ。
+    新たに completed になった項目があれば紐づくエンカウントを討伐。
+  - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝ツール名）。出現・増援の判定は PreToolUse のみ。
+  - 精霊：戦闘中の PreToolUse ごとに 20% で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
+    在席中は現在の敵に追撃（`attack` kind:"ally"、討伐の5撃には数えない）。
+    モンスター討伐ごとに精霊は全員消滅。SubagentStop で1体帰還（LIFO）、在席ゼロでの Stop は無反応。
+- **テスト：19/19 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
+  ターン終了討伐・linkedTodo の completed 討伐・provider parity・精霊 増援/参戦/重複回避/上限4/追撃/討伐で消滅/離脱 等）。
 - **フロントエンド：新 state/effect に配線済み。**
-  - `public/overlay.html` / `overlay.js` / `overlay.css`：target=in_progress を戦闘相手に、pending を待機列(`#roster`)に、
-    在席仲間を `#allies` に、TODO 本文を `#monsterLabel` に表示。新 effect（engage/attack(kind,skill,ally)/counter/monster_dying/
-    monster_defeated(finisher)/monster_fled/retreat/turn_completed/ally_summon/ally_return/compact_*/hold）をトースト＋パーティクル＋フラッシュで表示。瀕死は点滅。
-    通常/スキル攻撃は斬撃・揺れ・技名カットイン付き。
-  - 仲間精霊スプライトを追加：火/地/風/水。戦闘中は精霊ごとの配置を持ち、Aqua（水）は左上・勇者の上あたりに浮遊。
-  - `public/app.js`（Web ビュー）：`progress`/`errorsDefeated` 廃止に追従、target/defeatedCount/label に対応、新 effect（仲間含む）対応。仲間は主に event log と追撃演出で表示。
+  - `public/overlay.html` / `overlay.js` / `overlay.css`：エンカウントのモンスターを画面中央の戦闘相手に、
+    在席精霊を属性ごとの定位置に、現在の敵ラベルを表示。新 effect（monster_appeared/attack(kind,skill,ally)/counter/
+    monster_defeated/turn_completed/turn_blocked/ally_summon/ally_return/compact_pre/compact_post/hold/step 等）を
+    トースト＋パーティクル＋フラッシュで表示。
+    通常/スキル攻撃は斬撃・揺れ・技名カットイン付き。瀕死点滅・画面全体の赤点滅・「よろけ」表示は廃止。
+  - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。常に1体ずつ再生し、
+    1つ終わってから **0.1秒** 空けて次へ。出現/召喚/帰還/クリア等の即時演出はキューを占有しない。詰まり防止に攻撃アニメは最大10件で間引く。
+  - **クエストトラッカー UI**：MMO ミッション風パネルを画面中央上に表示。未着手 ◇ / 進行中 ◆ / 達成 ✓。
+    全項目完了 or idle では非表示。
+  - **ヘッダーは1行**：「RPGDev ◆ <フェーズ>」。RPGDev は金グラデのゲームタイトル（フェーズ名と同サイズ、菱形セパレータ）。ヘッダー高 60px。
+  - **戦闘配置**：勇者は左下（戦闘時 +10%）、モンスター中央（-20%）、精霊は属性ごとに固定（水=左上, 風=右上, 火=右端・下げ気味, 地=中央下）。モンスター名は1.7倍。
+  - 仲間精霊スプライトを追加：火/地/風/水。`Aqua`（水）は `ally-water-facing-slit.png`。
+  - `public/app.js`（Web ビュー）：新 state/effect に追従（精霊含む）。
   - `adventure.wav` / `battle.wav` は `scripts/render-bgm.mjs` の更新から再生成済み。
   - フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
 - 実機検証の生データ：`tmp/codex-probe/`（gitignore 対象、`hook-capture.log` / `probe*-events.jsonl`）。

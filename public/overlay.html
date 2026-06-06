@@ -15,7 +15,7 @@
       <audio id="battleAudio" src="/audio/battle.wav" loop preload="auto"></audio>
 
       <header class="bar">
-        <div>
+        <div class="titlebar">
           <span class="brand">RPGDev</span>
           <strong id="phaseLabel">待機</strong>
         </div>
@@ -24,25 +24,20 @@
         </div>
       </header>
 
-      <section class="stage">
-        <div id="roster" class="roster" data-active="false" aria-hidden="true"></div>
+      <div id="roster" class="roster" data-active="false" aria-hidden="true"></div>
 
+      <section class="stage">
         <div class="hero" aria-hidden="true">
           <img id="heroImage" src="/assets/sprites/hero.png" alt="" />
         </div>
         <div id="allies" class="allies" data-active="false" aria-hidden="true"></div>
         <div id="monsterStage" class="monster" data-active="false" data-dying="false" aria-hidden="true">
           <div class="enemy-status">
-            <div class="enemy-meta">
-              <span id="monsterName"></span>
-              <strong id="monsterHp"></strong>
-            </div>
-            <div class="enemy-label" id="monsterLabel"></div>
-            <div class="enemy-meter"><span id="hpFill"></span></div>
+            <span id="monsterName"></span>
           </div>
           <img id="monsterImage" src="/assets/sprites/slime.png" alt="" />
         </div>
-        <canvas id="fxCanvas" width="440" height="300"></canvas>
+        <canvas id="fxCanvas" width="1024" height="768"></canvas>
         <div id="toast" class="toast" aria-hidden="true"></div>
       </section>
     </main>

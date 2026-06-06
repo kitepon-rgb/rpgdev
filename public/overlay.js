@@ -1,7 +1,5 @@
 const phaseLabel = document.querySelector("#phaseLabel");
 const monsterName = document.querySelector("#monsterName");
-const monsterHp = document.querySelector("#monsterHp");
-const monsterLabel = document.querySelector("#monsterLabel");
 const monsterStage = document.querySelector("#monsterStage");
 const roster = document.querySelector("#roster");
 const allies = document.querySelector("#allies");
@@ -9,7 +7,6 @@ const toast = document.querySelector("#toast");
 const sceneBg = document.querySelector("#sceneBg");
 const heroImage = document.querySelector("#heroImage");
 const monsterImage = document.querySelector("#monsterImage");
-const hpFill = document.querySelector("#hpFill");
 const audioButton = document.querySelector("#audioButton");
 const resetButton = document.querySelector("#resetButton");
 const fieldAudio = document.querySelector("#fieldAudio");
@@ -157,8 +154,7 @@ function render(state) {
 
   const monsters = state.monsters || [];
   const target = monsters.find((m) => m.status === "in_progress") || null;
-  const pending = monsters.filter((m) => m.status !== "in_progress");
-  renderRoster(pending);
+  renderRoster(state.quest || [], state.phase);
   renderAllies(state.allies || []);
 
   if (!target) {
@@ -166,9 +162,6 @@ function render(state) {
     monsterStage.dataset.active = "false";
     monsterStage.dataset.dying = "false";
     monsterName.textContent = "";
-    monsterLabel.textContent = "";
-    monsterHp.textContent = "";
-    hpFill.style.width = "0%";
     return;
   }
 
@@ -177,22 +170,73 @@ function render(state) {
   monsterStage.dataset.dying = target.dying ? "true" : "false";
   monsterImage.src = `/assets/sprites/${sprite}.png`;
   monsterName.textContent = target.name;
-  monsterLabel.textContent = target.label || "";
-  monsterHp.textContent = target.dying ? "瀕死" : `${target.hp} / ${target.maxHp}`;
-  hpFill.dataset.dying = target.dying ? "true" : "false";
-  hpFill.style.width = `${Math.max(0, Math.round((target.hp / target.maxHp) * 100))}%`;
 }
 
-function renderRoster(pending) {
+// パネルが溢れないように表示する最大行数（超過分は最古の達成項目だけ畳む）。
+const QUEST_MAX_ROWS = 9;
+
+// クエスト（ミッション）トラッカー: 最新 TodoWrite スナップショットを MMO 風の一覧で描画。
+// 未着手 ◇ / 進行中（現在の討伐対象）◆ / 達成 ✓。街(idle)では表示しない。
+function renderRoster(quest, phase) {
   if (!roster) return;
-  if (!pending.length) {
+  const items = Array.isArray(quest) ? quest.filter((it) => it && it.label) : [];
+  // 全項目が完了していたらクエストウィンドウは消す（残さない）。街(idle)でも出さない。
+  const allDone = items.length > 0 && items.every((it) => it.status === "completed");
+  if (!items.length || phase === "idle" || allDone) {
     roster.dataset.active = "false";
-    roster.textContent = "";
+    roster.replaceChildren();
     return;
   }
   roster.dataset.active = "true";
-  const labels = pending.map((m) => m.label).filter(Boolean).join(" ・ ");
-  roster.textContent = `⚔ 待機 ${pending.length} ： ${labels}`;
+
+  const total = items.length;
+  const doneCount = items.filter((it) => it.status === "completed").length;
+
+  // 進行中・未着手は必ず残し、行が多すぎるときだけ先頭（最古の達成）を畳む。
+  let visible = items;
+  let folded = 0;
+  if (items.length > QUEST_MAX_ROWS) {
+    folded = items.length - QUEST_MAX_ROWS;
+    visible = items.slice(folded);
+  }
+
+  const head = document.createElement("div");
+  head.className = "roster-head";
+  const crest = document.createElement("span");
+  crest.className = "roster-crest";
+  crest.textContent = "❖";
+  const title = document.createElement("span");
+  title.className = "roster-title";
+  title.textContent = "クエスト";
+  const count = document.createElement("span");
+  count.className = "roster-count";
+  count.textContent = `${doneCount} / ${total}`;
+  head.append(crest, title, count);
+
+  const list = document.createElement("div");
+  list.className = "roster-list";
+  if (folded > 0) {
+    list.append(questRow("completed", `ほか ${folded} 件 達成`, true));
+  }
+  for (const item of visible) {
+    list.append(questRow(item.status, item.label, false));
+  }
+
+  roster.replaceChildren(head, list);
+}
+
+function questRow(status, label, folded) {
+  const kind = status === "completed" ? "done" : status === "in_progress" ? "active" : "todo";
+  const row = document.createElement("div");
+  row.className = `roster-item is-${kind}${folded ? " is-folded" : ""}`;
+  const mark = document.createElement("span");
+  mark.className = "roster-mark";
+  mark.textContent = kind === "done" ? "✓" : kind === "active" ? "◆" : "◇";
+  const text = document.createElement("span");
+  text.className = "roster-text";
+  text.textContent = label;
+  row.append(mark, text);
+  return row;
 }
 
 function renderAllies(list) {
@@ -232,94 +276,145 @@ function monsterSprite(monster) {
   return "goblin";
 }
 
+// 攻撃アニメは常に1体ずつ（勇者を含む）。前のアニメが終わってから 0.1 秒空けて次へ。
+// 演出はグローバルなキューで直列化し、複数バッチが重なって連続再生されないようにする。
+let fxQueue = [];
+let fxBusy = false;
+const ANIM_GAP = 100; // アニメ間の空き（0.1 秒）
+const MAX_QUEUED_ATTACKS = 10; // 詰まりすぎ防止（超過した攻撃アニメは間引く）
+
+// そのエフェクトのアニメが終わるまでの目安(ms)。0 は即時（アニメ枠を占有せず次へ）。
+function fxAnimMs(effect) {
+  switch (effect.type) {
+    case "attack":
+      if (effect.stagger) return 300;
+      return effect.kind === "skill" ? 560 : 520;
+    case "counter":
+      return 420;
+    case "monster_dying":
+      return 320;
+    case "monster_defeated":
+      return 520;
+    default:
+      return 0; // 出現・召喚・離脱・CLEAR 等はアニメを占有しない（即時）
+  }
+}
+
 function effects(list) {
   for (const effect of list) {
-    switch (effect.type) {
-      case "monster_appeared":
-        burst(0.5, 0.46, "#ff5c57", 38);
-        sting([43, 47, 50]);
-        break;
-      case "engage":
-        flash("#ff8a4c");
-        burst(0.52, 0.44, "#ffb15c", 28);
-        sting([52, 55, 59]);
-        break;
-      case "attack":
-        if (effect.kind === "ally") {
-          pulseAlly(effect.allyId, effect.stagger ? "stagger" : "assist");
-          if (!effect.stagger) {
-            burst(0.5, 0.5, "#7fe0ff", 16);
-            showToast(`${formatSkillName(effect.skill)}!`, "ally");
-          }
-          break;
-        }
-        if (effect.kind === "skill") {
-          slash("skill");
-          shakeStage(effect.stagger ? "light" : "skill");
-          burst(0.55, 0.42, effect.stagger ? "#d8c7ff" : "#ffd15c", effect.stagger ? 18 : 34);
-          burst(0.52, 0.5, "#7fe0ff", effect.stagger ? 10 : 18);
-          showSkillBanner(effect.skill || "SKILL");
-          if (effect.stagger) showToast("よろけ", "dying");
-          sting(effect.stagger ? [76, 71] : [83, 79, 76]);
-        } else {
-          slash("normal");
-          shakeStage(effect.stagger ? "light" : "hit");
-          burst(0.52, 0.44, effect.stagger ? "#9fb8c8" : "#ffe9a8", effect.stagger ? 12 : 24);
-          showToast(effect.stagger ? "よろけ" : "斬撃", effect.stagger ? "dying" : "hit");
-          sting(effect.stagger ? [72] : [76, 74]);
-        }
-        break;
-      case "counter":
-        flash("#ff3b3b");
-        burst(0.34, 0.5, "#ff4d4d", 28);
-        showToast("反撃!", "counter");
-        sting([45, 40]);
-        break;
-      case "monster_dying":
-        flash("#c8a0ff");
-        showToast("瀕死", "dying");
-        break;
-      case "monster_defeated":
-        burst(0.5, 0.42, "#7dd873", 58);
-        showToast(effect.finisher ? "撃破!" : "撃破", "win");
-        sting([72, 76, 79, 84]);
-        break;
-      case "monster_fled":
-        burst(0.5, 0.46, "#9aa6b2", 16);
-        showToast("逃走", "info");
-        break;
-      case "retreat":
-        showToast("後退", "info");
-        break;
-      case "turn_completed":
-        burst(0.5, 0.42, "#7dd873", 70);
-        showToast("CLEAR", "win");
-        sting([72, 76, 79, 84, 88]);
-        break;
-      case "turn_blocked":
-        showToast(`未討伐 ${effect.remaining}`, "info");
-        break;
-      case "ally_summon":
-        summonBurst();
-        pulseAlly(effect.ally?.id, "summon");
-        showToast(`${effect.ally?.name || "仲間"} 召喚`, "ally");
-        sting([64, 67, 71, 76]);
-        break;
-      case "ally_return":
-        showToast("仲間帰還", "info");
-        break;
-      case "compact_pre":
-        showToast("記憶が霞む…", "info");
-        break;
-      case "compact_post":
-        showToast("霧が晴れた", "info");
-        break;
-      case "hold":
-        showToast("!", "info");
-        break;
-      default:
-        break;
+    if (effect.type === "attack") {
+      const queued = fxQueue.reduce((n, e) => (e.type === "attack" ? n + 1 : n), 0);
+      if (queued >= MAX_QUEUED_ATTACKS) continue; // 間引き
     }
+    fxQueue.push(effect);
+  }
+  pumpFx();
+}
+
+function pumpFx() {
+  if (fxBusy) return;
+  while (fxQueue.length) {
+    const effect = fxQueue.shift();
+    playEffect(effect);
+    const anim = fxAnimMs(effect);
+    if (anim > 0) {
+      // この1体のアニメが終わる + 0.1秒 待ってから次のエフェクトへ。
+      fxBusy = true;
+      window.setTimeout(() => {
+        fxBusy = false;
+        pumpFx();
+      }, anim + ANIM_GAP);
+      return;
+    }
+    // anim === 0 の即時エフェクトは待たずに続けて処理。
+  }
+}
+
+function playEffect(effect) {
+  switch (effect.type) {
+    case "monster_appeared":
+      burst(0.5, 0.46, "#ff5c57", 38);
+      sting([43, 47, 50]);
+      break;
+    case "engage":
+      flash("#ff8a4c");
+      burst(0.52, 0.44, "#ffb15c", 28);
+      sting([52, 55, 59]);
+      break;
+    case "attack":
+      if (effect.kind === "ally") {
+        pulseAlly(effect.allyId, effect.stagger ? "stagger" : "assist");
+        if (!effect.stagger) {
+          burst(0.5, 0.5, "#7fe0ff", 16);
+          showToast(`${formatSkillName(effect.skill)}!`, "ally");
+        }
+        break;
+      }
+      if (effect.kind === "skill") {
+        slash("skill");
+        shakeStage(effect.stagger ? "light" : "skill");
+        burst(0.55, 0.42, effect.stagger ? "#d8c7ff" : "#ffd15c", effect.stagger ? 18 : 34);
+        burst(0.52, 0.5, "#7fe0ff", effect.stagger ? 10 : 18);
+        showSkillBanner(effect.skill || "SKILL");
+        sting(effect.stagger ? [76, 71] : [83, 79, 76]);
+      } else {
+        slash("normal");
+        shakeStage(effect.stagger ? "light" : "hit");
+        burst(0.52, 0.44, effect.stagger ? "#9fb8c8" : "#ffe9a8", effect.stagger ? 12 : 24);
+        if (!effect.stagger) showToast("斬撃", "hit");
+        sting(effect.stagger ? [72] : [76, 74]);
+      }
+      break;
+    case "counter":
+      flash("#ff3b3b");
+      burst(0.34, 0.5, "#ff4d4d", 28);
+      showToast("反撃!", "counter");
+      sting([45, 40]);
+      break;
+    case "monster_dying":
+      flash("#c8a0ff");
+      showToast("瀕死", "dying");
+      break;
+    case "monster_defeated":
+      burst(0.5, 0.42, "#7dd873", 58);
+      showToast(effect.finisher ? "撃破!" : "撃破", "win");
+      sting([72, 76, 79, 84]);
+      break;
+    case "monster_fled":
+      burst(0.5, 0.46, "#9aa6b2", 16);
+      showToast("逃走", "info");
+      break;
+    case "retreat":
+      showToast("後退", "info");
+      break;
+    case "turn_completed":
+      burst(0.5, 0.42, "#7dd873", 70);
+      showToast("CLEAR", "win");
+      sting([72, 76, 79, 84, 88]);
+      break;
+    case "turn_blocked":
+      showToast(`未討伐 ${effect.remaining}`, "info");
+      break;
+    case "ally_summon":
+      summonBurst();
+      pulseAlly(effect.ally?.id, "summon");
+      showToast(`${effect.ally?.name || "仲間"} 召喚`, "ally");
+      sting([64, 67, 71, 76]);
+      break;
+    case "ally_return":
+      showToast("仲間帰還", "info");
+      break;
+    case "compact_pre":
+      showToast("記憶が霞む…", "info");
+      break;
+    case "compact_post":
+      showToast("霧が晴れた", "info");
+      break;
+    case "hold":
+      showToast("!", "info");
+      break;
+    default:
+      break;
   }
 }
 

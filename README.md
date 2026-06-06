@@ -2,9 +2,11 @@
 
 Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトップウィンドウの演出に変換する macOS アプリです。
 
-**TODO（作業項目）をモンスターに見立てます。** エージェントの TODO リスト（Claude の TodoWrite / Codex の update_plan）の各項目が1体のモンスターとして出現し、`in_progress` の項目が「いま戦っている敵」になります。ツールを使うたびに攻撃（`PreToolUse`＝通常攻撃 / `PostToolUse`＝技名がツール名のスキル攻撃）、項目が `completed` になるとトドメで撃破します。待機中は街、作業中はフィールドを探検、`in_progress` の項目と対峙すると戦闘になります。
+**モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は Slime / Goblin / Orc / Ogre からランダムに選ばれます。ツールを使うたびに攻撃し（`PreToolUse`＝通常攻撃 / `PostToolUse`＝技名がツール名のスキル攻撃）、敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
 
-HP は演出用で攻撃では倒せません（瀕死で粘る）。撃破は TODO が完了した瞬間だけ。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` で検知。Codex は hook がツールの成否を出さないため反撃は出ません）。TODO を使わないセッションは戦闘にならず、平和な探検になります。
+討伐条件は出現タイミングで変わります。**進行中の TODO が無いとき**に出た敵は、通常攻撃5回、またはターン終了（`Stop`）で討伐します。**進行中（`in_progress`）の TODO があるとき**に出た敵はその項目に紐づき、攻撃では倒せず、TODO 項目が1つ `completed` になった瞬間に討伐します（進行中 TODO が無くなれば紐づきが解け、以降は5撃／ターン終了で倒せます）。HP は演出専用です。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` などで検知。Codex は hook がツールの成否を出さないため反撃は出ません）。
+
+TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエストとして画面上部に一覧表示され、紐づくエンカウントの討伐トリガーになります。モンスターは湧かしません。
 
 設計の詳細・実機検証の根拠は [docs/design-todo-rpg.md](docs/design-todo-rpg.md) を参照。
 
@@ -57,15 +59,15 @@ Codex / Claude Code 側で project-local hooks の trust / review が必要な�
 ## Hook Flow
 
 - `UserPromptSubmit`: 冒険開始、ウィンドウを開く、フィールドへ
-- `PreToolUse`: 通常攻撃（戦闘中の `in_progress` モンスターへ）。敵がいなければ探検で前進
+- `PreToolUse`: 通常攻撃。さらに 20% でモンスターのエンカウント判定、戦闘中なら 20% で精霊の増援判定も行う（出現・増援判定は Pre のみ）
 - `PostToolUse`:
-  - `TodoWrite` / `update_plan` → モンスター名簿を更新（`pending`＝待機列, `in_progress`＝現在の敵, `completed`＝撃破）
-  - それ以外のツール → スキル攻撃（技名＝ツール名）。失敗時は敵が反撃
-- `PostToolUseFailure`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
-- `SubagentStart` / `SubagentStop`: 精霊の仲間が参戦 / 帰還。戦闘中は仲間も現在の敵を追撃する
-- `Stop`: 未完了の TODO（モンスター）が無ければ一区切り。残っていれば戦線維持
+  - `TodoWrite` / `update_plan` → クエスト一覧を更新（`pending`＝未着手, `in_progress`＝進行中, `completed`＝達成）。新たに `completed` になった項目があれば、紐づくエンカウントを討伐
+  - それ以外のツール → スキル攻撃（技名＝ツール名）
+- `PostToolUseFailure` / `PermissionDenied`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
+- `SubagentStart` / `SubagentStop`: 精霊の仲間が参戦 / 帰還（LIFO）。戦闘中は仲間も現在の敵を追撃する
+- `Stop`: TODO に紐づかないエンカウントはターン終了で討伐。紐づくエンカウントは戦線維持
 
-モンスターの出現・撃破は TODO の状態変化だけが駆動します（エラーの単語マッチでは湧きません）。
+モンスターはランダムエンカウント（ツール使用ごと 20%）で出現し、討伐条件は出現時に進行中 TODO があったかで決まります。
 Hook がサーバへ送れない場合は静かに成功扱いせず、stderr と `.rpgdev/hook-errors.log` にエラーを出します。
 
 ## Demo
@@ -76,7 +78,7 @@ Hook がサーバへ送れない場合は静かに成功扱いせず、stderr �
 npm run demo
 ```
 
-このリポジトリを clone している場合は、失敗、モンスター出現、修正ステップ、撃破、一区切りまでを疑似 Hook イベントで流せます。
+このリポジトリを clone している場合は、エンカウント出現・攻撃・討伐・一区切りまでを疑似 Hook イベントで流せます。
 
 ## BGM And Assets
 

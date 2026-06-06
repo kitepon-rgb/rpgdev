@@ -1,4 +1,6 @@
-// TODO 項目＝モンスター モデル。設計の正典は docs/design-todo-rpg.md。
+// ランダムエンカウント モデル。
+// モンスターは TODO 由来ではなく、ツール使用時に確率で出現する「エンカウント」。
+// TODO（クエスト）は表示用の一覧であり、進行中 TODO の完了が「紐づくエンカウント」の討伐条件になる。
 // この reducer は純粋関数（I/O なし）: reduceHookEvent(prev, event) -> { state, effects, normalized }。
 
 const MONSTER_CATALOG = [
@@ -9,13 +11,24 @@ const MONSTER_CATALOG = [
 ];
 
 const MAX_LOG = 80;
-const NORMAL_DAMAGE = 8; // PreToolUse 通常攻撃
-const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃
-const HP_FLOOR = 1; // HP は演出のみ。攻撃ではここまでしか減らない（殺せない）
+const NORMAL_DAMAGE = 8; // PreToolUse 通常攻撃（演出用の HP 減少量）
+const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃（演出用の HP 減少量）
+
+// ランダムエンカウント＆増援
+const ENCOUNTER_SPAWN_CHANCE = 0.2; // ツール使用(PreToolUse)毎にモンスターが出現する確率（TODO 有無に関わらず統一）
+const WILD_HITS_TO_DEFEAT = 5; // TODO 不在で出たエンカウントは hero の攻撃 N 回で討伐（HP は無関係）
+const BATTLE_SUMMON_CHANCE = 0.2; // 戦闘中、ツール使用(PreToolUse)毎に精霊が1体だけ増援する確率
+const MAX_ALLIES = 4; // 精霊の同時在席上限（表示枠・属性数＝4）
+
+// ゲーム確率の判定に使う乱数。テストから差し替え可能（id 生成の Math.random とは分離）。
+let chance = Math.random;
+export function __setChance(fn) {
+  chance = typeof fn === "function" ? fn : Math.random;
+}
 
 // プロバイダ別 TODO ツール（docs §6 / §7 で実機確認済み）。
 const TODO_TOOLS = {
-  TodoWrite: "todos", // Claude（フィールド名は仮定・要確認）
+  TodoWrite: "todos", // Claude（実機検証済み）
   update_plan: "plan" // Codex（実機検証済み）
 };
 
@@ -25,9 +38,10 @@ export function createInitialState() {
     phase: "idle", // idle | field | battle | complete
     turn: 0,
     currentTrack: "field", // field | adventure | battle
-    monsters: [], // 現役名簿: pending + in_progress（TODO 由来）
+    monsters: [], // 出現中のエンカウント（同時に最大1体）
     defeated: [],
-    allies: [], // 在席中の仲間（SubagentStart で参戦 / SubagentStop で離脱）
+    quest: [], // 最新 TodoWrite スナップショット（元の順序・status 付き）= クエスト一覧の表示用
+    allies: [], // 在席中の精霊（攻撃時に増援 / SubagentStart でも参戦）
     steps: 0,
     attacks: 0,
     spawned: 0,
@@ -43,7 +57,7 @@ const ALLY_CATALOG = [
   { name: "Sylph", sprite: "ally-wind", element: "wind" },
   { name: "Aqua", sprite: "ally-water-facing-slit", element: "water" }
 ];
-const ALLY_DAMAGE = 6; // 仲間アシストの1撃（演出。HP_FLOOR は越えない＝仲間も殺せない）
+const ALLY_DAMAGE = 6; // 精霊アシストの1撃（演出。討伐ヒット数には数えない）
 
 export function reduceHookEvent(previousState, hookEvent) {
   const state = cloneState(previousState);
@@ -51,6 +65,7 @@ export function reduceHookEvent(previousState, hookEvent) {
   if (!Array.isArray(state.monsters)) state.monsters = [];
   if (!Array.isArray(state.defeated)) state.defeated = [];
   if (!Array.isArray(state.allies)) state.allies = [];
+  if (!Array.isArray(state.quest)) state.quest = [];
   const event = normalizeHookEvent(hookEvent);
   const effects = [];
 
@@ -71,7 +86,7 @@ export function reduceHookEvent(previousState, hookEvent) {
       break;
     case "PostToolUse":
       if (event.todoItems) {
-        reconcileRoster(state, event, effects);
+        reconcileQuest(state, event, effects);
       } else if (detectFailure(event)) {
         counter(state, event, effects);
       } else {
@@ -112,61 +127,53 @@ export function reduceHookEvent(previousState, hookEvent) {
   return { state, effects, normalized: event };
 }
 
-// --- 名簿（TODO 由来のモンスター）---
+// --- クエスト（TODO 一覧。表示用＋紐づくエンカウントの討伐条件）---
 
-function reconcileRoster(state, event, effects) {
+function reconcileQuest(state, event, effects) {
   ensureActive(state, event, effects);
 
-  const seen = new Set();
-  for (const item of event.todoItems) {
-    const key = item.label.toLowerCase();
-    seen.add(key);
+  const prevStatus = new Map((state.quest || []).map((q) => [q.label, q.status]));
+  // 直前スナップショットと比べて新たに completed になった項目があるか。
+  const newlyCompleted = event.todoItems.some(
+    (it) => it.status === "completed" && prevStatus.get(it.label) !== "completed"
+  );
 
-    let monster = state.monsters.find((m) => m.key === key);
+  // クエスト一覧を最新スナップショットで更新（表示用）。モンスターは TODO からは湧かない。
+  state.quest = event.todoItems.map((it) => ({ label: it.label, status: it.status }));
 
-    if (item.status === "completed") {
-      if (monster) finishMonster(state, monster, event, effects); // トドメ（残HP無視）
-      continue;
-    }
-
-    if (!monster && !state.defeated.some((d) => d.key === key)) {
-      monster = spawnMonster(state, item, event, effects);
-    }
-    if (monster && monster.status !== item.status) {
-      monster.status = item.status;
-      if (item.status === "in_progress") {
-        pushLog(state, "engage", monster.label, event);
-        effects.push({ type: "engage", monsterId: monster.id });
-      } else {
-        pushLog(state, "retreat", monster.label, event);
-        effects.push({ type: "retreat", monsterId: monster.id });
-      }
+  // TODO を1項目でも完了したら、それに紐づくエンカウントを討伐。
+  if (newlyCompleted) {
+    for (const monster of [...state.monsters]) {
+      if (monster.linkedTodo) finishMonster(state, monster, event, effects);
     }
   }
 
-  // スナップショットから消えた（completed でない）項目＝戦線離脱
-  for (const monster of [...state.monsters]) {
-    if (!seen.has(monster.key)) {
-      removeMonster(state, monster);
-      pushLog(state, "monster_fled", monster.label, event);
-      effects.push({ type: "monster_fled", monsterId: monster.id });
-    }
+  // 進行中の TODO が無くなったら紐づきを解除（以後そのエンカウントは 5撃/ターン終了で討伐できる）。
+  if (!state.quest.some((q) => q.status === "in_progress")) {
+    for (const monster of state.monsters) monster.linkedTodo = false;
   }
 }
 
-function spawnMonster(state, item, event, effects) {
-  const template = chooseMonster(item.label);
+// ツール使用毎に ENCOUNTER_SPAWN_CHANCE でモンスターが出現。同時に2体は出さない（表示は1体）。
+// 出現時に進行中の TODO があれば linkedTodo=true（その TODO 完了で討伐）、無ければ 5撃/ターン終了で討伐。
+function maybeSpawnEncounter(state, event, effects) {
+  if (state.monsters.length > 0) return null; // 同時に2体出現はしない
+  if (chance() >= ENCOUNTER_SPAWN_CHANCE) return null;
+  const linkedTodo = state.quest.some((q) => q.status === "in_progress");
+  const template = MONSTER_CATALOG[Math.floor(chance() * MONSTER_CATALOG.length)];
   const monster = {
     id: `monster-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    key: item.label.toLowerCase(),
-    label: item.label,
-    status: item.status,
+    label: template.name,
+    status: "in_progress",
     name: template.name,
     element: template.element,
     sprite: template.sprite,
     maxHp: template.hp,
     hp: template.hp,
     dying: false,
+    wild: true,
+    hits: 0,
+    linkedTodo,
     appearedAt: event.at
   };
   state.monsters.push(monster);
@@ -182,21 +189,29 @@ function finishMonster(state, monster, event, effects) {
   state.defeatedCount += 1;
   pushLog(state, "monster_defeated", monster.label, event);
   effects.push({ type: "monster_defeated", monsterId: monster.id, finisher: true });
+
+  // モンスターを倒すたびに在席中の精霊は全員退場（戦闘終了で消滅）。
+  for (const ally of state.allies) effects.push({ type: "ally_return", allyId: ally.id });
+  state.allies = [];
 }
 
 function removeMonster(state, monster) {
   state.monsters = state.monsters.filter((m) => m.id !== monster.id);
 }
 
-// --- 攻撃（HP は演出専用、殺傷力なし）---
+// --- 攻撃 ---
 
 function normalAttack(state, event, effects) {
   ensureActive(state, event, effects);
   state.steps += 1;
+  maybeSpawnEncounter(state, event, effects); // ツール使用毎 20% でモンスター出現
   const target = currentTarget(state);
   if (target) {
     damage(state, target, NORMAL_DAMAGE, "normal", "", event, effects);
-    allyAssist(state, target, event, effects);
+    if (state.monsters.includes(target)) {
+      allyAssist(state, target, event, effects);
+      maybeSummonReinforcement(state, event, effects); // 1ツール使用につき精霊は最大1体だけ増援
+    }
   } else {
     step(state, event, effects);
   }
@@ -209,36 +224,36 @@ function skillAttack(state, event, effects) {
   const skill = event.toolName || "技";
   if (target) {
     damage(state, target, SKILL_DAMAGE, "skill", skill, event, effects);
-    allyAssist(state, target, event, effects);
+    if (state.monsters.includes(target)) allyAssist(state, target, event, effects);
   } else {
     step(state, event, effects);
   }
 }
 
-// 在席中の仲間が、hero の攻撃に続けて現在の敵を追撃（戦闘中のみ）。
-// HP は演出なので仲間も殺せない（HP_FLOOR / 瀕死は damage() が担保）。
+// 在席中の精霊が hero の攻撃に続けて現在の敵を追撃（演出。討伐ヒット数には数えない）。
 function allyAssist(state, target, event, effects) {
   for (const ally of state.allies) {
     damage(state, target, ALLY_DAMAGE, "ally", ally.name, event, effects, ally);
   }
 }
 
+// 戦闘中、ツール使用毎に BATTLE_SUMMON_CHANCE で精霊が1体だけ増援（重複属性は避ける／上限 MAX_ALLIES）。
+function maybeSummonReinforcement(state, event, effects) {
+  if (chance() < BATTLE_SUMMON_CHANCE) summonAlly(state, event, effects);
+}
+
 function damage(state, monster, amount, kind, skill, event, effects, ally = null) {
   const allyId = ally ? ally.id : undefined;
-  if (monster.dying) {
-    // 瀕死：これ以上削れない。よろける→立ち上がる（ヨーヨー禁止）
-    pushLog(state, "stagger", monster.label, event);
-    effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: 0, stagger: true, allyId });
-    return;
-  }
-  const applied = Math.max(0, Math.min(amount, monster.hp - HP_FLOOR));
-  monster.hp -= applied;
+  const applied = Math.max(0, Math.min(amount, monster.hp));
+  monster.hp = Math.max(0, monster.hp - amount); // HP は演出用
   effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied, allyId });
   pushLog(state, "attack", `${skill || kind} -${applied}`, event);
-  if (monster.hp <= HP_FLOOR) {
-    monster.dying = true;
-    pushLog(state, "monster_dying", monster.label, event);
-    effects.push({ type: "monster_dying", monsterId: monster.id });
+
+  // 討伐条件: linkedTodo なら攻撃では倒れない（TODO 完了で討伐）。
+  // 紐づき無しなら hero の攻撃 WILD_HITS_TO_DEFEAT 回で討伐（精霊の追撃は数えない）。
+  if (!monster.linkedTodo) {
+    if (!ally) monster.hits = (monster.hits || 0) + 1;
+    if (monster.hits >= WILD_HITS_TO_DEFEAT) finishMonster(state, monster, event, effects);
   }
 }
 
@@ -254,6 +269,10 @@ function counter(state, event, effects) {
 function townReset(state, event, effects) {
   state.active = false;
   state.phase = "idle";
+  // 新セッション開始時は前回のクエスト・敵・精霊を持ち越さない。
+  state.quest = [];
+  state.monsters = [];
+  state.allies = [];
   pushLog(state, "session_start", "拠点に到着", event);
   effects.push({ type: "session_start", track: "field" });
 }
@@ -273,6 +292,10 @@ function ensureActive(state, event, effects) {
 }
 
 function finishTurn(state, event, effects) {
+  // TODO に紐づかないエンカウントはターン終了で討伐（紐づきは TODO 完了まで残る）。
+  for (const monster of [...state.monsters]) {
+    if (!monster.linkedTodo) finishMonster(state, monster, event, effects);
+  }
   const remaining = state.monsters.length;
   if (remaining === 0) {
     state.active = false;
@@ -291,11 +314,15 @@ function hold(state, event, effects) {
   effects.push({ type: "hold" });
 }
 
-// SubagentStart で仲間が参戦、SubagentStop で離脱。
-// Hook payload は個体 id を持たない場合があるため、離脱は LIFO（最後に参戦した仲間を帰還）。
+// SubagentStart でも精霊が1体参戦（攻撃時増援と同じ召喚）。SubagentStop で離脱（LIFO）。
 function summonAlly(state, event, effects) {
+  if (state.allies.length >= MAX_ALLIES) return; // 上限（表示枠4）に達したら増援しない
   ensureActive(state, event, effects);
-  const template = ALLY_CATALOG[state.allies.length % ALLY_CATALOG.length];
+  // 呼ばれる精霊はランダム。ただし既に出ている属性は避ける（重複回避）＝同時に2体以上同属性は出ない。
+  const present = new Set(state.allies.map((a) => a.element));
+  const available = ALLY_CATALOG.filter((t) => !present.has(t.element));
+  if (!available.length) return;
+  const template = available[Math.floor(chance() * available.length)];
   const ally = {
     id: `ally-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name: template.name,
@@ -331,25 +358,18 @@ function step(state, event, effects) {
 // --- 派生 ---
 
 function currentTarget(state) {
-  return state.monsters.find((m) => m.status === "in_progress") || null;
+  // 同時に1体なので先頭のエンカウントが現在の戦闘相手。
+  return state.monsters[0] || null;
 }
 
 function hasEngaged(state) {
-  return state.monsters.some((m) => m.status === "in_progress");
+  return state.monsters.length > 0;
 }
 
 function trackForState(state) {
   if (state.phase === "battle") return "battle";
   if (state.active && state.phase === "field") return "adventure";
   return "field";
-}
-
-function chooseMonster(label) {
-  const text = String(label).toLowerCase();
-  if (/build|compile|tsc|vite|webpack|rollup|bundle|deploy|ci/.test(text)) return MONSTER_CATALOG[2];
-  if (/type|logic|refactor|design|architect|test|assert|algorithm/.test(text)) return MONSTER_CATALOG[3];
-  if (/syntax|lint|format|style|doc|comment|rename/.test(text)) return MONSTER_CATALOG[0];
-  return MONSTER_CATALOG[1];
 }
 
 // --- 正規化 ---
