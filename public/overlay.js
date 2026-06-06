@@ -376,10 +376,6 @@ function effects(list) {
   if (list.some((effect) => effect.type === "monster_appeared")) {
     monsterDefeatInProgress = false;
   }
-  const defeatIndex = list.findIndex((effect) => effect.type === "monster_defeated");
-  if (defeatIndex >= 0) {
-    fxQueue = fxQueue.filter((effect) => effect.type !== "attack");
-  }
 
   for (const effect of list) {
     if (monsterDefeatInProgress && effect.type === "attack") continue;
@@ -388,11 +384,10 @@ function effects(list) {
       if (queued >= MAX_QUEUED_ATTACKS) continue; // 間引き
     }
     if (effect.type === "monster_defeated") {
-      // 唐突に消さない：撃破の前に勇者の会心の一撃（斬撃）を必ず1回差し込み、
-      // それが終わってから撃破＋消滅を流す。取りこぼした攻撃アニメは捨てる
-      // （finisher は "attack" ではないのでこのフィルタでは消えない）。
-      monsterDefeatInProgress = true;
-      fxQueue = fxQueue.filter((queued) => queued.type !== "attack");
+      // 撃破の前に、まだ再生していない攻撃（トドメに至った一連の攻撃）はそのまま流し、
+      // その後に会心の一撃（finisher）→撃破とする。攻撃アニメは捨てない＝欠落させない。
+      // 撃破フラグは撃破演出を「再生した時点」で立てる（playEffect 側）ので、トドメ前の
+      // 攻撃はキュー順に再生され、撃破後に届く攻撃だけが破棄される。
       fxQueue.push({ type: "finisher" });
     }
     fxQueue.push(effect);
@@ -505,6 +500,7 @@ function playEffect(effect) {
       sting([79, 83, 86, 91]);
       break;
     case "monster_defeated":
+      monsterDefeatInProgress = true; // 以後（次の出現まで）に届く攻撃アニメは破棄する
       holdDefeatedMonster();
       monsterDefeatImpact();
       monsterDefeatSound();
