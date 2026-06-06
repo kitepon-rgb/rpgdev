@@ -148,8 +148,8 @@ function reconcileQuest(state, event, effects) {
     }
   }
 
-  // 進行中の TODO が無くなったら紐づきを解除（以後そのエンカウントは 5撃/ターン終了で討伐できる）。
-  if (!state.quest.some((q) => q.status === "in_progress")) {
+  // 進行中の本物の TODO が無くなったら紐づきを解除（以後そのエンカウントは 5撃/ターン終了で討伐できる）。
+  if (!hasRealTodoInProgress(state)) {
     for (const monster of state.monsters) monster.linkedTodo = false;
   }
 }
@@ -159,7 +159,7 @@ function reconcileQuest(state, event, effects) {
 function maybeSpawnEncounter(state, event, effects) {
   if (state.monsters.length > 0) return null; // 同時に2体出現はしない
   if (chance() >= ENCOUNTER_SPAWN_CHANCE) return null;
-  const linkedTodo = state.quest.some((q) => q.status === "in_progress");
+  const linkedTodo = hasRealTodoInProgress(state); // 合成クエスト(ユーザー入力)は紐づけ対象にしない
   const template = MONSTER_CATALOG[Math.floor(chance() * MONSTER_CATALOG.length)];
   const monster = {
     id: `monster-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -204,17 +204,18 @@ function removeMonster(state, monster) {
 function normalAttack(state, event, effects) {
   ensureActive(state, event, effects);
   state.steps += 1;
-  maybeSpawnEncounter(state, event, effects); // ツール使用毎 20% でモンスター出現
-  const target = currentTarget(state);
-  if (target) {
-    damage(state, target, NORMAL_DAMAGE, "normal", "", event, effects);
-    if (state.monsters.includes(target)) {
-      allyAssist(state, target, event, effects);
-      maybeSummonReinforcement(state, event, effects); // 1ツール使用につき精霊は最大1体だけ増援
-    }
-  } else {
+  // 1つの Hook では1アクションだけ：出現 / 召喚 / 攻撃 / 前進 のいずれか1つ。
+  if (!currentTarget(state)) {
+    // モンスター不在：出現判定。出たらそれが今回のアクション（攻撃はしない）、出なければ前進。
+    if (maybeSpawnEncounter(state, event, effects)) return;
     step(state, event, effects);
+    return;
   }
+  // モンスター在：精霊召喚（20%）か 通常攻撃 の片方だけ。召喚できたら今回は攻撃しない。
+  if (maybeSummonReinforcement(state, event, effects)) return;
+  const target = currentTarget(state);
+  damage(state, target, NORMAL_DAMAGE, "normal", "", event, effects);
+  if (state.monsters.includes(target)) allyAssist(state, target, event, effects);
 }
 
 function skillAttack(state, event, effects) {
@@ -238,8 +239,10 @@ function allyAssist(state, target, event, effects) {
 }
 
 // 戦闘中、ツール使用毎に BATTLE_SUMMON_CHANCE で精霊が1体だけ増援（重複属性は避ける／上限 MAX_ALLIES）。
+// 実際に1体召喚できたら true（＝今回の Hook のアクションは召喚）。確率を外した/上限などで召喚しなければ false。
 function maybeSummonReinforcement(state, event, effects) {
-  if (chance() < BATTLE_SUMMON_CHANCE) summonAlly(state, event, effects);
+  if (chance() >= BATTLE_SUMMON_CHANCE) return false;
+  return summonAlly(state, event, effects);
 }
 
 function damage(state, monster, amount, kind, skill, event, effects, ally = null) {
@@ -280,6 +283,11 @@ function townReset(state, event, effects) {
 function beginTurn(state, event, effects) {
   state.active = true;
   state.turn += 1;
+  // TODO がまだ無い間は、ユーザー入力を1つのクエストとして表示する（synthetic）。
+  // TodoWrite/update_plan が来たら reconcileQuest が本物の TODO で置き換える。
+  // synthetic は表示専用で、エンカウントの linkedTodo（討伐条件）には数えない。
+  const prompt = userPromptText(event);
+  if (prompt) state.quest = [{ label: prompt, status: "in_progress", synthetic: true }];
   pushLog(state, "adventure_started", `Turn ${state.turn} started`, event);
   effects.push({ type: "adventure_started", track: "adventure", turn: state.turn });
 }
@@ -315,13 +323,14 @@ function hold(state, event, effects) {
 }
 
 // SubagentStart でも精霊が1体参戦（攻撃時増援と同じ召喚）。SubagentStop で離脱（LIFO）。
+// 精霊を1体召喚する。実際に追加できたら true、上限/全属性在席で何もしなければ false。
 function summonAlly(state, event, effects) {
-  if (state.allies.length >= MAX_ALLIES) return; // 上限（表示枠4）に達したら増援しない
+  if (state.allies.length >= MAX_ALLIES) return false; // 上限（表示枠4）に達したら増援しない
   ensureActive(state, event, effects);
   // 呼ばれる精霊はランダム。ただし既に出ている属性は避ける（重複回避）＝同時に2体以上同属性は出ない。
   const present = new Set(state.allies.map((a) => a.element));
   const available = ALLY_CATALOG.filter((t) => !present.has(t.element));
-  if (!available.length) return;
+  if (!available.length) return false;
   const template = available[Math.floor(chance() * available.length)];
   const ally = {
     id: `ally-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -333,6 +342,7 @@ function summonAlly(state, event, effects) {
   state.allies.push(ally);
   pushLog(state, "ally_summon", ally.name, event);
   effects.push({ type: "ally_summon", ally });
+  return true;
 }
 
 function returnAlly(state, event, effects) {
@@ -364,6 +374,11 @@ function currentTarget(state) {
 
 function hasEngaged(state) {
   return state.monsters.length > 0;
+}
+
+// 「本物の TODO（TodoWrite/update_plan 由来）」が進行中か。ユーザー入力の合成クエスト(synthetic)は数えない。
+function hasRealTodoInProgress(state) {
+  return state.quest.some((q) => q.status === "in_progress" && !q.synthetic);
 }
 
 function trackForState(state) {
@@ -484,6 +499,15 @@ function pushLog(state, type, message, event) {
     provider: event.provider,
     event: event.event
   });
+}
+
+// UserPromptSubmit のペイロードからユーザー入力テキストを取り出す（クエスト表示用）。改行は詰める。
+function userPromptText(event) {
+  const raw = event.raw || {};
+  const text = String(raw.prompt || raw.user_prompt || raw.userPrompt || raw.message || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return trimLine(text, 80);
 }
 
 function cloneState(state) {

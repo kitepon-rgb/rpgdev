@@ -78,6 +78,47 @@ test("Codex update_plan also only updates the quest list, no monsters (provider 
   assert.equal(state.quest.length, 2);
 });
 
+test("with no TODO, UserPromptSubmit shows the user input as a single in_progress quest", () => {
+  const r = reduceHookEvent(createInitialState(), {
+    provider: "claude",
+    event: "UserPromptSubmit",
+    raw: { prompt: "ログイン機能を作る" }
+  });
+  assert.deepEqual(r.state.quest, [{ label: "ログイン機能を作る", status: "in_progress", synthetic: true }]);
+});
+
+test("a real TodoWrite replaces the synthetic user-input quest", () => {
+  let r = reduceHookEvent(createInitialState(), {
+    provider: "claude",
+    event: "UserPromptSubmit",
+    raw: { prompt: "作業する" }
+  });
+  assert.equal(r.state.quest.length, 1);
+  assert.equal(r.state.quest[0].synthetic, true);
+  r = reduceHookEvent(
+    r.state,
+    todoWrite([
+      { content: "task A", status: "in_progress" },
+      { content: "task B", status: "pending" }
+    ])
+  );
+  assert.equal(r.state.quest.length, 2);
+  assert.ok(!r.state.quest[0].synthetic, "TodoWrite で本物の TODO に置き換わる");
+});
+
+test("an encounter during the synthetic (user-input) quest is NOT linked (treated as no-TODO)", () => {
+  __setChance(chanceSeq(0, 0));
+  let r = reduceHookEvent(createInitialState(), {
+    provider: "claude",
+    event: "UserPromptSubmit",
+    raw: { prompt: "作業する" }
+  });
+  assert.equal(r.state.quest[0].synthetic, true);
+  r = reduceHookEvent(r.state, pre()); // 出現
+  assert.equal(r.state.monsters.length, 1);
+  assert.equal(r.state.monsters[0].linkedTodo, false, "合成クエストは linkedTodo を立てない＝5撃/ターン終了で討伐");
+});
+
 test("a tool call can spawn an encounter (20%); never two at once", () => {
   __setChance(() => 0.1); // < 0.2 → 出現
   let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
@@ -101,14 +142,17 @@ test("no high roll = no encounter (peaceful exploration)", () => {
 test("a no-TODO encounter is defeated after 5 hero attacks", () => {
   __setChance(chanceSeq(0, 0)); // 出現(gate0,select0)。以降0.99で増援なし・追加出現なし
   let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
-  r = reduceHookEvent(r.state, pre()); // 出現 + 1撃目（hits=1）
+  r = reduceHookEvent(r.state, pre()); // 出現だけ（1 Hook 1 アクション＝攻撃しない）
   assert.equal(r.state.monsters.length, 1);
   assert.equal(r.state.monsters[0].linkedTodo, false);
-  r = reduceHookEvent(r.state, post()); // hits=2
-  r = reduceHookEvent(r.state, pre()); // hits=3
-  r = reduceHookEvent(r.state, post()); // hits=4
+  assert.equal(r.state.monsters[0].hits, 0, "出現の Hook では攻撃しない");
+  // 以降は攻撃のみ（chanceSeq 使い切りで 0.99 ＝増援なし）。1〜4撃目
+  r = reduceHookEvent(r.state, post()); // hits=1
+  r = reduceHookEvent(r.state, pre()); // hits=2
+  r = reduceHookEvent(r.state, post()); // hits=3
+  r = reduceHookEvent(r.state, pre()); // hits=4
   assert.equal(r.state.monsters.length, 1, "4撃ではまだ生存");
-  r = reduceHookEvent(r.state, pre()); // hits=5 → 討伐
+  r = reduceHookEvent(r.state, post()); // hits=5 → 討伐
   assert.equal(r.state.monsters.length, 0, "hero の攻撃5回で討伐");
   assert.equal(r.state.defeatedCount, 1);
 });
@@ -136,15 +180,40 @@ test("an encounter spawned during an in_progress TODO is linked: survives attack
 });
 
 test("PreToolUse = normal attack, PostToolUse = skill attack named after the tool (against the encounter)", () => {
-  __setChance(chanceSeq(0, 0)); // 1回目の Pre で出現
+  __setChance(chanceSeq(0, 0)); // 最初の Pre で出現させる（出現のみ）
   let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
-  r = reduceHookEvent(r.state, pre("Grep")); // 出現 + normal 攻撃
-  const normal = r.effects.find((e) => e.type === "attack");
+  r = reduceHookEvent(r.state, pre()); // 出現
+  assert.equal(r.state.monsters.length, 1);
+  __setChance(() => 0.99); // 以降は増援なし＝攻撃になる
+  let res = reduceHookEvent(r.state, pre("Grep")); // 通常攻撃
+  const normal = res.effects.find((e) => e.type === "attack");
   assert.equal(normal.kind, "normal");
-  r = reduceHookEvent(r.state, post("Edit"));
-  const skill = r.effects.find((e) => e.type === "attack");
+  res = reduceHookEvent(res.state, post("Edit")); // スキル攻撃
+  const skill = res.effects.find((e) => e.type === "attack");
   assert.equal(skill.kind, "skill");
   assert.equal(skill.skill, "Edit");
+});
+
+test("one Hook does exactly one action (spawn XOR summon XOR attack — never combined)", () => {
+  // 出現の Hook は攻撃も召喚もしない
+  __setChance(chanceSeq(0, 0));
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, pre()); // 出現のみ
+  assert.ok(r.effects.some((e) => e.type === "monster_appeared"));
+  assert.ok(!r.effects.some((e) => e.type === "attack"), "出現と攻撃は同時に起きない");
+  assert.ok(!r.effects.some((e) => e.type === "ally_summon"), "出現と召喚は同時に起きない");
+
+  // 戦闘中、召喚が起きる Hook は攻撃しない
+  __setChance(() => 0); // 召喚を強制
+  const summonR = reduceHookEvent(r.state, pre());
+  assert.ok(summonR.effects.some((e) => e.type === "ally_summon"));
+  assert.ok(!summonR.effects.some((e) => e.type === "attack"), "召喚と攻撃は同時に起きない");
+
+  // 戦闘中、攻撃が起きる Hook は召喚しない
+  __setChance(() => 0.99);
+  const attackR = reduceHookEvent(r.state, pre());
+  assert.ok(attackR.effects.some((e) => e.type === "attack"));
+  assert.ok(!attackR.effects.some((e) => e.type === "ally_summon"), "攻撃と召喚は同時に起きない");
 });
 
 test("defeating a monster makes all spirits vanish", () => {
@@ -275,5 +344,6 @@ test("spirits do not attack when there is no encounter (exploration)", () => {
   assert.equal(r.state.phase, "field");
   r = reduceHookEvent(r.state, pre());
   assert.ok(r.effects.some((e) => e.type === "step"));
-  assert.ok(!r.effects.some((e) => e.type === "attack"));
+  assert.ok(!r.effects.some((e) => e.type === "attack"), "敵不在では攻撃は起きない");
+  assert.ok(!r.effects.some((e) => e.type === "ally_summon"), "敵不在では増援召喚も起きない");
 });

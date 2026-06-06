@@ -55,7 +55,12 @@ npm run demo                          # 起動中のサーバに対して擬似 
 
 TODO（TodoWrite / update_plan）は state.quest（label+status のスナップショット、元の順序）を
 更新するだけでモンスターは湧かさない。新たに `completed` になった項目があれば、紐づく
-（linkedTodo）エンカウントの討伐トリガーになる。
+（linkedTodo）エンカウントの討伐トリガーになる。**TODO 未発生の間は、UserPromptSubmit の
+ユーザー入力を1つの合成クエスト（`synthetic:true`, in_progress）として表示**し、TodoWrite が
+来たら本物の TODO に置き換える（synthetic は表示専用で linkedTodo には数えない）。
+
+**1つの Hook では1アクションだけ**（出現／召喚／攻撃／前進のいずれか1つ）。出現→攻撃→召喚を
+同一 Hook で連鎖させない。攻撃・増援召喚は敵が居なければ起きない。
 
 精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 20% で1体だけ増援し、
 `SubagentStart` でも1体参戦する。常に1体ずつで属性の重複を避け（火 Ignis / 地 Terra /
