@@ -417,13 +417,15 @@ function townReset(state, event, effects) {
 }
 
 function beginTurn(state, event, effects) {
-  // クエスト/ターンはオーナー(親)セッション限定。spawned な別セッション(codex 等)の
-  // UserPromptSubmit はクエストを乗っ取らない（要件6）。非オーナーは前進のみ。
-  if (!isOwnerSession(state, event)) {
+  // クエスト/ターンのオーナー制御。素の UserPromptSubmit でも、現オーナーがアイドル（ロックされていない）なら
+  // 奪取してよい（TODO 奪取と対称）。これでアイドル/休眠オーナーにクエスト単発が張り付いて更新できなくなるのを防ぐ。
+  // ただし現オーナーがロック中（進行中の本物TODO／稼働サブエージェント）なら横取りしない＝前進のみ
+  // （＝作業中のオーナーを spawned codex 等が乗っ取る要件6の肝は維持）。
+  if (!isOwnerSession(state, event) && ownerLocked(state)) {
     step(state, event, effects);
     return;
   }
-  if (!state.ownerSession && event.sessionId) state.ownerSession = event.sessionId;
+  claimQuestOwnership(state, event); // 実 session を持つなら（初確定／アイドル奪取とも）オーナーを当該セッションへ（null は変えない＝P7）
   state.active = true;
   state.turn += 1;
   // 新ターンは出現クールダウンを引きずらない（前ターンの討伐で最初のエンカウントを律速しない）。

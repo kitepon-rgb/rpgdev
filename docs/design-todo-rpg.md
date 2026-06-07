@@ -522,7 +522,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - サーバーの MIME に `.woff2/.woff/.ttf/.otf` を追加（無いと 404→無言フォールバックでフォントが効かないため必須）。
 
 ### 13.6 クエストはオーナーセッション限定（要件6。v0.5.3 で動的化＝§15）[サーバー]
-- `state.ownerSession`＝クエスト/ターンのオーナー（`raw.session_id`）。当初は「最初に UserPromptSubmit したセッションに固定」だったが、**v0.5.3 で動的化**（§15）：オーナーがアイドルなら別セッションの TODO が奪取できる。`isOwnerSession` で**非オーナーの素の UserPromptSubmit はクエストを更新しない**（spawned した `codex exec` の UserPromptSubmit による乗っ取りは引き続き防ぐ）。エンカウント/攻撃は §12 どおり全エージェントぶん受ける＝**クエストだけスコープ**。`SessionStart`／ターン終了でリセット。
+- `state.ownerSession`＝クエスト/ターンのオーナー（`raw.session_id`）。当初は「最初に UserPromptSubmit したセッションに固定」だったが、**v0.5.3 で動的化**（§15）：オーナーがアイドルなら別セッションが奪取できる。**v0.5.4**：奪取トリガーを TODO だけでなく**素の UserPromptSubmit にも対称化**（アイドルなオーナーには素のメッセージでも奪取＝クエスト単発が休眠オーナーに張り付いて更新できない問題の解消）。**ロック中（進行中の本物TODO／稼働サブエージェント）のオーナーは素のメッセージでも TODO でも奪われない**＝作業中のオーナーを spawned codex 等が乗っ取らない要件6の肝は維持。エンカウント/攻撃は §12 どおり全エージェントぶん受ける＝**クエストだけスコープ**。`SessionStart`／ターン終了でリセット。
 
 ### 13.7 SubagentStart/SubagentStop の配線 [設定]
 - reducer は元々 `SubagentStart→summonAlly` / `SubagentStop→returnAlly`（FIFO）対応済みだが、**フックが未配線**だった（`.claude/settings.local.json` / `.codex/hooks.json` に無い）。両方に追加。
@@ -560,7 +560,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 要件6（§13.6）の「最初の UserPromptSubmit に固定」を緩和。**実作業（TODO）をしているセッションが最初のオーナーと別だと、そのTODOがクエストに反映されない**硬直を解消する。multi-session（親 claude＋spawned codex 等）が併走する実環境向け。
 
 **仕様**
-- **オーナー奪取は TODO（TodoWrite/update_plan）でのみ**。素の UserPromptSubmit は従来どおり乗っ取らない（要件6のプロンプト保護は維持）。サブエージェント/ワークフローによる「別セッションへの切替」は**しない**（実機事実：SubagentStart/Stop は親=オーナーの session_id で発火し、独自 session を持たない。区別子は別フィールド `agent_id`）。
+- **オーナー奪取は TODO（TodoWrite/update_plan）または素の UserPromptSubmit でできる**（v0.5.4 で UserPromptSubmit も対称化）。いずれも**現オーナーがアイドル（ロックされていない）時だけ**。ロック中（進行中の本物TODO／稼働サブエージェント）は素のメッセージでも TODO でも奪取不可＝作業中のオーナーを横取りしない（要件6の肝）。サブエージェント/ワークフローによる「別セッションへの切替」は**しない**（実機事実：SubagentStart/Stop は親=オーナーの session_id で発火し、独自 session を持たない。区別子は別フィールド `agent_id`）。
+  - 注（v0.5.3→v0.5.4 の補正）：v0.5.3 は素の UserPromptSubmit を奪取対象外にしたため、TODO を書かないセッションがアイドル/休眠オーナーからクエスト単発を取り戻せなかった（`beginTurn` が `!isOwnerSession` で即 step）。v0.5.4 で `beginTurn` のガードを `!isOwnerSession && ownerLocked` に変え、`claimQuestOwnership` で奪取するよう修正。
 - 非オーナー B の TODO が奪取できるのは、**現オーナーがアイドル**＝`ownerLocked(state)` が false の時だけ。`ownerLocked` = 未完了の本物TODOがある（`ownerHasOpenTodos`＝pending/in_progress。アイドルは全完了か本物TODO無し）／オーナー名義の稼働サブエージェント・ワークフローがある（`subagentCounts[ownerSession] > 0`）。
 - ロック解除は**二段構え**：(1) アイドル化（最適化：奪取を早める）、(2) **ターン終了＝オーナーの Stop だけ**（保証付き安全弁：`finishTurn` が `ownerSession=null`・`subagentCounts={}`）。アイドル判定は不完全（**SubagentStop の取りこぼし**がありうる）なので、誤って“稼働中”でロックが残っても**ターン終了が必ずオーナーを手放す**＝恒久ロックにしない。
 - **ターン終了はオーナーの Stop 限定**：全セッションが Stop を発火するため、非オーナーの Stop は `step()`（親ターンを終わらせない・モンスター強制討伐もしない）。

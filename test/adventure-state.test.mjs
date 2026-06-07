@@ -698,22 +698,35 @@ const subStartBy = (sid) => ({ provider: "claude", event: "SubagentStart", raw: 
 const subStopBy = (sid) => ({ provider: "claude", event: "SubagentStop", raw: { session_id: sid } });
 const stopBy = (sid) => ({ provider: "claude", event: "Stop", raw: { session_id: sid } });
 
-test("素のプロンプト乗っ取りは防ぐが、アイドルなオーナー(synthetic のみ)からは別セッションの TODO が奪取する", () => {
+test("アイドルなオーナーからは、素の UserPromptSubmit でも TODO でも別セッションが奪取する", () => {
   // A が最初に UserPromptSubmit → オーナー A、synthetic クエスト。
   let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
   assert.equal(r.state.ownerSession, "A");
   assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
 
-  // B の素の UserPromptSubmit はクエストを乗っ取らない＝前進のみ（要件6のプロンプト保護は維持）。
-  r = reduceHookEvent(r.state, promptBy("B", "spawned prompt"));
-  assert.equal(r.state.ownerSession, "A", "素の非オーナー入力ではオーナーは変わらない");
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
-  assert.ok(r.effects.some((e) => e.type === "step"), "非オーナーの UserPromptSubmit は前進のみ");
+  // A はアイドル（本物TODO/サブエージェント無し）なので、B の素のメッセージでオーナーを奪取し単発クエストを更新できる。
+  // ＝「クエスト単発が休眠オーナーに張り付いて更新できない」問題の回帰。
+  r = reduceHookEvent(r.state, promptBy("B", "Bの作業"));
+  assert.equal(r.state.ownerSession, "B", "アイドルなオーナーからは素のメッセージでも奪取できる");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["Bの作業"], "奪取後は単発クエストが新セッションのメッセージへ");
 
-  // オーナー A はアイドル（本物TODO/サブエージェント無し）なので、B の update_plan が奪取する。
-  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
-  assert.equal(r.state.ownerSession, "B", "アイドルなオーナーからは TODO で奪取できる");
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["B task"], "奪取後はそのセッションの TODO を表示");
+  // さらに別セッション C の TODO（update_plan）も、B がアイドルなら奪取できる。
+  r = reduceHookEvent(r.state, planBy("C", [{ step: "C task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "C", "アイドルなオーナーからは TODO でも奪取できる");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["C task"]);
+});
+
+test("ロック中のオーナーは、素の UserPromptSubmit でも TODO でも奪われない（要件6の肝）", () => {
+  // A がオーナーになり本物TODOを進行中＝ロック。
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A");
+
+  // ロック中は B の素のメッセージでは奪取不可（作業中のオーナーを横取りしない）＝前進のみ。
+  r = reduceHookEvent(r.state, promptBy("B", "spawned prompt"));
+  assert.equal(r.state.ownerSession, "A", "ロック中は素の非オーナー入力で奪われない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["A task"]);
+  assert.ok(r.effects.some((e) => e.type === "step"), "ロック中の非オーナー UserPromptSubmit は前進のみ");
 });
 
 test("TODOロック：オーナーが進行中の本物TODOを持つ間は、別セッションの TODO は奪取できない", () => {

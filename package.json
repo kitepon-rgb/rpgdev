@@ -1,6 +1,6 @@
 {
   "name": "rpgdev",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "A small macOS RPG overlay for Codex and Claude Code hook events.",
   "license": "MIT",
   "type": "module",

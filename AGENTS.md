@@ -93,8 +93,8 @@ TODO 一覧を元の順序のまま3区画へ均等割りし（端数は field �
 残ライフ3以下で被弾スプライト `ally-<element>-damaged` へ切替＝`isAllyDamaged`＝`life<=3`）。
 ④戦闘→探検の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
 覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストはオーナーセッション限定（`ownerSession`/`isOwnerSession`。
-非オーナーの素の UserPromptSubmit はクエストを変えない＝spawned codex の乗っ取り防止）。**v0.5.3 で動的化**：オーナーがアイドル
-（進行中の本物TODO・稼働サブエージェント/WFのいずれも無い）なら、別セッションの TODO がオーナーを奪取してクエストを更新する。
+**ロック中**のオーナーは素の UserPromptSubmit でも TODO でも奪われない＝作業中の乗っ取り防止）。**v0.5.3〜v0.5.4 で動的化**：オーナーがアイドル
+（進行中の本物TODO・稼働サブエージェント/WFのいずれも無い）なら、別セッションが**素のメッセージでも TODO でも**オーナーを奪取してクエストを更新する（v0.5.4 で UserPromptSubmit も対称化＝クエスト単発が休眠オーナーに固定される問題を解消）。
 ロック解除はアイドル化 or ターン終了（＝オーナーのStop限定。`subagentCounts` で稼働を数える。詳細は docs §15）。⑥`SubagentStart`/`SubagentStop`
 フックを配線（reducer は元から対応・`examples/` の設定にも追加）。
 
