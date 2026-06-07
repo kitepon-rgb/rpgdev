@@ -18,6 +18,7 @@ const ENCOUNTER_SPAWN_CHANCE = 0.2; // ツール使用(PreToolUse)毎にモン�
 const WILD_HITS_TO_DEFEAT = 5; // TODO 不在で出たエンカウントは hero の攻撃 N 回で討伐（HP は無関係）
 const BATTLE_SUMMON_CHANCE = 0.1; // 戦闘中、ツール使用(PreToolUse)毎に精霊が1体だけ増援する確率
 const MAX_ALLIES = 4; // 精霊の同時在席上限（表示枠・属性数＝4）
+const ALLY_MAX_LIFE = 5; // 各精霊の被弾耐久（モンスターの反撃を5回受けると退場。要件4。サーバー権威）
 
 // --- ペーシング（唯一の頭＝サーバーが時刻で律速する。多エージェントの洪水でも点滅させない）---
 // 時刻はサーバーが reduceHookEvent に注入する（event.at＝エージェント側の時計はペーシングに使わない。
@@ -60,6 +61,7 @@ export function createInitialState() {
     lastDefeatAt: 0, // 直近の討伐時刻（サーバー now）。出現クールダウンの判定に使う
     defeated: [],
     quest: [], // 最新 TodoWrite スナップショット（元の順序・status 付き）= クエスト一覧の表示用
+    ownerSession: null, // クエスト/ターンのオーナー＝最初に UserPromptSubmit したセッション(要件6: クエストは親セッション限定)
     allies: [], // 在席中の精霊（攻撃時に増援 / SubagentStart でも参戦）
     steps: 0,
     attacks: 0,
@@ -117,7 +119,7 @@ export function reduceHookEvent(previousState, hookEvent, now) {
       hold(state, event, effects);
       break;
     case "PostToolUse":
-      if (event.todoItems) {
+      if (event.todoItems && isOwnerSession(state, event)) {
         reconcileQuest(state, event, effects);
       } else if (detectFailure(event)) {
         counter(state, event, effects);
@@ -135,6 +137,9 @@ export function reduceHookEvent(previousState, hookEvent, now) {
       break;
     case "SubagentStop":
       returnAlly(state, event, effects);
+      break;
+    case "CounterHit":
+      applyCounterHit(state, event, effects);
       break;
     case "PreCompact":
       ambient(state, event, effects, "compact_pre");
@@ -364,6 +369,7 @@ function townReset(state, event, effects) {
   state.monsters = [];
   state.allies = [];
   state.adventureStage = "field";
+  state.ownerSession = null; // 新セッションでオーナーをリセット（次の UserPromptSubmit が新オーナー。要件6）
   state.lastSpawnAt = 0; // 新セッションは出現ペーシングもリセット
   state.lastDefeatAt = 0;
   pushLog(state, "session_start", "拠点に到着", event);
@@ -371,6 +377,13 @@ function townReset(state, event, effects) {
 }
 
 function beginTurn(state, event, effects) {
+  // クエスト/ターンはオーナー(親)セッション限定。spawned な別セッション(codex 等)の
+  // UserPromptSubmit はクエストを乗っ取らない（要件6）。非オーナーは前進のみ。
+  if (!isOwnerSession(state, event)) {
+    step(state, event, effects);
+    return;
+  }
+  if (!state.ownerSession && event.sessionId) state.ownerSession = event.sessionId;
   state.active = true;
   state.turn += 1;
   // 新ターンは出現クールダウンを引きずらない（前ターンの討伐で最初のエンカウントを律速しない）。
@@ -425,6 +438,7 @@ function summonAlly(state, event, effects) {
     name: template.name,
     sprite: template.sprite,
     element: template.element,
+    life: ALLY_MAX_LIFE, // 残りライフ（被弾で減算、0で退場。要件4）
     appearedAt: event.now // 表示用。時刻はサーバー now で統一（event.at＝エージェント時計は使わない）
   };
   state.allies.push(ally);
@@ -441,6 +455,25 @@ function returnAlly(state, event, effects) {
   }
   pushLog(state, "ally_return", ally.name, event);
   effects.push({ type: "ally_return", allyId: ally.id, element: ally.element, name: ally.name });
+}
+
+// モンスターの反撃ヒットを精霊1体に適用する（要件4。サーバー権威）。
+// タイミング/対象選定はフロント(実クロック)が決め、ally に当たった時だけ /control/counter-hit 経由で
+// CounterHit 合成イベントが届く。ここはライフ減算・0退場のみを担う（純粋関数を保つ）。
+function applyCounterHit(state, event, effects) {
+  const allyId = event.allyId;
+  if (!allyId) return; // 対象不明＝no-op
+  const ally = state.allies.find((a) => a.id === allyId);
+  if (!ally) return; // 撃破済み/不在＝no-op（黙って復活/成功扱いにしない＝effect を出さない）
+  // 旧 state.json（life 無し ally）互換：undefined は満タン扱い（移行時の既定。握りつぶしではなく移行措置）。
+  const current = Number.isFinite(ally.life) ? ally.life : ALLY_MAX_LIFE;
+  ally.life = current - 1;
+  if (ally.life > 0) {
+    effects.push({ type: "ally_hit", allyId: ally.id, element: ally.element, name: ally.name, life: ally.life });
+  } else {
+    state.allies = state.allies.filter((a) => a.id !== ally.id); // id 指定で当該1体だけ退場
+    effects.push({ type: "ally_defeated", allyId: ally.id, element: ally.element, name: ally.name, reason: "depleted" });
+  }
 }
 
 function ambient(state, event, effects, type) {
@@ -467,6 +500,16 @@ function hasEngaged(state) {
 // 「本物の TODO（TodoWrite/update_plan 由来）」が進行中か。ユーザー入力の合成クエスト(synthetic)は数えない。
 function hasRealTodoInProgress(state) {
   return state.quest.some((q) => q.status === "in_progress" && !q.synthetic);
+}
+
+// クエスト更新を許すのはオーナー(親)セッションだけか（要件6）。
+// - オーナー未確定（null）＝まだ誰も UserPromptSubmit していない → 許可（この後オーナーになる）。
+// - session_id 不明（demo/manual/旧 payload）→ 許可（弾くと検証が壊れるため）。
+// - オーナー確定済みで session_id が一致 → 許可。異なる（spawned codex 等）→ 拒否。
+function isOwnerSession(state, event) {
+  if (!state.ownerSession) return true;
+  if (!event.sessionId) return true;
+  return event.sessionId === state.ownerSession;
 }
 
 function currentAdventureStage(state) {
@@ -547,6 +590,8 @@ export function normalizeHookEvent(input = {}) {
   return {
     id: input.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     at: input.at || new Date().toISOString(),
+    sessionId: input.sessionId || raw.session_id || raw.sessionId || null, // 要件6: クエストの親セッション判定に使う
+    allyId: input.allyId || raw.allyId || raw.ally_id || null, // 要件4: CounterHit の対象精霊
     provider,
     event,
     toolName,

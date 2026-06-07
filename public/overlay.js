@@ -329,7 +329,19 @@ function diffWorldEffect(state, releaseDefeat) {
   worldPrev.phase = phase;
   worldPrev.stage = stage;
   worldPrev.track = track;
-  return { type: "world", phase, stage, track, from, releaseDefeat: Boolean(releaseDefeat), origin: currentHook };
+  // 要件5: 戦闘→探検(field/complete) の遷移は全画面トランジションで被覆する（勇者配置の瞬間移動を隠す）。
+  const transition = from.phase === "battle" && (phase === "field" || phase === "complete");
+  return {
+    type: "world",
+    phase,
+    stage,
+    track,
+    from,
+    releaseDefeat: Boolean(releaseDefeat),
+    transition,
+    label: transition ? transitionLabel(phase, stage) : null,
+    origin: currentHook
+  };
 }
 
 // world 効果の再生＝背景/BGM/勇者スプライト/phase を実際に切り替える（単一キューの中で順番に適用）。
@@ -490,6 +502,69 @@ const ALLY_FOLLOWUP_INTERVAL_MS = 360; // 精霊追撃の間隔（勇者スキ�
 const APPEAR_ATTACK_DELAY_MS = 1500;
 const MAX_QUEUED_ATTACKS = 10; // 詰まりすぎ防止（超過した攻撃アニメは間引く）
 
+// --- モンスターの反撃ループ（要件2）---
+// 生存モンスターが居て、勇者＋全精霊の攻撃を再生し切り（キュー枯渇）、出現演出も明けたら、
+// 2秒おきにモンスターが反撃する。対象は勇者と在席精霊からランダム。タイミングは実クロックを持つ
+// フロントだけが駆動できる（reducer はタイマー非保持＝§12）。精霊に当たればサーバーへ通知してライフ確定。
+const COUNTER_INTERVAL_MS = 2000;
+let counterTimer = null;
+let counterSeq = 0;
+
+function startCounterLoop() {
+  if (counterTimer) return;
+  counterTimer = window.setInterval(runCounterTick, COUNTER_INTERVAL_MS);
+}
+
+function stopCounterLoop() {
+  if (!counterTimer) return;
+  window.clearInterval(counterTimer);
+  counterTimer = null;
+}
+
+// 反撃を許す条件：モンスター在席・撃破処理中でない・出現演出が明けている・キューが空（攻撃を全部再生済み）。
+function counterLoopAllowed() {
+  return (
+    monsterStage?.dataset.active === "true" &&
+    !monsterDefeatInProgress &&
+    appearAttackHoldUntil <= Date.now() &&
+    !fxBusy &&
+    fxQueue.length === 0
+  );
+}
+
+function runCounterTick() {
+  if (!counterLoopAllowed()) {
+    stopCounterLoop(); // 条件が崩れたら止める（キュー枯渇時に pumpFx が再開する）
+    return;
+  }
+  // 対象母集団＝勇者 + 在席精霊(life>0)。ランダムに1体。
+  const livingAllies = (latestAllies || []).filter((ally) => (ally.life ?? 5) > 0);
+  const targets = [{ kind: "hero" }, ...livingAllies.map((ally) => ({ kind: "ally", allyId: ally.id }))];
+  const target = targets[Math.floor(Math.random() * targets.length)];
+  if (target.kind === "ally") {
+    // 精霊への反撃はサーバー権威：CounterHit を投げ、被弾演出はサーバーの ally_hit/ally_defeated 受信で再生する
+    // （ローカルでも演出すると二重になるため、ここでは演出しない）。
+    reportCounterHit(`counter-${(counterSeq += 1)}-${Date.now()}`, target.allyId);
+  } else {
+    // 勇者はサーバーに state を持たない＝被弾演出をローカルで直接再生（演出のみ）。
+    playEffect({ type: "monster_counter", target: "hero", synthetic: true });
+  }
+}
+
+// フロントの反撃ヒットをサーバーへ通知（要件4。サーバーがライフ減算・退場を確定して再 broadcast）。
+function reportCounterHit(hitId, allyId) {
+  try {
+    fetch("/control/counter-hit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hitId, allyId }),
+      keepalive: true
+    }).catch((error) => console.error("[rpgdev] counter-hit POST failed", error));
+  } catch (error) {
+    console.error("[rpgdev] counter-hit failed", error);
+  }
+}
+
 // そのエフェクトのアニメが終わるまでの目安(ms)。0 は即時（アニメ枠を占有せず次へ）。
 function fxAnimMs(effect) {
   switch (effect.type) {
@@ -498,6 +573,13 @@ function fxAnimMs(effect) {
       return effect.kind === "skill" ? 560 : 520;
     case "counter":
       return 420;
+    case "monster_counter":
+    case "ally_hit":
+      return 360; // 被弾リアクション（要件3）
+    case "ally_defeated":
+      return 520; // 精霊の被弾退場（要件4）
+    case "world":
+      return effect.transition ? 1500 : 0; // 全画面トランジションのみキューを占有（要件5）。通常 world は即時。
     case "monster_dying":
       return 320;
     case "monster_defeated":
@@ -513,6 +595,7 @@ function fxAnimMs(effect) {
 
 function effects(list) {
   if (!Array.isArray(list) || !list.length) return;
+  stopCounterLoop(); // 新バッチ到来＝戦況が動く。反撃ループは一旦止め、キュー枯渇時に pumpFx が再開する（要件2）。
   if (list.some((effect) => effect.type === "monster_appeared")) {
     monsterDefeatInProgress = false;
   }
@@ -601,6 +684,8 @@ function pumpFx() {
     }
     // anim === 0 の即時エフェクトは待たずに続けて処理。
   }
+  // キュー枯渇＝勇者スキル＋全精霊追撃を再生し切った。モンスター生存中なら反撃ループを始める（要件2）。
+  if (counterLoopAllowed()) startCounterLoop();
 }
 
 function fxQueueDelayMs(effect, anim) {
@@ -621,7 +706,14 @@ function enqueueSpiritFollowup(skillEffect) {
   const queuedAttacks = fxQueue.reduce((n, e) => (e.type === "attack" ? n + 1 : n), 0);
   const budget = MAX_QUEUED_ATTACKS - queuedAttacks;
   if (budget <= 0) return;
-  const followups = latestAllies.slice(0, budget).map((ally) => ({
+  // 要件1: 在席精霊は全員が勇者スキルの後に追撃する。順番はランダム（Fisher-Yates でコピーをシャッフル）。
+  // latestAllies 本体は破壊しない（表示順・次回追撃に影響させない）。被弾退場した精霊(life<=0)は除外。
+  const roster = latestAllies.filter((ally) => (ally.life ?? 5) > 0);
+  for (let i = roster.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [roster[i], roster[j]] = [roster[j], roster[i]];
+  }
+  const followups = roster.slice(0, budget).map((ally) => ({
     type: "attack",
     kind: "ally",
     synthetic: true,
@@ -640,6 +732,7 @@ function clearStaleCombatQueueForDefeat(reason = "defeat-clear") {
   }
   fxQueue = fxQueue.filter((effect) => effect.type !== "attack" && effect.type !== "finisher");
   appearAttackHoldUntil = 0;
+  stopCounterLoop(); // 撃破処理中は反撃しない（要件2）
 }
 
 function playEffect(effect) {
@@ -694,6 +787,25 @@ function playEffect(effect) {
       burst(0.34, 0.5, "#ff4d4d", 28);
       sting([45, 40]);
       break;
+    case "monster_counter":
+      // モンスターの反撃を勇者が食らった（要件3。勇者は state ライフ無し＝演出のみ）。
+      heroHitReaction();
+      flash("#ff5a4d");
+      shakeStage("hit");
+      damageSound();
+      break;
+    case "ally_hit":
+      // サーバー確定の精霊被弾（CounterHit→ally_hit）。残ライフは render が反映。被弾演出＋音（要件3/4）。
+      allyHitImpact(effect.allyId, effect.element);
+      flash("#ff5a4d");
+      damageSound();
+      break;
+    case "ally_defeated":
+      // 精霊が5回被弾して退場（被弾死。撃破時の ally_return とは別演出）（要件4）。
+      returnSpiritCard(effect.allyId, effect.element);
+      flash("#ff5a4d");
+      damageSound();
+      break;
     case "monster_dying":
       flash("#c8a0ff");
       break;
@@ -743,11 +855,17 @@ function playEffect(effect) {
       allyReturnSound(effect.element);
       break;
     case "world":
-      // 背景/BGM/勇者スプライト/phase をこのタイミングで切り替える（単一キューの順番どおり）。
-      applyWorld(effect);
-      if (effect.releaseDefeat) {
-        worldVisualsHeld = false; // 精霊が全員帰った＝撃破時の保留を解除
-        renderAllies(latestAllies); // 保留していた精霊カードを最終同期（撃破後＝空）
+      // 戦闘→探検の遷移は全画面トランジションで被覆し、その最中に背景/勇者/phase を差し替える（要件5）。
+      // それ以外（通常の world 変化）は即時適用。
+      if (effect.transition) {
+        playSceneTransition(effect);
+      } else {
+        // 背景/BGM/勇者スプライト/phase をこのタイミングで切り替える（単一キューの順番どおり）。
+        applyWorld(effect);
+        if (effect.releaseDefeat) {
+          worldVisualsHeld = false; // 精霊が全員帰った＝撃破時の保留を解除
+          renderAllies(latestAllies); // 保留していた精霊カードを最終同期（撃破後＝空）
+        }
       }
       break;
     case "compact_pre":
@@ -855,6 +973,91 @@ function allyReturnSound(element) {
   // ネイティブブリッジが無い時の合成音：光に還る上昇音。
   const base = allyElementNotes(element, false);
   sting([...base, base[base.length - 1] + 12]);
+}
+
+// 勇者の被弾演出（要件3）：後退リアクション＋勇者位置のインパクト＋リング。
+function heroHitReaction() {
+  if (heroImage) {
+    heroImage.dataset.action = "hit";
+    window.setTimeout(() => {
+      if (heroImage.dataset.action === "hit") delete heroImage.dataset.action;
+    }, 460);
+  }
+  const center = heroCanvasCenter();
+  burstAt(center.x, center.y, "#ff6a5a", 22);
+  particles.push({ kind: "ring", x: center.x, y: center.y, vx: 0, vy: 0, life: 16, maxLife: 16, color: "#ff5a4d", size: 30 });
+}
+
+// 精霊の被弾演出（要件3/4）：カードのヒットリアクション＋カード位置のインパクト。
+function allyHitImpact(allyId, element) {
+  pulseAlly(allyId, "hit");
+  const card = allyId && allies ? allies.querySelector(`[data-ally-id="${allyId}"]`) : null;
+  const center = cardCanvasCenter(card);
+  burstAt(center.x, center.y, "#ff6a5a", 16);
+  particles.push({ kind: "ring", x: center.x, y: center.y, vx: 0, vy: 0, life: 14, maxLife: 14, color: "#ff5a4d", size: 22 });
+}
+
+function heroCanvasCenter() {
+  const rect = canvas.getBoundingClientRect();
+  if (!heroImage) return { x: rect.width * 0.18, y: rect.height * 0.72 };
+  const box = heroImage.getBoundingClientRect();
+  return { x: box.left - rect.left + box.width * 0.5, y: box.top - rect.top + box.height * 0.5 };
+}
+
+// 被ダメージ効果音（要件3）。ネイティブブリッジがあれば damage-hit.wav、無ければ合成音にフォールバック。
+function damageSound() {
+  if (postNativeAudio({ sfx: "damage-hit" })) return;
+  if (!audio.enabled) {
+    sting([40, 35]);
+    return;
+  }
+  if (!audio.ctx) ensureEffectAudio();
+  if (!audio.ctx) return;
+  const time = audio.ctx.currentTime;
+  noiseAt(time, 0.18, 0.2, 360);
+  noteAt(33, time, 0.26, "sawtooth", 0.16);
+  noteAt(28, time + 0.04, 0.3, "triangle", 0.12);
+}
+
+// 戦闘→探検の全画面トランジション（要件5）：タイトル一枚絵＋テキストが右上→中央静止→左下へ抜ける。
+// 被覆ピークで applyWorld（背景/勇者/phase 差替）を行い、勇者配置の瞬間移動を隠す。
+function playSceneTransition(effect) {
+  const el = document.querySelector("#sceneTransition");
+  if (!el) {
+    // 要素が無ければ通常適用（無言フォールバックにしない＝コンソールに残す）。
+    console.error("[rpgdev] #sceneTransition missing; applying world without transition");
+    applyWorld(effect);
+    if (effect.releaseDefeat) {
+      worldVisualsHeld = false;
+      renderAllies(latestAllies);
+    }
+    return;
+  }
+  const textEl = el.querySelector(".scene-transition-text");
+  if (textEl) textEl.textContent = effect.label || "Explore";
+  el.hidden = false;
+  void el.offsetWidth; // リフローしてからアニメ開始
+  el.dataset.active = "true";
+  // 被覆ピーク（テキスト中央静止）で背景/勇者/phase を差し替える＝瞬間移動を隠す。
+  window.setTimeout(() => {
+    applyWorld(effect);
+    if (effect.releaseDefeat) {
+      worldVisualsHeld = false;
+      renderAllies(latestAllies);
+    }
+  }, 700);
+  // テキストが左下へ抜け切ったら層を隠す。
+  window.setTimeout(() => {
+    el.dataset.active = "false";
+    el.hidden = true;
+  }, 1500);
+}
+
+function transitionLabel(phase, stage) {
+  if (phase === "complete") return "Return to Town";
+  if (stage === "dungeon") return "Explore the Dungeon";
+  if (stage === "castle") return "Storm the Castle";
+  return "Explore the Field";
 }
 
 function prepareMonsterEffects(list) {

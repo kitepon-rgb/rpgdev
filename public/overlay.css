@@ -1,3 +1,12 @@
+/* 全画面トランジションのタイトル文字用ディスプレイ書体（自己ホスト・OFL。CDN は依存ゼロ方針に反するため不可）。 */
+@font-face {
+  font-family: "Cinzel";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/cinzel.woff2") format("woff2");
+}
+
 :root {
   color-scheme: dark;
   --ink: #fff7dd;
@@ -1724,5 +1733,133 @@ body[data-phase="battle"] .ally span {
   }
   70% {
     transform: translateX(4px) rotate(6deg);
+  }
+}
+
+/* --- 被弾リアクション（要件3）：勇者・精霊がモンスターの反撃を受けた瞬間 --- */
+#heroImage[data-action="hit"] {
+  animation: heroHitReact 0.42s ease-out;
+}
+
+@keyframes heroHitReact {
+  0% {
+    transform: translateX(0) translateY(0);
+    filter: none;
+  }
+  28% {
+    transform: translateX(-11px) translateY(3px);
+    filter: brightness(1.5) drop-shadow(0 0 12px rgba(255, 70, 64, 0.95));
+  }
+  60% {
+    transform: translateX(4px) translateY(-1px);
+  }
+  100% {
+    transform: translateX(0) translateY(0);
+    filter: none;
+  }
+}
+
+.ally[data-action="hit"] img {
+  animation: allyHitGlow 0.42s ease-out;
+}
+
+@keyframes allyHitGlow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  40% {
+    filter: brightness(1.6) drop-shadow(0 0 14px rgba(255, 80, 70, 0.95));
+  }
+}
+
+/* --- 戦闘→探検の全画面トランジション（要件5） --- */
+/* タイトル一枚絵を全画面に出し、テキストが右上→中央で一瞬静止→左下へ流れる。背景は派手すぎず、
+   ヴィネット＋暗幕でフォントが潰れないよう可読性を確保。被覆中に背景/勇者を差し替えて瞬間移動を隠す。 */
+.scene-transition {
+  position: absolute;
+  inset: 0;
+  z-index: 16; /* skill-cutin(12) より上、audioButton(20) 未満 */
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.scene-transition[data-active="true"] {
+  animation: sceneTransitionFade 1.5s ease-in-out forwards;
+}
+
+@keyframes sceneTransitionFade {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.scene-transition-art {
+  position: absolute;
+  inset: 0;
+  background: #07100b url("/assets/title.png") center / cover no-repeat;
+  image-rendering: pixelated;
+  transform: scale(1.06);
+}
+
+.scene-transition-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 48%, rgba(5, 8, 7, 0.12) 0%, rgba(5, 8, 7, 0.5) 68%, rgba(5, 8, 7, 0.84) 100%),
+    linear-gradient(180deg, rgba(5, 8, 7, 0.4), rgba(5, 8, 7, 0.26));
+}
+
+.scene-transition-text {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  font-family: "Cinzel", Georgia, "Times New Roman", serif;
+  font-size: clamp(34px, 7.6vw, 74px);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  background: linear-gradient(177deg, #fff6d2 6%, #ffd763 46%, #f0a52e 82%, #c97e16 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--gold);
+  filter:
+    drop-shadow(0 2px 1px rgba(40, 20, 0, 0.62))
+    drop-shadow(0 0 18px rgba(255, 198, 74, 0.55));
+  will-change: transform, opacity;
+}
+
+.scene-transition[data-active="true"] .scene-transition-text {
+  animation: sceneTransitionText 1.5s cubic-bezier(0.3, 0.7, 0.3, 1) forwards;
+}
+
+/* 右上から流れてきて中央で一瞬静止し、左下へ抜ける（vw/vh で要素サイズに依らず画面外へ出す） */
+@keyframes sceneTransitionText {
+  0% {
+    opacity: 0;
+    transform: translate(calc(-50% + 72vw), calc(-50% - 62vh)) rotate(-10deg);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  56% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% - 72vw), calc(-50% + 62vh)) rotate(10deg);
   }
 }

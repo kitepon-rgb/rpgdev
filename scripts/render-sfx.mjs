@@ -190,6 +190,36 @@ const sfx = [
     }
   },
   {
+    name: "damage-hit",
+    duration: 0.4,
+    build(mix) {
+      addImpact(mix, 0.012, 0.24, 92, 34, 0.56);
+      addFilteredNoise(mix, {
+        start: 0.024,
+        duration: 0.2,
+        volume: 0.62,
+        highpass: 55,
+        lowpass: 820,
+        attack: 0.001,
+        decay: 8.2,
+        seed: 91,
+        texture: "burst"
+      });
+      addFilteredNoise(mix, {
+        start: 0.038,
+        duration: 0.14,
+        volume: 0.24,
+        highpass: 160,
+        lowpass: 1350,
+        attack: 0.002,
+        decay: 9.5,
+        seed: 92,
+        texture: "debris"
+      });
+      addRumble(mix, 0.036, 0.26, 48, 0.14);
+    }
+  },
+  {
     // 精霊の帰還音：光に還るような、低→高へ上がっていく柔らかなシマー。
     name: "ally-return",
     duration: 0.7,

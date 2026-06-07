@@ -97,6 +97,15 @@ FIFO で帰還**する（各帰還に属性色のエフェクト＋`ally-return`
 `SubagentStop` でも1体ずつ FIFO（最初に出た精霊から）帰還する。
 `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 
+**v0.5.0 追加（詳細は docs §13）**：①精霊は勇者スキル攻撃の後に在席全員がランダム順で追撃（フロント生成・脱Hook維持）。
+②勇者＋全精霊が攻撃し切ってキューが空くと、モンスターが2秒おきに反撃（対象は勇者/在席精霊からランダム）＝被弾エフェクト＋`damage-hit` 音。
+タイミングは実クロックを持つフロント駆動（reducer はタイマー非保持）。③各精霊は被弾5回で退場（`life`＝サーバー権威。フロントが
+`POST /control/counter-hit {hitId,allyId}` で通知→`applyCounterHit` がライフ確定・`ally_hit`/`ally_defeated` を emit）。
+④戦闘→探検の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
+覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストは親（オーナー）セッション限定（`ownerSession`/`isOwnerSession`。
+非オーナーの UserPromptSubmit/TodoWrite はクエストを変えない＝spawned codex が乗っ取らない）。⑥`SubagentStart`/`SubagentStop`
+フックを配線（reducer は元から対応・`examples/` の設定にも追加）。
+
 設計判断・Codex/Claude のフック実機検証結果・実装ステータスは
 [docs/design-todo-rpg.md](docs/design-todo-rpg.md) が単一の正典。reducer に手を入れる前に必ず読む。
 reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と

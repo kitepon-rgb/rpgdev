@@ -10,6 +10,15 @@ TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエスト�
 
 **冒険ステージ**は TODO の進捗に合わせて草原（field）→ 洞窟（dungeon）→ 城（castle）と奥へ進みます。TODO 一覧を3区画に分け、達成していくほど背景と BGM が切り替わります（TODO が無いセッションは草原のまま）。
 
+**戦闘の駆け引き（v0.5.0）**：
+
+- 在席している精霊（仲間）は、勇者のスキル攻撃のあとに**全員がランダムな順で追撃**します。
+- 勇者と全精霊が攻撃し切って演出キューが空くと、**モンスターが2秒おきに反撃**します（対象は勇者か在席精霊からランダム）。被弾エフェクトと被ダメージ効果音（`damage-hit`）が出ます。
+- 各精霊は**被弾を5回受けると退場**します（残ライフはサーバーが管理）。
+- 戦闘から探索へ戻る瞬間は、**タイトル画の全画面トランジション**（「Explore the Dungeon」等のテキストが右上→中央→左下へ流れる）で覆い、勇者の配置が一瞬で変わる違和感を消します。
+- クエスト一覧は**親（最初に入力した）セッション専用**で、サブエージェントや別プロセス（別の `codex`/`claude` 実行）の入力では書き換わりません。
+- `SubagentStart` / `SubagentStop` を使うと、サブエージェントの参戦／離脱で精霊が増援／帰還します（`examples/` のサンプル設定に含まれています）。
+
 設計の詳細・実機検証の根拠は [docs/design-todo-rpg.md](docs/design-todo-rpg.md) を参照。
 
 ## Install
@@ -86,12 +95,14 @@ npm run demo
 
 - 待機背景: `public/assets/town.png`
 - 探索背景: `public/assets/field.png`, `public/assets/dungeon.png`, `public/assets/castle.png`
+- 戦闘→探索トランジションのタイトル一枚絵: `public/assets/title.png`
 - 勇者: `public/assets/sprites/hero.png`, `hero-relax.png`, `hero-battle.png`
 - モンスター: `public/assets/sprites/slime.png`, `goblin.png`, `orc.png`, `ogre.png`
 - 仲間精霊: `public/assets/sprites/ally-fire.png`, `ally-earth.png`, `ally-wind.png`, `ally-water-facing-slit.png`
   （水精霊の別案として `ally-water.png`, `ally-water-facing.png` も同梱）
 - BGM: `public/audio/field.wav`, `adventure.wav`, `battle.wav`, `dungeon-adventure.wav`, `dungeon-battle.wav`, `castle-adventure.wav`, `castle-battle.wav`
-- 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`, `hero-normal-attack.wav`, `hero-skill-attack.wav`, `hero-finisher-attack.wav`, `ally-fire-attack.wav`, `ally-earth-attack.wav`, `ally-wind-attack.wav`, `ally-water-attack.wav`, `ally-return.wav`（精霊が撃破後に1体ずつ帰還する音）
+- 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`, `hero-normal-attack.wav`, `hero-skill-attack.wav`, `hero-finisher-attack.wav`, `ally-fire-attack.wav`, `ally-earth-attack.wav`, `ally-wind-attack.wav`, `ally-water-attack.wav`, `ally-return.wav`（精霊が撃破後に1体ずつ帰還する音）, `damage-hit.wav`（勇者/精霊がモンスターの反撃を受けた時の被ダメージ音）
+- フォント: `public/fonts/cinzel.woff2`（全画面トランジションのタイトル文字。自己ホスト・OFL）
 
 BGM は既存曲のメロディを使わないオリジナルのクラシック JRPG 調シーケンスで、冒険ステージ（草原 / 洞窟 / 城）×
 探索・戦闘の7トラックを `scripts/render-bgm.mjs` から生成します（洞窟は不穏で低速、城は荘厳な行進調）。

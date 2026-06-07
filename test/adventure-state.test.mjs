@@ -595,3 +595,136 @@ test("spirits do not attack when there is no encounter (exploration)", () => {
   assert.ok(!r.effects.some((e) => e.type === "attack"), "敵不在では攻撃は起きない");
   assert.ok(!r.effects.some((e) => e.type === "ally_summon"), "敵不在では増援召喚も起きない");
 });
+
+// --- 要件6: クエストは親(オーナー)セッション限定（spawned な別セッションに乗っ取らせない）---
+
+test("quest updates are scoped to the owner session; a spawned session cannot hijack the quest", () => {
+  // セッションA が最初に UserPromptSubmit → オーナー＝A、synthetic クエスト＝A の入力。
+  let r = reduceHookEvent(createInitialState(), {
+    provider: "claude",
+    event: "UserPromptSubmit",
+    raw: { session_id: "A", prompt: "親の作業" }
+  });
+  assert.equal(r.state.ownerSession, "A");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
+
+  // 別セッションB（spawned codex 等）の UserPromptSubmit はクエストを乗っ取らない＝前進のみ。
+  r = reduceHookEvent(r.state, {
+    provider: "codex",
+    event: "UserPromptSubmit",
+    raw: { session_id: "B", prompt: "あなたはこのリポジトリ..." }
+  });
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"], "非オーナーの入力でクエストは変わらない");
+  assert.ok(r.effects.some((e) => e.type === "step"), "非オーナーの UserPromptSubmit は前進のみ");
+
+  // 別セッションB の update_plan（TODO）もクエストを更新しない。
+  r = reduceHookEvent(r.state, {
+    provider: "codex",
+    event: "PostToolUse",
+    raw: { session_id: "B", tool_name: "update_plan", tool_input: { plan: [{ step: "spawned task", status: "in_progress" }] } }
+  });
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"], "非オーナーの TODO はクエストを更新しない");
+
+  // オーナーA の TodoWrite は反映される。
+  r = reduceHookEvent(r.state, {
+    provider: "claude",
+    event: "PostToolUse",
+    raw: { session_id: "A", tool_name: "TodoWrite", tool_input: { todos: [{ content: "本物タスク", status: "in_progress" }] } }
+  });
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["本物タスク"], "オーナーの TODO はクエストを更新する");
+});
+
+test("owner session resets on SessionStart so a fresh session can own the quest", () => {
+  let r = reduceHookEvent(createInitialState(), {
+    provider: "claude",
+    event: "UserPromptSubmit",
+    raw: { session_id: "A", prompt: "old" }
+  });
+  assert.equal(r.state.ownerSession, "A");
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SessionStart", raw: {} });
+  assert.equal(r.state.ownerSession, null, "SessionStart でオーナーをリセット");
+  r = reduceHookEvent(r.state, {
+    provider: "claude",
+    event: "UserPromptSubmit",
+    raw: { session_id: "C", prompt: "new" }
+  });
+  assert.equal(r.state.ownerSession, "C", "新セッションが新オーナー");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["new"]);
+});
+
+// --- 要件4: 精霊のライフ(5) と被弾退場（CounterHit はサーバー権威）---
+
+test("summoned spirits start with life = 5 (SubagentStart and battle reinforcement)", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  assert.equal(r.state.allies.length, 1);
+  assert.equal(r.state.allies[0].life, 5, "SubagentStart 召喚の精霊は life=5");
+
+  __setChance(chanceSeq(0, 0)); // 出現
+  let s = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
+  s = reduceHookEvent(s.state, pre()); // 出現(linked)
+  __setChance(() => 0); // 増援
+  s = reduceHookEvent(s.state, pre());
+  assert.ok(s.state.allies.length >= 1);
+  assert.ok(s.state.allies.every((a) => a.life === 5), "戦闘増援の精霊も life=5");
+});
+
+test("a spirit vanishes after 5 counter hits; earlier hits only decrement its life", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  const allyId = r.state.allies[0].id;
+  for (let i = 0; i < 4; i += 1) {
+    r = reduceHookEvent(r.state, { event: "CounterHit", allyId, raw: {} });
+  }
+  assert.equal(r.state.allies.length, 1, "4被弾では在席");
+  assert.equal(r.state.allies[0].life, 1);
+  assert.ok(r.effects.some((e) => e.type === "ally_hit" && e.allyId === allyId && e.life === 1));
+  r = reduceHookEvent(r.state, { event: "CounterHit", allyId, raw: {} });
+  assert.equal(r.state.allies.length, 0, "5被弾で退場");
+  assert.ok(r.effects.some((e) => e.type === "ally_defeated" && e.allyId === allyId && e.reason === "depleted"));
+});
+
+test("a counter hit only affects the targeted spirit, not the others", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  assert.equal(r.state.allies.length, 2);
+  const [a0, a1] = r.state.allies.map((a) => a.id);
+  r = reduceHookEvent(r.state, { event: "CounterHit", allyId: a0, raw: {} });
+  assert.equal(r.state.allies.find((a) => a.id === a0).life, 4, "対象は減る");
+  assert.equal(r.state.allies.find((a) => a.id === a1).life, 5, "非対象は不変");
+});
+
+test("CounterHit on an unknown/already-gone ally is a silent no-op (no effect, no resurrect)", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  const before = r.state.allies.length;
+  r = reduceHookEvent(r.state, { event: "CounterHit", allyId: "ally-does-not-exist", raw: {} });
+  assert.equal(r.state.allies.length, before, "不在 ally への CounterHit は何もしない");
+  assert.ok(!r.effects.some((e) => e.type === "ally_hit" || e.type === "ally_defeated"), "effect も出さない");
+});
+
+test("a legacy spirit with no life field is treated as full life on CounterHit", () => {
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  delete r.state.allies[0].life; // 旧 state を模す
+  const allyId = r.state.allies[0].id;
+  r = reduceHookEvent(r.state, { event: "CounterHit", allyId, raw: {} });
+  assert.equal(r.state.allies[0].life, 4, "life 無し精霊は満タン(5)扱いで減算→4");
+});
+
+test("monster defeat removes spirits via ally_return regardless of remaining life (not ally_defeated)", () => {
+  __setChance(chanceSeq(0, 0));
+  let r = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
+  r = reduceHookEvent(r.state, pre()); // linked 出現
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  const allyId = r.state.allies[0].id;
+  r = reduceHookEvent(r.state, { event: "CounterHit", allyId, raw: {} }); // life=4 に削る
+  assert.equal(r.state.allies[0].life, 4);
+  __setChance(() => 0.99);
+  r = reduceHookEvent(r.state, todoWrite([{ content: "task", status: "completed" }])); // 討伐
+  assert.equal(r.state.monsters.length, 0);
+  assert.equal(r.state.allies.length, 0);
+  assert.ok(r.effects.some((e) => e.type === "ally_return" && e.allyId === allyId), "討伐時は ally_return で退場");
+  assert.ok(!r.effects.some((e) => e.type === "ally_defeated"), "討伐時は被弾死(ally_defeated)ではない");
+});

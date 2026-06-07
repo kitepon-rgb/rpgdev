@@ -49,6 +49,30 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook codex SubagentStart",
+            "timeout": 3,
+            "statusMessage": "仲間が駆けつけています"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rpgdev-hook codex SubagentStop",
+            "timeout": 3,
+            "statusMessage": "仲間が去っていきます"
+          }
+        ]
+      }
     ]
   }
 }

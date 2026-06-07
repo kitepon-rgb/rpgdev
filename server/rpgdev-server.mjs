@@ -26,7 +26,11 @@ const MIME = new Map([
   [".wav", "audio/wav"],
   [".mp3", "audio/mpeg"],
   [".m4a", "audio/mp4"],
-  [".ogg", "audio/ogg"]
+  [".ogg", "audio/ogg"],
+  [".woff2", "font/woff2"],
+  [".woff", "font/woff"],
+  [".ttf", "font/ttf"],
+  [".otf", "font/otf"]
 ]);
 
 let state = createInitialState();
@@ -61,6 +65,13 @@ const server = createServer(async (request, response) => {
       const body = await readJsonBody(request);
       await appendPlayback(body);
       return json(response, { ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/control/counter-hit") {
+      // フロント(実クロック)が反撃で精霊に当てた通知。サーバーがライフ確定・退場を司る（要件4）。
+      const body = await readJsonBody(request);
+      const result = await handleCounterHit(body);
+      return json(response, result);
     }
 
     if (request.method === "POST" && url.pathname === "/control/reset") {
@@ -124,6 +135,33 @@ async function handleHook(body) {
   }
   // ペーシングの基準時刻はサーバー（唯一の頭）が決める。Date.now() を注入し、event.at は使わない。
   const { state: nextState, effects, normalized } = reduceHookEvent(state, body, Date.now());
+  state = nextState;
+  await saveState();
+  await appendFile(EVENTS_PATH, `${JSON.stringify({ normalized, effects })}\n`);
+  broadcast("state", { state, effects, event: normalized });
+  return { ok: true, effects, state };
+}
+
+const recentCounterIds = []; // 反撃ヒットの冪等化（Hook id とは別名前空間にして id 衝突を避ける。再送/複数窓で二重減算しない）
+const RECENT_COUNTER_IDS_MAX = 256;
+
+// フロント(overlay.js の反撃2秒ループ)が精霊に反撃を当てた時に POST /control/counter-hit で届く。
+// サーバー(唯一の頭)が CounterHit 合成イベントを reducer に流し、ライフ減算・0退場を確定して再 broadcast する（要件4）。
+// 反撃のタイミング/対象選定はフロント駆動（reducer はタイマーを持たない＝§12）、ライフの真実だけサーバー権威。
+async function handleCounterHit(body) {
+  const hitId = body && body.hitId;
+  const allyId = body && body.allyId;
+  if (!allyId) return { ok: false, error: "missing_allyId", state };
+  // 冪等化：同じ hitId の二重配達は無視（二重減算防止）。Hook の recentHookIds とは別リング。
+  if (hitId && recentCounterIds.includes(hitId)) {
+    return { ok: true, duplicate: true, effects: [], state };
+  }
+  if (hitId) {
+    recentCounterIds.push(hitId);
+    if (recentCounterIds.length > RECENT_COUNTER_IDS_MAX) recentCounterIds.shift();
+  }
+  const event = { id: hitId || `counter-${Date.now()}`, event: "CounterHit", provider: "system", allyId, raw: { allyId } };
+  const { state: nextState, effects, normalized } = reduceHookEvent(state, event, Date.now());
   state = nextState;
   await saveState();
   await appendFile(EVENTS_PATH, `${JSON.stringify({ normalized, effects })}\n`);

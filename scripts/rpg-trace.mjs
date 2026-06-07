@@ -126,7 +126,8 @@ const renderShown = showAll ? allPlays : allPlays.slice(-DEFAULT_LIMIT);
 let prevTag = null;
 for (const p of renderShown) {
   const flag = isAttack(p.tag) && p.tag === prevTag ? "  ◀◀ 二連続" : "";
-  console.log(`  ${p.t}  #${p.origin.seq} ${p.origin.event}${p.origin.tool ? `(${p.origin.tool})` : ""}  ${p.tag}${p.synthetic ? " [synthetic]" : ""}${flag}`);
+  const o = p.origin || {}; // reset 由来など origin を持たない再生レコードでも落ちないようにする
+  console.log(`  ${p.t}  #${o.seq ?? "?"} ${o.event ?? "(no-origin)"}${o.tool ? `(${o.tool})` : ""}  ${p.tag}${p.synthetic ? " [synthetic]" : ""}${flag}`);
   prevTag = p.tag;
 }
 console.log("");
@@ -135,7 +136,7 @@ console.log("---- 異常まとめ ----");
 if (consecutive.length) {
   console.log(`▲ 同じ攻撃の二連続: ${consecutive.length} 件`);
   for (const c of consecutive) {
-    console.log(`   ${c.tag}: #${c.a.origin.seq}(${c.a.origin.event}) → #${c.b.origin.seq}(${c.b.origin.event})  Δ${c.b.t - c.a.t}ms`);
+    console.log(`   ${c.tag}: #${c.a.origin?.seq ?? "?"}(${c.a.origin?.event ?? "?"}) → #${c.b.origin?.seq ?? "?"}(${c.b.origin?.event ?? "?"})  Δ${c.b.t - c.a.t}ms`);
   }
 } else {
   console.log("・同じ攻撃の二連続: なし");

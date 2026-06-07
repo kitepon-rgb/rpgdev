@@ -479,3 +479,44 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 > 検証（2026-06-07）：reducer テスト 34/34 pass（`__setNow` 注入で決定化＋ペーシング新テスト）。
 > 窓を開いた高負荷トレースで点滅0・reducer の `kind:"ally"` attack 0 を確認。多角レビュー（22エージェント）で確定した
 > 指摘7件は全て minor、うち5件（時計逆転ガード・dead else 撤去・時刻統一・ゴースト防止・キュー上限遵守）を反映済み。
+
+---
+
+## 13. v0.5.0：精霊ライフ／モンスター反撃／精霊全員ランダム追撃／戦闘→探検トランジション／クエスト親限定／Subagent 配線 [実装済み 2026-06-07]
+
+5つの演出強化（要件1〜5）＋クエスト親限定（要件6）＋Subagent 配線を追加した。
+
+### 13.1 精霊は全員がランダム順で追撃（要件1）[フロント]
+- `enqueueSpiritFollowup`（overlay.js）：在席精霊(`life>0`)の**コピー**を Fisher-Yates でシャッフルしてから追撃を積む。
+  `latestAllies` 本体は破壊しない。脱Hook（reducer は精霊攻撃を出さない＝§12）は維持。
+
+### 13.2 モンスターの反撃ループ（要件2）[フロント駆動＋サーバー権威]
+- 生存モンスターが居て、勇者＋全精霊の攻撃を再生し切り（キュー枯渇）、出現演出も明けたら、`COUNTER_INTERVAL_MS=2000` で反撃する。
+  対象は勇者と在席精霊からランダム。**タイミングは実クロックを持つフロントだけが駆動できる**（reducer はタイマー非保持＝§12）。
+- `pumpFx` のキュー枯渇時に `startCounterLoop`、新バッチ受信(`effects` 先頭)・撃破・出現で `stopCounterLoop`。`runCounterTick` も毎回 `counterLoopAllowed` を自己点検。
+- 勇者への反撃は state ライフが無いので**フロントで被弾演出のみ**。精霊への反撃は **`POST /control/counter-hit {hitId, allyId}`** でサーバーへ通知し、サーバーがライフ確定（13.3）。二重演出を避けるため精霊被弾はサーバーの `ally_hit/ally_defeated` 受信でのみ再生する。
+
+### 13.3 各精霊にライフ5・被弾退場（要件4）[サーバー権威]
+- `summonAlly` で `life: ALLY_MAX_LIFE(=5)` を付与。`CounterHit` イベント→`applyCounterHit` がライフ減算、`>0` で `ally_hit`、`<=0` で当該1体を除去し `ally_defeated(reason:"depleted")` を emit。
+- サーバー：`POST /control/counter-hit` が `recentCounterIds`（Hook id とは別リング）で `hitId` を冪等化し、合成 `CounterHit` を `reduceHookEvent` に流して broadcast。
+- 撃破時の全員退場（`ally_return` FIFO）は別経路として維持（被弾死とは effect 名を分ける）。旧 state（life 無し）は満タン扱いで互換。
+
+### 13.4 被弾エフェクト＋被ダメージ音（要件3）[フロント＋アセット]
+- `playEffect` に `monster_counter`（勇者被弾）/`ally_hit`/`ally_defeated`。`damageSound()`＝ネイティブ `damage-hit.wav`（無ければ WebAudio 合成にフォールバック）。
+- `damage-hit.wav` は**対話 Codex が生成**（ミッションのみ指示・ツールは Codex 自由に委譲）。Codex は自律判断で**既存規約どおり `scripts/render-sfx.mjs` に `damage-hit` 合成を追加して `npm run render:sfx` で生成**した（手続き生成の規約を維持）。Swift `sfxNames` に登録済み。
+- CSS：`#heroImage[data-action="hit"]` / `.ally[data-action="hit"] img` の被弾アニメ。
+
+### 13.5 戦闘→探検の全画面トランジション（要件5）[フロント＋アセット]
+- `diffWorldEffect` が phase `battle→field/complete` を検出して world 効果に `transition`＋`label` を付与。`playEffect` の world(transition) が `#sceneTransition` を再生（`fxAnimMs` で 1500ms キューを占有。通常 world は即時=0 のまま）。
+- タイトル一枚絵 `public/assets/title.png`（**対話 Codex 生成**、既存背景とトーン一致、文字焼き込み無し、中央上は穏やか）を全画面背景に、テキストが**右上→中央で一瞬静止→左下**へ流れる（フォント＝自己ホスト Cinzel `public/fonts/cinzel.woff2`・OFL）。
+- **被覆ピーク（中央静止）で `applyWorld`（背景/勇者/phase 差替）を実行**＝勇者配置の瞬間移動を隠す。キュー直列の末尾（撃破→精霊帰還の後）で再生される。
+- サーバーの MIME に `.woff2/.woff/.ttf/.otf` を追加（無いと 404→無言フォールバックでフォントが効かないため必須）。
+
+### 13.6 クエストは親(オーナー)セッション限定（要件6）[サーバー]
+- `state.ownerSession`＝最初に UserPromptSubmit したセッション（`raw.session_id`）。`isOwnerSession` で**非オーナーの UserPromptSubmit/TodoWrite はクエストを更新しない**（spawned した `codex exec` が provider=codex の UserPromptSubmit で親のクエストを乗っ取る事故を防ぐ）。エンカウント/攻撃は §12 どおり全エージェントぶん受ける＝**クエストだけスコープ**。`SessionStart` でリセット。
+
+### 13.7 SubagentStart/SubagentStop の配線 [設定]
+- reducer は元々 `SubagentStart→summonAlly` / `SubagentStop→returnAlly`（FIFO）対応済みだが、**フックが未配線**だった（`.claude/settings.local.json` / `.codex/hooks.json` に無い）。両方に追加。
+- 実測（2026-06-07・events.ndjson）：ワークフロー実行中、メイン待機の時間帯に親セッションの PreToolUse/PostToolUse が多数記録＝**サブエージェントのツール使用は親フックを発火する**。一方 SubagentStart/Stop は未配線ゆえ 0 件だった（だから戦闘中 10% 増援以外で精霊が出なかった）。これを配線した（Task は公式に親で発火。Workflow も親フックは飛ぶので発火見込み）。
+
+> テスト：reducer **42/42 pass**（要件6・精霊ライフ/CounterHit/退場/旧 state 互換の新規 8 テスト含む）。

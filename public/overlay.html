@@ -44,6 +44,13 @@
         <canvas id="fxCanvas" width="1024" height="768"></canvas>
         <div id="toast" class="toast" aria-hidden="true"></div>
       </section>
+
+      <!-- 戦闘→探検の全画面トランジション（要件5）。タイトル一枚絵＋テキストが右上→中央静止→左下へ抜ける。 -->
+      <div id="sceneTransition" class="scene-transition" data-active="false" aria-hidden="true" hidden>
+        <div class="scene-transition-art"></div>
+        <div class="scene-transition-veil"></div>
+        <span class="scene-transition-text"></span>
+      </div>
     </main>
     <script type="module" src="/overlay.js"></script>
   </body>
