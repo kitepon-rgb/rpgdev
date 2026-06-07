@@ -338,9 +338,12 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - **撃破前の会心の一撃（v0.3.1〜）**：`monster_defeated` をそのまま流すと「何もなく唐突に倒れる」ので、撃破の直前にフロント合成の `finisher`（勇者の会心の一撃＝斬撃＋フラッシュ＋強い揺れ＋バースト＋効果音。**技名テキストのカットインは出さない**＝視覚演出と効果音のみ）を必ず1回差し込む。
     キュー直列化により会心斬撃が終わってから（モンスターはそれまで画面に残す）撃破＋消滅へ進む。討伐は攻撃以外（ターン終了 Stop・TODO完了）でも起きるため、reducer の `attack` 有無に関わらずフロント側で常時挿入する。
   - **属性別の追撃エフェクト**：精霊の追撃（`kind:"ally"`）は `allyElement`（fire/earth/wind/water）ごとに専用のパーティクル＋CSS インパクト＋効果音を出し分ける。
-  - **効果音（SFX）**：出現＝`monster-appear.wav`、撃破＝`monster-defeat.wav`。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
+  - **効果音（SFX）**：出現＝`monster-appear.wav`、撃破＝`monster-defeat.wav`。攻撃は勇者の通常攻撃
+    `hero-normal-attack.wav`、スキル攻撃 `hero-skill-attack.wav`、会心の一撃 `hero-finisher-attack.wav`、
+    精霊追撃 `ally-fire-attack.wav` / `ally-earth-attack.wav` / `ally-wind-attack.wav` /
+    `ally-water-attack.wav`。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
   - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。**攻撃は固定 1 秒間隔**、その他は「アニメ目安 + 0.1秒」で次へ。
-    **モンスター出現の演出開始から 4 秒間（`APPEAR_ATTACK_DELAY_MS`）は攻撃キューを再生しない**（出現演出と直後の PostToolUse スキル攻撃が被らないよう保留する）。出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect が来ても**キュー内の未再生の攻撃は破棄しない**（旧実装は破棄していたため、出現直後に先頭の skill だけ再生され後続の normal が撃破で消えて「通常攻撃が欠落」して見えた）。トドメに至った一連の攻撃を順に再生してから会心の一撃（`finisher`）→撃破演出へ進む。撃破フラグ（`monsterDefeatInProgress`）は撃破演出を**再生した時点**で立て、撃破後に届く攻撃のみ破棄する。詰まり防止に攻撃アニメは最大10件で間引く。
+    **モンスター出現の演出開始から 4 秒間（`APPEAR_ATTACK_DELAY_MS`）は攻撃キューを再生しない**（出現演出と直後の PostToolUse スキル攻撃が被らないよう保留する）。出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect を含むバッチを受信した瞬間に、過去バッチから溜まっていた攻撃/finisher キューを破棄する。そのうえで**同じバッチ内でトドメに至った未再生攻撃だけは破棄しない**（旧実装は破棄していたため、出現直後に先頭の skill だけ再生され後続の normal が撃破で消えて「通常攻撃が欠落」して見えた）。`monster_defeated` がキューに入った後の別バッチ攻撃は受け付けず、消滅演出を開始した時点でも残っている攻撃/finisher キューを再度破棄する。トドメに至った一連の攻撃を順に再生してから会心の一撃（`finisher`）→撃破演出へ進む。撃破フラグ（`monsterDefeatInProgress`）は撃破演出を**再生した時点**で立てる。詰まり防止に攻撃アニメは最大10件で間引く。
   - **クエストトラッカー UI**：MMO ミッション風パネルを画面中央上に表示。未着手 ◇ / 進行中 ◆ / 達成 ✓。
     全項目完了 or idle では非表示。
   - **ヘッダーは1行**：「RPGDev ◆ <フェーズ>」。RPGDev は金グラデのゲームタイトル（フェーズ名と同サイズ、菱形セパレータ）。ヘッダー高 60px。
@@ -350,8 +353,9 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - `public/app.js`（Web ビュー）：新 state/effect に追従（精霊・冒険ステージの背景切替を含む）。
   - **BGM：7トラックを `scripts/render-bgm.mjs` から生成**（`field` / `adventure` / `battle` / `dungeon-adventure` / `dungeon-battle` / `castle-adventure` / `castle-battle`）。
     ステージごとに BPM・調・編成を変えてある（dungeon=不穏・低速、castle=荘厳・行進調）。生成器は決定的（乱数なし）。
-    `public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm 管轄外の効果音（生成器では作らない別アセット）。
-  - **デスクトップ（Swift `RPGDevWindow.swift`）**：7 BGM トラックをプリロードし、`monster-appear`/`monster-defeat` を `AVAudioPlayer` でネイティブ再生（JS↔Swift ブリッジの `sfx` メッセージ）。
+    攻撃 SFX は `npm run render:sfx`（`scripts/render-sfx.mjs`）で生成する。
+    `public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm / render-sfx 管轄外の効果音（生成器では作らない別アセット）。
+  - **デスクトップ（Swift `RPGDevWindow.swift`）**：7 BGM トラックをプリロードし、`monster-appear`/`monster-defeat` と攻撃 SFX を `AVAudioPlayer` でネイティブ再生（JS↔Swift ブリッジの `sfx` メッセージ）。
   - **ウィンドウ位置・サイズの記憶**：終了/移動/リサイズ時に `window.frame` と全スクリーン署名を `UserDefaults`（`local.rpgdev.overlay`）へ保存し、次回起動時に「署名一致かつ画面内」なら復元、そうでなければ既定位置にリセット（ディスプレイ構成変更＝署名不一致でリセット）。macOS の自動ウィンドウ復元とは競合させない（`window.isRestorable = false`、復元は自前管理）。
   - フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
 - 実機検証の生データ：`tmp/codex-probe/`（gitignore 対象、`hook-capture.log` / `probe*-events.jsonl`）。

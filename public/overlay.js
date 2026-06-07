@@ -52,6 +52,84 @@ const TRACK_FILES = {
   "castle-battle": castleBattleAudio
 };
 
+const ATTACK_SFX = {
+  hero: {
+    normal: "hero-normal-attack",
+    skill: "hero-skill-attack",
+    finisher: "hero-finisher-attack"
+  },
+  ally: {
+    fire: "ally-fire-attack",
+    earth: "ally-earth-attack",
+    wind: "ally-wind-attack",
+    water: "ally-water-attack"
+  }
+};
+
+const HERO_ATTACK_AUDIO = {
+  normal: {
+    sfx: ATTACK_SFX.hero.normal,
+    noises: [
+      { delay: 0, duration: 0.18, volume: 0.14, cutoff: 2600 },
+      { delay: 0.08, duration: 0.1, volume: 0.08, cutoff: 3800 }
+    ],
+    thumps: [{ midi: 35, delay: 0.1, duration: 0.14, type: "sawtooth", volume: 0.05 }]
+  },
+  skill: {
+    sfx: ATTACK_SFX.hero.skill,
+    noises: [
+      { delay: 0, duration: 0.22, volume: 0.15, cutoff: 2800 },
+      { delay: 0.13, duration: 0.16, volume: 0.12, cutoff: 3400 }
+    ],
+    thumps: [{ midi: 34, delay: 0.17, duration: 0.18, type: "sawtooth", volume: 0.06 }]
+  },
+  finisher: {
+    sfx: ATTACK_SFX.hero.finisher,
+    noises: [
+      { delay: 0, duration: 0.24, volume: 0.16, cutoff: 2900 },
+      { delay: 0.15, duration: 0.28, volume: 0.15, cutoff: 3200 },
+      { delay: 0.28, duration: 0.18, volume: 0.12, cutoff: 1600 }
+    ],
+    thumps: [{ midi: 29, delay: 0.25, duration: 0.32, type: "sawtooth", volume: 0.1 }]
+  }
+};
+
+const ALLY_ATTACK_AUDIO = {
+  fire: {
+    sfx: ATTACK_SFX.ally.fire,
+    noises: [
+      { delay: 0, duration: 0.42, volume: 0.18, cutoff: 1100 },
+      { delay: 0.08, duration: 0.26, volume: 0.08, cutoff: 2200 }
+    ],
+    thumps: [{ midi: 31, delay: 0.05, duration: 0.36, type: "sawtooth", volume: 0.055 }]
+  },
+  earth: {
+    sfx: ATTACK_SFX.ally.earth,
+    noises: [
+      { delay: 0, duration: 0.32, volume: 0.2, cutoff: 950 },
+      { delay: 0.16, duration: 0.28, volume: 0.1, cutoff: 1500 }
+    ],
+    thumps: [{ midi: 24, delay: 0, duration: 0.38, type: "sawtooth", volume: 0.14 }]
+  },
+  wind: {
+    sfx: ATTACK_SFX.ally.wind,
+    noises: [
+      { delay: 0, duration: 0.12, volume: 0.12, cutoff: 3800 },
+      { delay: 0.12, duration: 0.12, volume: 0.12, cutoff: 4200 },
+      { delay: 0.24, duration: 0.16, volume: 0.14, cutoff: 4600 }
+    ],
+    thumps: [{ midi: 38, delay: 0.3, duration: 0.12, type: "sawtooth", volume: 0.045 }]
+  },
+  water: {
+    sfx: ATTACK_SFX.ally.water,
+    noises: [
+      { delay: 0, duration: 0.42, volume: 0.18, cutoff: 1800 },
+      { delay: 0.06, duration: 0.32, volume: 0.1, cutoff: 3000 }
+    ],
+    thumps: [{ midi: 33, delay: 0.08, duration: 0.24, type: "sawtooth", volume: 0.06 }]
+  }
+};
+
 const MUSIC = {
   field: {
     bpm: 126,
@@ -377,8 +455,14 @@ function effects(list) {
     monsterDefeatInProgress = false;
   }
 
+  const hasDefeat = list.some((effect) => effect.type === "monster_defeated");
+  if (hasDefeat) {
+    clearStaleCombatQueueForDefeat();
+  }
+
+  let defeatQueued = monsterDefeatInProgress || fxQueue.some((effect) => effect.type === "monster_defeated");
   for (const effect of list) {
-    if (monsterDefeatInProgress && effect.type === "attack") continue;
+    if (defeatQueued && effect.type === "attack") continue;
     if (effect.type === "attack") {
       const queued = fxQueue.reduce((n, e) => (e.type === "attack" ? n + 1 : n), 0);
       if (queued >= MAX_QUEUED_ATTACKS) continue; // 間引き
@@ -386,9 +470,9 @@ function effects(list) {
     if (effect.type === "monster_defeated") {
       // 撃破の前に、まだ再生していない攻撃（トドメに至った一連の攻撃）はそのまま流し、
       // その後に会心の一撃（finisher）→撃破とする。攻撃アニメは捨てない＝欠落させない。
-      // 撃破フラグは撃破演出を「再生した時点」で立てる（playEffect 側）ので、トドメ前の
-      // 攻撃はキュー順に再生され、撃破後に届く攻撃だけが破棄される。
+      // ただし撃破がキューに入った後の別バッチ攻撃は、モンスター消滅後に漏れて見えるため受け付けない。
       fxQueue.push({ type: "finisher" });
+      defeatQueued = true;
     }
     fxQueue.push(effect);
   }
@@ -435,6 +519,11 @@ function fxQueueDelayMs(effect, anim) {
   return effect.type === "attack" ? ATTACK_QUEUE_INTERVAL_MS : anim + ANIM_GAP;
 }
 
+function clearStaleCombatQueueForDefeat() {
+  fxQueue = fxQueue.filter((effect) => effect.type !== "attack" && effect.type !== "finisher");
+  appearAttackHoldUntil = 0;
+}
+
 function playEffect(effect) {
   switch (effect.type) {
     case "monster_appeared":
@@ -463,7 +552,7 @@ function playEffect(effect) {
         spawnMonsterImpact(element);
         allyElementImpact(element, effect.stagger);
         shakeStage(effect.stagger ? "light" : "hit");
-        sting(allyElementNotes(element, effect.stagger));
+        allyAttackSound(element, effect.stagger);
         break;
       }
       if (effect.kind === "skill") {
@@ -472,12 +561,12 @@ function playEffect(effect) {
         monsterBurst(effect.stagger ? "#d8c7ff" : "#ffd15c", effect.stagger ? 18 : 34);
         monsterBurst("#f0b73a", effect.stagger ? 10 : 18);
         showSkillBanner(effect.skill || "SKILL");
-        sting(effect.stagger ? [76, 71] : [83, 79, 76]);
+        heroAttackSound("skill", effect.stagger);
       } else {
         slash("normal");
         shakeStage(effect.stagger ? "light" : "hit");
         monsterBurst(effect.stagger ? "#9fb8c8" : "#ffe9a8", effect.stagger ? 12 : 24);
-        sting(effect.stagger ? [72] : [76, 74]);
+        heroAttackSound("normal", effect.stagger);
       }
       break;
     case "counter":
@@ -497,10 +586,11 @@ function playEffect(effect) {
       shakeStage("skill");
       monsterBurst("#ffd15c", 40);
       monsterBurst("#fff7dd", 22);
-      sting([79, 83, 86, 91]);
+      heroAttackSound("finisher");
       break;
     case "monster_defeated":
       monsterDefeatInProgress = true; // 以後（次の出現まで）に届く攻撃アニメは破棄する
+      clearStaleCombatQueueForDefeat();
       holdDefeatedMonster();
       monsterDefeatImpact();
       monsterDefeatSound();
@@ -666,6 +756,32 @@ function allyElementNotes(element, stagger) {
     water: [62, 69, 74]
   };
   return notes[element] || [64, 67, 71];
+}
+
+function heroAttackSound(kind, stagger = false) {
+  attackSound(HERO_ATTACK_AUDIO[kind] || HERO_ATTACK_AUDIO.normal, stagger);
+}
+
+function allyAttackSound(element, stagger = false) {
+  const spec = ALLY_ATTACK_AUDIO[element] || { notes: allyElementNotes(element, stagger) };
+  attackSound(spec, stagger);
+}
+
+function attackSound(spec, stagger = false) {
+  if (spec.sfx && postNativeAudio({ sfx: spec.sfx })) return;
+
+  const notes = stagger && spec.staggerNotes ? spec.staggerNotes : spec.notes;
+  if (Array.isArray(notes) && notes.length) sting(notes);
+
+  if (!audio.enabled || !audio.ctx) return;
+  const time = audio.ctx.currentTime;
+  const intensity = stagger ? 0.58 : 1;
+  for (const noise of spec.noises || []) {
+    noiseAt(time + (noise.delay || 0), noise.duration, noise.volume * intensity, noise.cutoff);
+  }
+  for (const thump of spec.thumps || []) {
+    noteAt(thump.midi, time + (thump.delay || 0), thump.duration, thump.type, thump.volume * intensity, thump.detune || 0);
+  }
 }
 
 function allyElementImpact(element, stagger = false) {

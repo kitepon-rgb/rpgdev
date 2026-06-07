@@ -15,6 +15,7 @@
     "server": "node server/rpgdev-server.mjs",
     "build:desktop": "node scripts/desktop.mjs --build-only",
     "render:bgm": "node scripts/render-bgm.mjs",
+    "render:sfx": "node scripts/render-sfx.mjs",
     "demo": "node scripts/demo.mjs",
     "test": "node --test"
   },

@@ -91,11 +91,13 @@ reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と
 フロントエンド（[public/overlay.js](public/overlay.js) / [public/app.js](public/app.js)）も
 state / effect に配線済み。overlay には精霊スプライト、斬撃、技名カットイン、揺れ、
 召喚/属性別追撃演出、ステージ別背景、出現（ポータル+煙）/撃破（発光+破片）アニメと効果音
-（`monster-appear.wav` / `monster-defeat.wav`）があり、攻撃/リアクションのアニメは全体共通の
+（`monster-appear.wav` / `monster-defeat.wav` / 攻撃SFX群）があり、攻撃/リアクションのアニメは全体共通の
 単一キューで直列化される（攻撃は固定1秒間隔、その他はアニメ目安+0.1秒で次へ。モンスター出現の
 演出開始から4秒間は攻撃キューを再生しない＝出現演出と直後のスキル攻撃を被らせない。出現/召喚/帰還/
-クリア等の即時演出はキューを占有しない。撃破時はキュー内の攻撃を捨てず、トドメに至った攻撃を順に
-流してから会心の一撃（`finisher`＝斬撃。技名テキストは出さず視覚演出のみ）→撃破＋消滅を流す
+クリア等の即時演出はキューを占有しない。撃破時は同じバッチ内でトドメに至った攻撃を捨てずに順に
+流してから会心の一撃（`finisher`＝斬撃。技名テキストは出さず視覚演出のみ）→撃破＋消滅を流す。
+撃破effectを含むバッチを受信した瞬間に過去バッチから溜まっていた攻撃キューを破棄し、`monster_defeated`
+がキューに入った後の別バッチ攻撃は受け付けず、消滅演出開始時点でも残った攻撃キューを再度破棄する
 （旧実装は撃破時に攻撃を破棄しており通常攻撃が欠落して見えた）。撃破中はワールド演出を約1.8秒保留して撃破を見せる）。
 勇者は常にモンスターより前面（`.hero` z-index > `.monster`）。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体。
 docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite payload、TODO無しセッション方針）は全て検証・決定済み。
@@ -144,7 +146,7 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
    指して `open` する。Swift アプリはボーダーレスな `WKWebView`（`LSUIElement`/アクセサリ
    アプリ）で、`window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
    ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで `monster-appear` /
-   `monster-defeat` を `AVAudioPlayer` でワンショット再生）。ウィンドウの位置・サイズは終了/移動/
+   `monster-defeat` と攻撃SFXを `AVAudioPlayer` でワンショット再生）。ウィンドウの位置・サイズは終了/移動/
    リサイズ時に `UserDefaults` に保存し、次回起動で復元する（ディスプレイ構成が変わったら既定位置に
    リセット。`isRestorable=false` で macOS 自動復元と競合させず自前管理）。
 
@@ -178,7 +180,9 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
   [scripts/render-bgm.mjs](scripts/render-bgm.mjs) で生成される（既存曲を使わないオリジナルの
   クラシック JRPG 調シーケンスを WAV に合成。決定的で乱数なし）。ジェネレータを編集してから
   `npm run render:bgm` を実行すること。BGM の WAV を直接編集しない。
-  - 例外：`public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm 管轄外の
+  - 攻撃SFX（勇者通常/スキル/トドメ、精霊4属性）は [scripts/render-sfx.mjs](scripts/render-sfx.mjs)
+    で生成される。編集後は `npm run render:sfx` を実行すること。
+  - 例外：`public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm/render-sfx 管轄外の
     効果音アセット（ジェネレータでは生成しない別ファイル）。`npm run render:bgm` では再生成されない。
 
 ## Hook の組み込み（ツール利用者向け）

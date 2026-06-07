@@ -161,15 +161,17 @@ function applyEffects(effects) {
       case "attack":
         if (effect.kind === "ally") {
           if (!effect.stagger) burst(0.66, 0.5, "#7fe0ff", 12);
+          playAttackSting(effect);
           break;
         }
         if (effect.stagger) {
           burst(0.72, 0.52, "#9fb8c8", 10);
+          playAttackSting(effect);
           break;
         }
         slash();
         burst(0.72, 0.52, effect.kind === "skill" ? "#ffd15c" : "#ffe9a8", effect.kind === "skill" ? 24 : 14);
-        playSting("hit");
+        playAttackSting(effect);
         break;
       case "ally_summon":
         burst(0.3, 0.55, "#7fe0ff", 24);
@@ -333,6 +335,48 @@ function playSting(kind) {
   });
 }
 
+function playAttackSting(effect) {
+  if (!audio.enabled || !audio.ctx) return;
+  if (effect.kind === "ally") {
+    playAllyAttackNoise(effect.allyElement, effect.stagger);
+    return;
+  }
+
+  const scale = effect.stagger ? 0.58 : 1;
+  playNoise(0.16, 0.13 * scale, effect.kind === "skill" ? 3000 : 2500);
+  window.setTimeout(() => playNoise(0.12, 0.09 * scale, 3800), effect.kind === "skill" ? 120 : 70);
+  window.setTimeout(() => note(effect.kind === "skill" ? 31 : 35, 0.16, "sawtooth", 0.06 * scale), 95);
+}
+
+function playAllyAttackNoise(element, stagger) {
+  const scale = stagger ? 0.58 : 1;
+  switch (element) {
+    case "fire":
+      playNoise(0.42, 0.17 * scale, 1100);
+      window.setTimeout(() => playNoise(0.22, 0.07 * scale, 2200), 80);
+      note(31, 0.3, "sawtooth", 0.05 * scale);
+      break;
+    case "earth":
+      playNoise(0.28, 0.2 * scale, 900);
+      window.setTimeout(() => playNoise(0.22, 0.08 * scale, 1500), 150);
+      note(24, 0.36, "sawtooth", 0.13 * scale);
+      break;
+    case "wind":
+      playNoise(0.1, 0.1 * scale, 3800);
+      window.setTimeout(() => playNoise(0.1, 0.1 * scale, 4200), 110);
+      window.setTimeout(() => playNoise(0.14, 0.12 * scale, 4600), 220);
+      break;
+    case "water":
+      playNoise(0.4, 0.16 * scale, 1800);
+      window.setTimeout(() => playNoise(0.3, 0.09 * scale, 3000), 60);
+      note(33, 0.22, "sawtooth", 0.05 * scale);
+      break;
+    default:
+      playNoise(0.2, 0.1 * scale, 1800);
+      break;
+  }
+}
+
 function note(midi, duration, type, gainValue) {
   const time = audio.ctx.currentTime;
   const oscillator = audio.ctx.createOscillator();
@@ -346,4 +390,29 @@ function note(midi, duration, type, gainValue) {
   gain.connect(audio.master);
   oscillator.start(time);
   oscillator.stop(time + duration + 0.02);
+}
+
+function playNoise(duration, gainValue, cutoff) {
+  const length = Math.max(1, Math.floor(audio.ctx.sampleRate * duration));
+  const buffer = audio.ctx.createBuffer(1, length, audio.ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  let low = 0;
+  const alpha = 1 - Math.exp((-2 * Math.PI * cutoff) / audio.ctx.sampleRate);
+  for (let index = 0; index < length; index += 1) {
+    const white = Math.random() * 2 - 1;
+    low += (white - low) * alpha;
+    const p = index / length;
+    data[index] = low * Math.exp(-p * 2.8);
+  }
+
+  const source = audio.ctx.createBufferSource();
+  const gain = audio.ctx.createGain();
+  const time = audio.ctx.currentTime;
+  source.buffer = buffer;
+  gain.gain.setValueAtTime(gainValue, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+  source.connect(gain);
+  gain.connect(audio.master);
+  source.start(time);
+  source.stop(time + duration);
 }

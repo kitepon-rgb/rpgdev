@@ -91,11 +91,11 @@ npm run demo
 - 仲間精霊: `public/assets/sprites/ally-fire.png`, `ally-earth.png`, `ally-wind.png`, `ally-water-facing-slit.png`
   （水精霊の別案として `ally-water.png`, `ally-water-facing.png` も同梱）
 - BGM: `public/audio/field.wav`, `adventure.wav`, `battle.wav`, `dungeon-adventure.wav`, `dungeon-battle.wav`, `castle-adventure.wav`, `castle-battle.wav`
-- 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`
+- 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`, `hero-normal-attack.wav`, `hero-skill-attack.wav`, `hero-finisher-attack.wav`, `ally-fire-attack.wav`, `ally-earth-attack.wav`, `ally-wind-attack.wav`, `ally-water-attack.wav`
 
 BGM は既存曲のメロディを使わないオリジナルのクラシック JRPG 調シーケンスで、冒険ステージ（草原 / 洞窟 / 城）×
 探索・戦闘の7トラックを `scripts/render-bgm.mjs` から生成します（洞窟は不穏で低速、城は荘厳な行進調）。
-効果音 `monster-appear.wav` / `monster-defeat.wav` は render-bgm 管轄外の別アセットで、`npm run render:bgm` では再生成されません。
+攻撃効果音は `scripts/render-sfx.mjs` から生成します。`monster-appear.wav` / `monster-defeat.wav` は render-bgm/render-sfx 管轄外の別アセットで、`npm run render:bgm` では再生成されません。
 
 デスクトップウィンドウは WKWebView なので、CSS/画像/JS を更新した後に既存ウィンドウへ反映されない時は
 ウィンドウを開き直してください。

@@ -229,7 +229,19 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
             }
         }
 
-        for name in ["monster-appear", "monster-defeat"] {
+        let sfxNames = [
+            "monster-appear",
+            "monster-defeat",
+            "hero-normal-attack",
+            "hero-skill-attack",
+            "hero-finisher-attack",
+            "ally-fire-attack",
+            "ally-earth-attack",
+            "ally-wind-attack",
+            "ally-water-attack"
+        ]
+
+        for name in sfxNames {
             guard let url = audioUrl(name: name, baseUrl: baseUrl),
                   let player = try? AVAudioPlayer(contentsOf: url) else { continue }
             player.prepareToPlay()
