@@ -509,6 +509,38 @@ test("one Hook does exactly one action (spawn XOR summon XOR attack — never co
   assert.ok(skillR.effects.some((e) => e.type === "attack" && e.kind === "skill"), "攻撃は PostToolUse スキルのみ");
 });
 
+test("TODO 不在で遭遇したモンスターは表示ライフ20、TODO中はカタログ値", () => {
+  // TODO 無し（synthetic も無し）で出現 → linkedTodo=false → hp=20。
+  __setChance(chanceSeq(0, 0)); // 出現(gate0, select0=field Slime)
+  let r = reduceHookEvent(createInitialState(), pre());
+  assert.equal(r.state.monsters.length, 1);
+  assert.equal(r.state.monsters[0].linkedTodo, false);
+  assert.equal(r.state.monsters[0].hp, 20, "TODO不在のモンスターは hp=20");
+  assert.equal(r.state.monsters[0].maxHp, 20);
+
+  // TODO 進行中で出現 → linkedTodo=true → カタログ値（field Slime=72）。
+  let s = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
+  __setChance(chanceSeq(0, 0)); // 出現(gate0, select0=Slime)
+  s = reduceHookEvent(s.state, pre());
+  assert.equal(s.state.monsters[0].linkedTodo, true);
+  assert.equal(s.state.monsters[0].hp, 72, "TODO中のモンスターはカタログ hp（Slime=72）");
+  assert.equal(s.state.monsters[0].maxHp, 72);
+});
+
+test("精霊召喚の成功確率は20%（境界：0.15で召喚、0.25で非召喚）", () => {
+  __setChance(chanceSeq(0, 0)); // 戦闘を作る（モンスター出現）
+  let r = reduceHookEvent(createInitialState(), pre());
+  assert.equal(r.state.monsters.length, 1);
+
+  __setChance(() => 0.15); // 0.15 < 0.2 → 召喚成功
+  const a = reduceHookEvent(r.state, pre());
+  assert.ok(a.effects.some((e) => e.type === "ally_summon"), "0.15(<0.2)で召喚");
+
+  __setChance(() => 0.25); // 0.25 >= 0.2 → 召喚しない（同じ state から）
+  const b = reduceHookEvent(r.state, pre());
+  assert.ok(!b.effects.some((e) => e.type === "ally_summon"), "0.25(>=0.2)で召喚しない");
+});
+
 test("defeating a monster makes all spirits vanish", () => {
   let r = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
   __setChance(() => 0); // Pre 毎に増援（出現は在席で skip）／linked なので討伐されない

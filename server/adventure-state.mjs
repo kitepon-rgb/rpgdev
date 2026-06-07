@@ -33,7 +33,8 @@ const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃（演出用の HP 減少
 // ランダムエンカウント＆増援
 const ENCOUNTER_SPAWN_CHANCE = 0.2; // ツール使用(PreToolUse)毎にモンスターが出現する確率（TODO 有無に関わらず統一）
 const WILD_HITS_TO_DEFEAT = 5; // TODO 不在で出たエンカウントは hero の攻撃 N 回で討伐（HP は無関係）
-const BATTLE_SUMMON_CHANCE = 0.1; // 戦闘中、ツール使用(PreToolUse)毎に精霊が1体だけ増援する確率
+const BATTLE_SUMMON_CHANCE = 0.2; // 戦闘中、ツール使用(PreToolUse)毎に精霊が1体だけ増援する確率
+const NO_TODO_MONSTER_HP = 20; // TODO 不在で遭遇したモンスター(linkedTodo=false)の表示ライフ（演出専用）
 const MAX_ALLIES = 4; // 精霊の同時在席上限（表示枠・属性数＝4）
 const ALLY_MAX_LIFE = 5; // 各精霊の被弾耐久（モンスターの反撃を5回受けると退場。要件4。サーバー権威）
 
@@ -257,6 +258,8 @@ function maybeSpawnEncounter(state, event, effects) {
   const stage = currentAdventureStage(state);
   const catalog = monsterCatalogForState(state, stage);
   const template = catalog[Math.floor(chance() * catalog.length)];
+  // TODO 不在で遭遇したモンスター(linkedTodo=false)は表示ライフを 20 に統一（演出専用。討伐は 5撃/ターン終了のまま）。
+  const monsterHp = linkedTodo ? template.hp : NO_TODO_MONSTER_HP;
   const monster = {
     id: `monster-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     label: template.name,
@@ -266,8 +269,8 @@ function maybeSpawnEncounter(state, event, effects) {
     sprite: template.sprite,
     stage,
     counterEffect: template.counterEffect,
-    maxHp: template.hp,
-    hp: template.hp,
+    maxHp: monsterHp,
+    hp: monsterHp,
     dying: false,
     wild: true,
     hits: 0,
