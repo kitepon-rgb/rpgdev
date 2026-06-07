@@ -53,8 +53,10 @@ npm run trace                         # 演出トレースを解析（二連続/
 
 ゲームモデルは「TODO 項目＝モンスター」ではなく「**モンスター＝ランダムエンカウント**」。
 モンスターは TODO 項目から湧かない。ツール使用ごと（PreToolUse）に 20% の確率で出現する
-エンカウントで、同時に画面へ出るのは最大1体（2体同時出現はしない）。スプライト/HP は
-`MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダムに選ぶ（HP は演出専用）。`battle`
+エンカウントで、同時に画面へ出るのは最大1体（2体同時出現はしない）。スプライト/HP/反撃種別は
+ステージ別 `MONSTER_CATALOGS` からランダムに選ぶ（HP は演出専用。field は Slime/Goblin/Orc/Ogre、
+dungeon/castle は各ステージ専用モンスター。castle の Dragon/Demon Lord は TODO が4個以上で最後の TODO が
+現在地の時だけ抽選。詳細は docs §2/§3）。`battle`
 フェーズになるのは「エンカウントのモンスターが画面に居る時」だけで、TODO があるだけでは
 戦闘にならない。
 
@@ -98,9 +100,10 @@ FIFO で帰還**する（各帰還に属性色のエフェクト＋`ally-return`
 `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 
 **v0.5.0 追加（詳細は docs §13）**：①精霊は勇者スキル攻撃の後に在席全員がランダム順で追撃（フロント生成・脱Hook維持）。
-②勇者＋全精霊が攻撃し切ってキューが空くと、モンスターが10秒おきに反撃（対象は勇者/在席精霊からランダム）＝被弾エフェクト＋`damage-hit` 音。
+②勇者＋全精霊が攻撃し切ってキューが空くと、モンスターが8秒おきに反撃（対象は勇者/在席精霊からランダム）＝被弾エフェクト＋`damage-hit` 音。
 タイミングは実クロックを持つフロント駆動（reducer はタイマー非保持）。③各精霊は被弾5回で退場（`life`＝サーバー権威。フロントが
-`POST /control/counter-hit {hitId,allyId}` で通知→`applyCounterHit` がライフ確定・`ally_hit`/`ally_defeated` を emit）。
+`POST /control/counter-hit {hitId,allyId}` で通知→`applyCounterHit` がライフ確定・`ally_hit`/`ally_defeated` を emit。
+残ライフ3以下で被弾スプライト `ally-<element>-damaged` へ切替＝`isAllyDamaged`＝`life<=3`）。
 ④戦闘→探検の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
 覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストは親（オーナー）セッション限定（`ownerSession`/`isOwnerSession`。
 非オーナーの UserPromptSubmit/TodoWrite はクエストを変えない＝spawned codex が乗っ取らない）。⑥`SubagentStart`/`SubagentStop`
@@ -114,8 +117,11 @@ reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と
 state / effect に配線済み。overlay には精霊スプライト、斬撃、技名カットイン、揺れ、
 召喚/属性別追撃演出、ステージ別背景、出現（ポータル+煙）/撃破（発光+破片）アニメと効果音
 （`monster-appear.wav` / `monster-defeat.wav`）があり、攻撃/リアクションのアニメは全体共通の
-単一キューで直列化される（攻撃は固定1秒間隔、その他はアニメ目安+0.1秒で次へ。モンスター出現の
-演出開始から4秒間は攻撃キューを再生しない＝出現演出と直後のスキル攻撃を被らせない。出現/召喚/帰還/
+単一キューで直列化される（勇者攻撃・精霊追撃・精霊召喚はすべて前のキュー再生開始から固定1秒間隔
+＝前のキューが無ければ即座、その他はアニメ目安+0.1秒で次へ。モンスター出現の
+演出開始から4秒間（`APPEAR_ATTACK_DELAY_MS=4000`）は攻撃/召喚キューを再生しない＝出現演出と直後の初撃/召喚を被らせない
+（＝登場の4秒後に最初のキュー再生）。精霊召喚も攻撃キューと同じ扱いで、カード表示も召喚がキューで再生される瞬間まで
+伏せる（`awaitingSummon`＝state更新で先にカードを出さない）。出現/帰還/
 クリア等の即時演出はキューを占有しない。撃破時はキュー内の攻撃を捨てず、トドメに至った攻撃を順に
 流してから会心の一撃（`finisher`＝斬撃。技名テキストは出さず視覚演出のみ）→撃破＋消滅を流す
 （旧実装は撃破時に攻撃を破棄しており通常攻撃が欠落して見えた）。撃破中はワールド演出を約1.8秒保留して撃破を見せる）。
@@ -148,7 +154,7 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      ＝最初の未完了 TODO のステージで、`trackForState` がステージ×phase で7種の BGM トラックを選ぶ
      （`field` / `adventure` / `battle` / `dungeon-adventure` / `dungeon-battle` / `castle-adventure` / `castle-battle`）。
    - モンスターはランダムエンカウント：PreToolUse ごとに 20% で出現し（同時最大1体）、
-     `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）から sprite/HP をランダムに選ぶ。HP は演出専用。
+     ステージ別 `MONSTER_CATALOGS` から sprite/HP/反撃種別をランダムに選ぶ。HP は演出専用。
      TodoWrite/update_plan はモンスターを湧かさず、state.quest を更新する（各項目に field/dungeon/castle の `stage` を割り当て）だけ。
    - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` ならスキル攻撃5回または
      ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に

@@ -37,7 +37,18 @@ const spriteByName = {
   slime: "slime",
   goblin: "goblin",
   orc: "orc",
-  ogre: "ogre"
+  ogre: "ogre",
+  skeleton: "skeleton",
+  ghoul: "ghoul",
+  witch: "witch",
+  "grim-reaper": "grim-reaper",
+  succubus: "succubus",
+  dullahan: "dullahan",
+  dragon: "dragon",
+  "demon-lord": "demon-lord",
+  "dark-mage": "dark-mage",
+  "wolf-beastwoman": "wolf-beastwoman",
+  "dark-knight": "dark-knight"
 };
 
 const svgSpriteNames = new Set();
@@ -187,6 +198,9 @@ let lastRenderedMonster = null;
 let worldVisualsHeld = false; // 撃破演出中だけ true：精霊カードの即時消去を保留する（ally_return が1体ずつ帰す）
 let currentHook = null; // いま処理中の state 更新の由来 Hook（origin 形）。world 効果の帰属に使う。
 let latestAllies = []; // 最新の在席精霊（state.allies）。精霊追撃をフロント生成する時の名簿スナップショット。
+// 召喚エフェクトが付いて来た精霊の id 集合。召喚も攻撃キューと同じ扱い＝召喚がキューで再生される(appear-hold明け)まで
+// カードを出さない（出現演出と被らせない）。ally_summon 再生時に外し、その瞬間にバーストと同時へカードを出す。
+const awaitingSummon = new Set();
 let audio = {
   enabled: false,
   ctx: null,
@@ -214,6 +228,10 @@ new EventSource("/events").addEventListener("state", (message) => {
   const worldEffect = diffWorldEffect(payload.state, hasDefeat);
   if (worldEffect) effectList.push(worldEffect);
   prepareMonsterEffects(effectList);
+  // 召喚エフェクト付きの精霊は、その召喚がキューで再生されるまでカードを伏せる（攻撃キューと同じ扱い）。
+  for (const effect of effectList) {
+    if (effect.type === "ally_summon" && effect.ally?.id) awaitingSummon.add(effect.ally.id);
+  }
   render(payload.state);
   effects(effectList);
 });
@@ -289,6 +307,11 @@ requestAnimationFrame(draw);
 
 function render(state) {
   latestAllies = state.allies || []; // 精霊追撃のフロント生成に使う最新名簿
+  // state から消えた精霊(帰還/被弾退場/リセット)は召喚待ち集合からも除く＝取り残してカードを伏せ続けない。
+  if (awaitingSummon.size) {
+    const live = new Set(latestAllies.map((ally) => ally.id));
+    for (const id of awaitingSummon) if (!live.has(id)) awaitingSummon.delete(id);
+  }
   // 背景/BGM/phase/シーンは render では適用しない＝キューの world 効果が順番に適用する（単一キューへ集約）。
   renderRoster(state.quest || [], state.phase);
   // 撃破演出中(worldVisualsHeld)は精霊カードを即時に消さず保留する。
@@ -453,21 +476,24 @@ function questRow(status, label, folded) {
 
 function renderAllies(list) {
   if (!allies) return;
-  if (!list.length) {
+  // 召喚待ち(awaitingSummon)の精霊は、ally_summon がキューで再生されるまでカードを出さない（攻撃キューと同じ扱い）。
+  const visible = list.filter((ally) => !(ally.id && awaitingSummon.has(ally.id)));
+  if (!visible.length) {
     allies.dataset.active = "false";
     allies.replaceChildren();
     return;
   }
   allies.dataset.active = "true";
   allies.replaceChildren(
-    ...list.slice(-4).map((ally, index) => {
+    ...visible.slice(-4).map((ally, index) => {
       const card = document.createElement("div");
       card.className = `ally ally-${ally.element || "spirit"}`;
       card.dataset.allyId = ally.id || "";
+      card.dataset.damaged = isAllyDamaged(ally) ? "true" : "false";
       card.style.setProperty("--slot", index);
 
       const image = document.createElement("img");
-      image.src = allySpritePath(ally.sprite);
+      image.src = allySpritePath(allySpriteForLife(ally));
       image.alt = "";
 
       const name = document.createElement("span");
@@ -495,18 +521,18 @@ let fxBusy = false;
 let monsterDefeatInProgress = false;
 let appearAttackHoldUntil = 0; // この時刻(ms)まで attack の再生を保留（出現演出と被らせない）
 const ANIM_GAP = 100; // アニメ間の空き（0.1 秒）
-const ATTACK_QUEUE_INTERVAL_MS = 1000; // 勇者攻撃の間隔
-const ALLY_FOLLOWUP_INTERVAL_MS = 360; // 精霊追撃の間隔（勇者スキルに続けて素早く連続させる）
-// 出現演出の開始から攻撃キュー再生を待たせる時間。サーバーの最低在席時間(MIN_MONSTER_LIFETIME_MS=4s)より
-// 十分短くし、出現後すぐ討伐されても攻撃が画面に出るようにする（出現アニメ自体は ~0.7s）。
-const APPEAR_ATTACK_DELAY_MS = 1500;
+// 勇者・精霊の攻撃と精霊召喚は、種別を問わず前のキュー再生開始から1秒後に次を再生する（前のキューが無ければ即座）。
+const ATTACK_QUEUE_INTERVAL_MS = 1000;
+// キュー再生はモンスター登場の4秒後に開始する（出現演出を見せ切ってから初撃/召喚）。サーバーの最低在席時間
+// (MIN_MONSTER_LIFETIME_MS=4s)と一致＝登場4秒後の初撃が、討伐可能になる瞬間とちょうど揃う。
+const APPEAR_ATTACK_DELAY_MS = 4000;
 const MAX_QUEUED_ATTACKS = 10; // 詰まりすぎ防止（超過した攻撃アニメは間引く）
 
 // --- モンスターの反撃ループ（要件2）---
 // 生存モンスターが居て、勇者＋全精霊の攻撃を再生し切り（キュー枯渇）、出現演出も明けたら、
-// 10秒おきにモンスターが反撃する。対象は勇者と在席精霊からランダム。タイミングは実クロックを持つ
+// 8秒おきにモンスターが反撃する。対象は勇者と在席精霊からランダム。タイミングは実クロックを持つ
 // フロントだけが駆動できる（reducer はタイマー非保持＝§12）。精霊に当たればサーバーへ通知してライフ確定。
-const COUNTER_INTERVAL_MS = 10000;
+const COUNTER_INTERVAL_MS = 8000;
 let counterTimer = null;
 let counterSeq = 0;
 
@@ -547,7 +573,7 @@ function runCounterTick() {
     reportCounterHit(`counter-${(counterSeq += 1)}-${Date.now()}`, target.allyId);
   } else {
     // 勇者はサーバーに state を持たない＝被弾演出をローカルで直接再生（演出のみ）。
-    playEffect({ type: "monster_counter", target: "hero", synthetic: true });
+    playEffect({ type: "monster_counter", target: "hero", synthetic: true, counterEffect: currentCounterEffect() });
   }
 }
 
@@ -588,8 +614,10 @@ function fxAnimMs(effect) {
       return 640; // 会心の一撃（斬撃）を見せ切ってから撃破へ進む
     case "ally_return":
       return 560; // 撃破後、精霊を1体ずつ順番に帰す（キューを占有して整列退場させる）
+    case "ally_summon":
+      return 400; // 精霊召喚も攻撃キューと同様にキュー枠を占有（appear-hold + 1秒間隔の対象）
     default:
-      return 0; // 出現・召喚・CLEAR 等はアニメを占有しない（即時）
+      return 0; // 出現・CLEAR 等はアニメを占有しない（即時）
   }
 }
 
@@ -638,13 +666,13 @@ function pumpFx() {
   if (fxBusy) return;
   while (fxQueue.length) {
     const effect = fxQueue[0]; // まだ消費しない（保留判定のため覗くだけ）
-    if (monsterDefeatInProgress && effect.type === "attack") {
+    if (monsterDefeatInProgress && (effect.type === "attack" || effect.type === "ally_summon")) {
       fxQueue.shift();
       trace({ kind: "drop", tag: effectTag(effect), reason: "defeat-in-progress", origin: effect.origin });
       continue;
     }
-    // 出現演出と被らせない：出現開始から APPEAR_ATTACK_DELAY_MS の間は攻撃キューを再生しない。
-    if (effect.type === "attack") {
+    // 出現演出と被らせない：出現開始から APPEAR_ATTACK_DELAY_MS の間は攻撃/召喚キューを再生しない。
+    if (effect.type === "attack" || effect.type === "ally_summon") {
       const wait = appearAttackHoldUntil - Date.now();
       if (wait > 0) {
         trace({ kind: "hold", tag: effectTag(effect), reason: "appear-hold", wait, origin: effect.origin });
@@ -689,9 +717,9 @@ function pumpFx() {
 }
 
 function fxQueueDelayMs(effect, anim) {
-  if (effect.type === "attack") {
-    // 精霊の追撃は短間隔で連続させる（勇者スキルに続く一連の追撃として畳み込み、詰まりを防ぐ）。
-    return effect.kind === "ally" ? ALLY_FOLLOWUP_INTERVAL_MS : ATTACK_QUEUE_INTERVAL_MS;
+  // 勇者攻撃・精霊追撃・精霊召喚は種別を問わず一律 1 秒間隔（前のキュー再生開始から1秒後）。
+  if (effect.type === "attack" || effect.type === "ally_summon") {
+    return ATTACK_QUEUE_INTERVAL_MS;
   }
   return anim + ANIM_GAP;
 }
@@ -707,8 +735,9 @@ function enqueueSpiritFollowup(skillEffect) {
   const budget = MAX_QUEUED_ATTACKS - queuedAttacks;
   if (budget <= 0) return;
   // 要件1: 在席精霊は全員が勇者スキルの後に追撃する。順番はランダム（Fisher-Yates でコピーをシャッフル）。
-  // latestAllies 本体は破壊しない（表示順・次回追撃に影響させない）。被弾退場した精霊(life<=0)は除外。
-  const roster = latestAllies.filter((ally) => (ally.life ?? 5) > 0);
+  // latestAllies 本体は破壊しない（表示順・次回追撃に影響させない）。被弾退場した精霊(life<=0)と
+  // まだ召喚演出が出ていない精霊(awaitingSummon＝カード未表示)は除外＝ゴースト追撃を生成しない。
+  const roster = latestAllies.filter((ally) => (ally.life ?? 5) > 0 && !awaitingSummon.has(ally.id));
   for (let i = roster.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [roster[i], roster[j]] = [roster[j], roster[i]];
@@ -725,12 +754,15 @@ function enqueueSpiritFollowup(skillEffect) {
 }
 
 function clearStaleCombatQueueForDefeat(reason = "defeat-clear") {
+  // 攻撃・finisher・未再生の精霊召喚は撃破時に掃除する（召喚も攻撃キューと同じ扱い）。ally_return は残す。
+  const stale = (effect) =>
+    effect.type === "attack" || effect.type === "finisher" || effect.type === "ally_summon";
   for (const effect of fxQueue) {
-    if (effect.type === "attack" || effect.type === "finisher") {
+    if (stale(effect)) {
       trace({ kind: "drop", tag: effectTag(effect), reason, origin: effect.origin });
     }
   }
-  fxQueue = fxQueue.filter((effect) => effect.type !== "attack" && effect.type !== "finisher");
+  fxQueue = fxQueue.filter((effect) => !stale(effect));
   appearAttackHoldUntil = 0;
   stopCounterLoop(); // 撃破処理中は反撃しない（要件2）
 }
@@ -784,24 +816,30 @@ function playEffect(effect) {
       break;
     case "counter":
       flash("#ff3b3b");
-      burst(0.34, 0.5, "#ff4d4d", 28);
+      if (effect.monsterId) {
+        heroHitReaction(counterEffectKind(effect.counterEffect));
+      } else {
+        const rect = canvas.getBoundingClientRect();
+        counterImpact(counterEffectKind(effect.counterEffect), { x: rect.width * 0.34, y: rect.height * 0.54 }, 0.9);
+      }
       sting([45, 40]);
       break;
     case "monster_counter":
       // モンスターの反撃を勇者が食らった（要件3。勇者は state ライフ無し＝演出のみ）。
-      heroHitReaction();
+      heroHitReaction(counterEffectKind(effect.counterEffect));
       flash("#ff5a4d");
       shakeStage("hit");
       damageSound();
       break;
     case "ally_hit":
       // サーバー確定の精霊被弾（CounterHit→ally_hit）。残ライフは render が反映。被弾演出＋音（要件3/4）。
-      allyHitImpact(effect.allyId, effect.element);
+      allyHitImpact(effect.allyId, effect.element, counterEffectKind(effect.counterEffect));
       flash("#ff5a4d");
       damageSound();
       break;
     case "ally_defeated":
       // 精霊が5回被弾して退場（被弾死。撃破時の ally_return とは別演出）（要件4）。
+      allyHitImpact(effect.allyId, effect.element, counterEffectKind(effect.counterEffect), 1.18);
       returnSpiritCard(effect.allyId, effect.element);
       flash("#ff5a4d");
       damageSound();
@@ -843,6 +881,9 @@ function playEffect(effect) {
       showToast(`未討伐 ${effect.remaining}`, "info");
       break;
     case "ally_summon":
+      // 召喚をキューで再生する瞬間に、伏せていたカードを出す＝バースト/トーストとカード表示を同時にする。
+      if (effect.ally?.id) awaitingSummon.delete(effect.ally.id);
+      renderAllies(latestAllies);
       summonBurst();
       pulseAlly(effect.ally?.id, "summon");
       showToast(`${effect.ally?.name || "仲間"} 召喚`, "ally");
@@ -923,6 +964,16 @@ function allySpritePath(sprite) {
   return `/assets/sprites/${name}.${ext}`;
 }
 
+function allySpriteForLife(ally) {
+  if (isAllyDamaged(ally)) return ally.damagedSprite || `${ally.sprite}-damaged`;
+  return ally.sprite;
+}
+
+function isAllyDamaged(ally) {
+  const life = Number.isFinite(ally?.life) ? ally.life : 5;
+  return life > 0 && life <= 3;
+}
+
 function pulseAlly(allyId, kind) {
   if (!allies || !allyId) return;
   const card = allies.querySelector(`[data-ally-id="${allyId}"]`);
@@ -975,8 +1026,8 @@ function allyReturnSound(element) {
   sting([...base, base[base.length - 1] + 12]);
 }
 
-// 勇者の被弾演出（要件3）：後退リアクション＋勇者位置のインパクト＋リング。
-function heroHitReaction() {
+// 勇者の被弾演出（要件3）：後退リアクション＋勇者位置のインパクト。
+function heroHitReaction(kind = currentCounterEffect()) {
   if (heroImage) {
     heroImage.dataset.action = "hit";
     window.setTimeout(() => {
@@ -984,17 +1035,107 @@ function heroHitReaction() {
     }, 460);
   }
   const center = heroCanvasCenter();
-  burstAt(center.x, center.y, "#ff6a5a", 22);
-  particles.push({ kind: "ring", x: center.x, y: center.y, vx: 0, vy: 0, life: 16, maxLife: 16, color: "#ff5a4d", size: 30 });
+  counterImpact(kind, center, 1.12);
 }
 
 // 精霊の被弾演出（要件3/4）：カードのヒットリアクション＋カード位置のインパクト。
-function allyHitImpact(allyId, element) {
+function allyHitImpact(allyId, element, kind = currentCounterEffect(), scale = 1) {
   pulseAlly(allyId, "hit");
   const card = allyId && allies ? allies.querySelector(`[data-ally-id="${allyId}"]`) : null;
   const center = cardCanvasCenter(card);
-  burstAt(center.x, center.y, "#ff6a5a", 16);
-  particles.push({ kind: "ring", x: center.x, y: center.y, vx: 0, vy: 0, life: 14, maxLife: 14, color: "#ff5a4d", size: 22 });
+  counterImpact(kind, center, scale);
+}
+
+function currentCounterEffect() {
+  return counterEffectKind(lastRenderedMonster?.counterEffect);
+}
+
+function counterEffectKind(value) {
+  return ["slash", "blunt", "magic"].includes(value) ? value : "blunt";
+}
+
+function counterImpact(kind, center, scale = 1) {
+  const effect = counterEffectKind(kind);
+  spawnDamageImpact(effect, center, scale);
+  switch (effect) {
+    case "slash":
+      slashImpactAt(center, scale);
+      break;
+    case "magic":
+      magicImpactAt(center, scale);
+      break;
+    case "blunt":
+    default:
+      bluntImpactAt(center, scale);
+      break;
+  }
+}
+
+function spawnDamageImpact(kind, center, scale = 1) {
+  if (!stage) return;
+  const item = document.createElement("div");
+  item.className = `damage-impact damage-${counterEffectKind(kind)}`;
+  item.style.left = `${center.x}px`;
+  item.style.top = `${center.y}px`;
+  item.style.setProperty("--damage-scale", `${scale}`);
+  stage.appendChild(item);
+  window.setTimeout(() => item.remove(), 760);
+}
+
+function slashImpactAt(center, scale = 1) {
+  const count = scale > 1 ? 4 : 3;
+  for (let index = 0; index < count; index += 1) {
+    particles.push({
+      slash: true,
+      x: center.x + randomRange(-8, 8),
+      y: center.y + randomRange(-10, 10),
+      vx: randomRange(-0.4, 0.4),
+      vy: randomRange(-0.5, 0.2),
+      life: 14 + index * 2,
+      maxLife: 18,
+      color: index % 2 === 0 ? "#fff7dd" : "#ff5a4d",
+      size: (28 + index * 8) * scale,
+      thickness: (5 - index * 0.45) * scale,
+      rotation: -0.72 + index * 0.34
+    });
+  }
+  burstAt(center.x, center.y, "#ff6a5a", Math.round(14 * scale));
+}
+
+function bluntImpactAt(center, scale = 1) {
+  burstAt(center.x, center.y, "#ff8a4c", Math.round(24 * scale));
+  for (let index = 0; index < Math.round(12 * scale); index += 1) {
+    particles.push({
+      kind: "shard",
+      x: center.x + randomRange(-14, 14),
+      y: center.y + randomRange(-10, 12),
+      vx: randomRange(-3.6, 3.6),
+      vy: randomRange(-4.6, -0.8),
+      life: randomRange(18, 30),
+      maxLife: 30,
+      color: index % 2 === 0 ? "#ffd15c" : "#7b3f35",
+      size: randomRange(3, 7) * scale,
+      rotation: randomRange(0, Math.PI)
+    });
+  }
+  particles.push({ kind: "ring", x: center.x, y: center.y, vx: 0, vy: 0, life: 16, maxLife: 16, color: "#ff5a4d", size: 34 * scale });
+}
+
+function magicImpactAt(center, scale = 1) {
+  for (let index = 0; index < Math.round(30 * scale); index += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    particles.push({
+      x: center.x + Math.cos(angle) * randomRange(4, 34 * scale),
+      y: center.y + Math.sin(angle) * randomRange(4, 28 * scale),
+      vx: Math.cos(angle) * randomRange(0.6, 2.6),
+      vy: Math.sin(angle) * randomRange(0.6, 2.6) - 0.4,
+      life: randomRange(18, 36),
+      color: index % 3 === 0 ? "#fff7ff" : index % 3 === 1 ? "#c58cff" : "#72e8ff",
+      size: randomRange(2, 5) * scale
+    });
+  }
+  particles.push({ kind: "ring", x: center.x, y: center.y, vx: 0, vy: 0, life: 18, maxLife: 18, color: "#c58cff", size: 44 * scale });
+  particles.push({ kind: "ring", x: center.x, y: center.y, vx: 0, vy: 0, life: 14, maxLife: 14, color: "#72e8ff", size: 28 * scale });
 }
 
 function heroCanvasCenter() {

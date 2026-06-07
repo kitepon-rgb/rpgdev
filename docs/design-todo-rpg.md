@@ -43,7 +43,9 @@ TODO は戦闘の源ではなく「クエストの一覧表示」＋「紐づく
 **モンスター＝ランダムエンカウント。** エラーでも TODO 項目でもない。
 
 - モンスターはツール使用ごと（PreToolUse）に **20% の確率で出現する「エンカウント」**。同時に出るのは最大1体（2体同時は無い）。
-- スプライト/HP は `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダムに選ぶ。HP は演出専用で殺傷力なし。
+- スプライト/HP/反撃種別はステージ別 `MONSTER_CATALOGS` からランダムに選ぶ。field は Slime/Goblin/Orc/Ogre、
+  dungeon/castle は各ステージ専用モンスター。Dragon / Demon Lord は TODO が4個以上あり、最後の TODO が現在地の時だけ抽選に入る。
+  HP は演出専用で殺傷力なし。
 - 各エンカウントは出現時に `linkedTodo` フラグを持つ：出現時に in_progress の TODO があれば `linkedTodo=true`、無ければ `false`。
   このフラグで討伐条件が変わる（§3）。
 - **TODO（クエスト）はモンスターを湧かさない。** TODO は画面上のクエスト一覧表示と、紐づくエンカウントの討伐トリガーを担う（§3）。
@@ -91,7 +93,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
   全完了なら最後の項目のステージ。TODO 不在（合成クエスト含む）や未知の値は `field` にフォールバック。
 - **BGM/背景はステージ×phase で決まる**：`trackForState` がステージ別の探索/戦闘トラックを返し（§2）、
   フロントは `adventureStage` から背景（`field.png` / `dungeon.png` / `castle.png`）を選ぶ。dungeon/castle では skyline を隠す。
-- ステージはあくまで TODO 進捗ベースの**演出**で、討伐条件（§3）やエンカウント確率には影響しない。
+- ステージは TODO 進捗ベースの場所表現で、背景/BGM と出現カタログに影響する。討伐条件（§3）やエンカウント確率には影響しない。
 - `SessionStart`（拠点リセット）で `adventureStage` は `field` に戻る。
 
 ---
@@ -100,7 +102,11 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 
 ### モンスター＝ランダムエンカウント
 - モンスターは TODO からは湧かない。**PreToolUse ごとに 20% の確率で1体だけ出現**する（2体同時は無い）。
-- スプライト/HP は `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダム。HP は演出専用で殺傷力なし。
+- スプライト/HP/反撃種別はステージ別 `MONSTER_CATALOGS` からランダム。HP は演出専用で殺傷力なし。
+  - `field`: Slime / Goblin / Orc / Ogre。
+  - `dungeon`: Skeleton / Ghoul / Witch / Grim Reaper / Succubus。
+  - `castle`: Dullahan / Dragon / Demon Lord / Dark Mage / Wolf Beastwoman / Dark Knight。
+    ただし Dragon / Demon Lord は TODO が4個以上あり、最後の TODO が現在地の時だけ抽選に入る。
 - 出現時に `linkedTodo` フラグを決める：出現時に in_progress の TODO があれば `linkedTodo=true`、無ければ `false`。
 
 ### 討伐条件＝linkedTodo で分岐 [決定]
@@ -316,7 +322,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - 旧 `detectFailure` の単語マッチ正規表現は廃止。Claude の失敗イベント名（PostToolUseFailure/PermissionDenied）と
     構造化 exit code 非0 のみ → `counter`。実機 Codex は失敗不可視なので成功扱い（反撃しない）。
   - **モンスターは TODO からは湧かない。** PreToolUse ごとに 20% でエンカウントが1体だけ出現（最大1体）。
-    スプライト/HP は `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダム。HP は演出専用。
+    スプライト/HP/反撃種別はステージ別 `MONSTER_CATALOGS` からランダム。field は既存4体、dungeon/castle は専用カタログ。
+    Dragon / Demon Lord は TODO が4個以上あり、最後の TODO が現在地の時だけ抽選に入る。HP は演出専用。
   - 出現時に `linkedTodo` を決定（出現時 in_progress TODO あり=true / なし=false）。討伐条件はこのフラグで分岐：
     - `linkedTodo=false` → hero の攻撃 **5撃**、または **ターン終了（Stop）** で討伐。
     - `linkedTodo=true` → 攻撃では倒れず、TODO が1つ `completed` になった時、またはターン終了（Stop）で討伐。in_progress TODO が消えたら `linkedTodo` 解除。
@@ -329,7 +336,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - 精霊：戦闘中の PreToolUse ごとに **10%** で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
     在席中は **PostToolUse（スキル攻撃）の時だけ**現在の敵に追撃（`attack` kind:"ally"・`allyElement` 付き、討伐の5撃には数えない）。
     モンスター討伐ごとに精霊は全員消滅。SubagentStop で1体帰還（**FIFO＝最初に出た精霊から**）、在席ゼロでの Stop は無反応。
-- **テスト：28/28 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
+- **テスト：47/47 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
   ターン終了討伐・linkedTodo の completed/Stop 討伐・provider parity・冒険ステージ割り当て/追従・ステージ別 BGM・技名は tool_name 基準（PascalCase/MCP→サーバ名・"***"回避）・
   精霊 増援/参戦/重複回避/上限4/PostToolUse 限定追撃/討伐で消滅/FIFO 離脱 等）。
 - **フロントエンド：新 state/effect に配線済み。**
@@ -349,8 +356,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
     精霊追撃 `ally-fire-attack.wav` / `ally-earth-attack.wav` / `ally-wind-attack.wav` /
     `ally-water-attack.wav`、**精霊帰還 `ally-return.wav`**（撃破後に1体ずつ帰る音）。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
     攻撃/帰還 SFX は `scripts/render-sfx.mjs`（`npm run render:sfx`）で生成し、Swift の `sfxNames` に登録する。
-  - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。**攻撃は固定 1 秒間隔**、その他は「アニメ目安 + 0.1秒」で次へ。
-    **モンスター出現の演出開始から 4 秒間（`APPEAR_ATTACK_DELAY_MS`）は攻撃キューを再生しない**（出現演出と直後の PostToolUse スキル攻撃が被らないよう保留する）。出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect を含むバッチを受信した瞬間に、過去バッチから溜まっていた攻撃/finisher キューを破棄する。そのうえで**同じバッチ内でトドメに至った未再生攻撃だけは破棄しない**（旧実装は破棄していたため、出現直後に先頭の skill だけ再生され後続の normal が撃破で消えて「通常攻撃が欠落」して見えた）。`monster_defeated` がキューに入った後の別バッチ攻撃は受け付けず、消滅演出を開始した時点でも残っている攻撃/finisher キューを再度破棄する。トドメに至った一連の攻撃を順に再生してから会心の一撃（`finisher`）→撃破演出へ進む。撃破フラグ（`monsterDefeatInProgress`）は撃破演出を**再生した時点**で立てる。詰まり防止に攻撃アニメは最大10件で間引く。
+  - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。**勇者攻撃・精霊追撃・精霊召喚はすべて前のキュー再生開始から固定 1 秒間隔**（`ATTACK_QUEUE_INTERVAL_MS=1000`／前のキューが無ければ即座）、その他は「アニメ目安 + 0.1秒」で次へ。
+    **モンスター出現の演出開始から 4 秒間（`APPEAR_ATTACK_DELAY_MS=4000`＝サーバーの `MIN_MONSTER_LIFETIME_MS` と一致）は攻撃/召喚キューを再生しない**（出現演出と直後の初撃/召喚が被らないよう保留＝**登場の4秒後に最初のキュー再生**）。**精霊召喚も攻撃キューと同じ扱い**で appear-hold と1秒間隔の対象になり、カード表示も召喚がキューで再生される瞬間まで伏せる（`awaitingSummon`＝state 更新の `renderAllies` で先にカードを出さない）。出現/帰還/クリア等の即時演出はキューを占有しない。撃破 effect を含むバッチを受信した瞬間に、過去バッチから溜まっていた攻撃/finisher キューを破棄する。そのうえで**同じバッチ内でトドメに至った未再生攻撃だけは破棄しない**（旧実装は破棄していたため、出現直後に先頭の skill だけ再生され後続の normal が撃破で消えて「通常攻撃が欠落」して見えた）。`monster_defeated` がキューに入った後の別バッチ攻撃は受け付けず、消滅演出を開始した時点でも残っている攻撃/finisher キューを再度破棄する。トドメに至った一連の攻撃を順に再生してから会心の一撃（`finisher`）→撃破演出へ進む。撃破フラグ（`monsterDefeatInProgress`）は撃破演出を**再生した時点**で立てる。詰まり防止に攻撃アニメは最大10件で間引く。
   - **クエストトラッカー UI**：MMO ミッション風パネルを画面中央上に表示。未着手 ◇ / 進行中 ◆ / 達成 ✓。
     全項目完了 / `idle`（街）/ `complete`（ターン終了＝街の待機）では非表示。AI が TODO に止めを刺さず complete に
     なることがあり、街に戻ったのに未完了 TODO が残ると違和感が出るため、街の待機（idle/complete）ではクエスト窓ごと畳む。
@@ -460,8 +467,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 ### 精霊攻撃はフロント演出のみ（脱Hook）
 - reducer から `allyAssist`/`ALLY_DAMAGE` を**削除**。PostToolUse は勇者スキル攻撃のみ emit（`kind:"ally"` の attack は出さない）。
 - フロント `overlay.js` の `enqueueSpiritFollowup`：**勇者スキル攻撃を再生した時点**で、在席精霊（`latestAllies`）ぶんの
-  追撃を `kind:"ally"` 合成 effect としてキュー先頭へ割り込ませる（`ALLY_FOLLOWUP_INTERVAL_MS=360` で連続）。
-  撃破中は出さない／`MAX_QUEUED_ATTACKS` を超えない／再生時に精霊が消えていれば出さない（ゴースト防止）。
+  追撃を `kind:"ally"` 合成 effect としてキュー先頭へ割り込ませる（勇者攻撃・精霊追撃とも一律 `ATTACK_QUEUE_INTERVAL_MS=1000`＝前のキュー再生開始から1秒後。旧 `ALLY_FOLLOWUP_INTERVAL_MS=360` は廃止）。
+  撃破中は出さない／`MAX_QUEUED_ATTACKS` を超えない／再生時に精霊が消えていれば出さない／**召喚演出が未再生（`awaitingSummon`＝カード未表示）の精霊は追撃名簿から除く**（ゴースト防止）。
   ＝**Hook が何回来ても精霊攻撃は「再生された勇者スキル1回につき1巡」**だけで、Hook数では増えない。
 
 ### 1窓＝1本の絶対キュー（背景/BGM/シーンも集約）
@@ -491,7 +498,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   `latestAllies` 本体は破壊しない。脱Hook（reducer は精霊攻撃を出さない＝§12）は維持。
 
 ### 13.2 モンスターの反撃ループ（要件2）[フロント駆動＋サーバー権威]
-- 生存モンスターが居て、勇者＋全精霊の攻撃を再生し切り（キュー枯渇）、出現演出も明けたら、`COUNTER_INTERVAL_MS=10000`（10秒おき）で反撃する。
+- 生存モンスターが居て、勇者＋全精霊の攻撃を再生し切り（キュー枯渇）、出現演出も明けたら、`COUNTER_INTERVAL_MS=8000`（8秒おき）で反撃する。
   対象は勇者と在席精霊からランダム。**タイミングは実クロックを持つフロントだけが駆動できる**（reducer はタイマー非保持＝§12）。
 - `pumpFx` のキュー枯渇時に `startCounterLoop`、新バッチ受信(`effects` 先頭)・撃破・出現で `stopCounterLoop`。`runCounterTick` も毎回 `counterLoopAllowed` を自己点検。
 - 勇者への反撃は state ライフが無いので**フロントで被弾演出のみ**。精霊への反撃は **`POST /control/counter-hit {hitId, allyId}`** でサーバーへ通知し、サーバーがライフ確定（13.3）。二重演出を避けるため精霊被弾はサーバーの `ally_hit/ally_defeated` 受信でのみ再生する。
@@ -500,6 +507,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - `summonAlly` で `life: ALLY_MAX_LIFE(=5)` を付与。`CounterHit` イベント→`applyCounterHit` がライフ減算、`>0` で `ally_hit`、`<=0` で当該1体を除去し `ally_defeated(reason:"depleted")` を emit。
 - サーバー：`POST /control/counter-hit` が `recentCounterIds`（Hook id とは別リング）で `hitId` を冪等化し、合成 `CounterHit` を `reduceHookEvent` に流して broadcast。
 - 撃破時の全員退場（`ally_return` FIFO）は別経路として維持（被弾死とは effect 名を分ける）。旧 state（life 無し）は満タン扱いで互換。
+- **フロント表示**：残ライフ **3以下** で被弾スプライト（`isAllyDamaged`＝`life>0 && life<=3`／`ally-<element>-damaged`）へ切替。満タン(5)〜4 は通常スプライト。
 
 ### 13.4 被弾エフェクト＋被ダメージ音（要件3）[フロント＋アセット]
 - `playEffect` に `monster_counter`（勇者被弾）/`ally_hit`/`ally_defeated`。`damageSound()`＝ネイティブ `damage-hit.wav`（無ければ WebAudio 合成にフォールバック）。
@@ -519,4 +527,27 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - reducer は元々 `SubagentStart→summonAlly` / `SubagentStop→returnAlly`（FIFO）対応済みだが、**フックが未配線**だった（`.claude/settings.local.json` / `.codex/hooks.json` に無い）。両方に追加。
 - 実測（2026-06-07・events.ndjson）：ワークフロー実行中、メイン待機の時間帯に親セッションの PreToolUse/PostToolUse が多数記録＝**サブエージェントのツール使用は親フックを発火する**。一方 SubagentStart/Stop は未配線ゆえ 0 件だった（だから戦闘中 10% 増援以外で精霊が出なかった）。これを配線した（Task は公式に親で発火。Workflow も親フックは飛ぶので発火見込み）。
 
-> テスト：reducer **42/42 pass**（要件6・精霊ライフ/CounterHit/退場/旧 state 互換の新規 8 テスト含む）。
+> テスト：reducer **47/47 pass**（要件6・精霊ライフ/CounterHit/退場/旧 state 互換・ステージ別モンスターのテスト含む）。
+
+---
+
+## 14. v0.5.2：演出ペーシング再定義（登場4秒→初撃／攻撃・召喚を一律1秒キュー化／反撃8秒／精霊damaged≤3）[実装済み 2026-06-07]
+
+すべて `public/overlay.js`（デスクトップ窓フロント）の単一キュー側。reducer は不変＝テストは 47/47 のまま（フロント定数のためテスト非依存）。
+
+- **キュー再生は「モンスター登場の4秒後」起点**：`APPEAR_ATTACK_DELAY_MS` を 1500→**4000** に。サーバーの
+  `MIN_MONSTER_LIFETIME_MS=4000`（討伐可能になる最短）と一致＝登場4秒後の初撃が、ちょうど討伐可能になる瞬間と揃う。
+  **帰結**：Stop で4秒未満に強制討伐されると保留中の通常攻撃は出ず、`finisher`＋撃破だけになる（4秒は出現演出に充てるという定義の直接の帰結。意図通り）。
+- **勇者攻撃・精霊追撃・精霊召喚を一律1秒間隔**：`fxQueueDelayMs` は `attack`/`ally_summon` に対し種別を問わず
+  `ATTACK_QUEUE_INTERVAL_MS=1000` を返す（前のキュー再生開始から1秒後。前のキューが無ければ即座）。
+  旧 `ALLY_FOLLOWUP_INTERVAL_MS=360`（精霊追撃だけ短間隔）は廃止。
+- **精霊召喚を攻撃キューと同列に**：`ally_summon` を appear-hold とキュー間隔の対象にし（`pumpFx` の保留判定／撃破中ドロップ判定・
+  `fxQueueDelayMs`・`clearStaleCombatQueueForDefeat` に追加）、`fxAnimMs` でキュー枠を占有（400ms）。さらに**カード表示自体を遅延**：
+  `awaitingSummon` 集合を導入し、召喚エフェクトがキューで再生される瞬間にバーストと**同時**へカードを出す（旧実装は state 更新の
+  `renderAllies` がカードを即出ししていたため、モンスター出現演出中に精霊が同時に現れて見えた）。`render()` が在席外（帰還/リセット）の
+  id を `awaitingSummon` から刈り取り、追撃名簿（`enqueueSpiritFollowup`）も `awaitingSummon` の精霊を除外する。召喚が attack キューと同じく
+  撃破時に掃除される設計のため、伏せたまま取り残されることはない（撃破→全員帰還で state から消え自己回復）。
+  - 帰結：精霊が召喚される戦闘の順序は **登場 →(4秒)→ 召喚 →(1秒)→ 初撃**（召喚が最初のキュー枠を取る）。召喚が無い戦闘は **登場 →(4秒)→ 初撃**。
+- **モンスター反撃間隔 10→8秒**：`COUNTER_INTERVAL_MS=8000`（v0.5.1 は 10000）。
+- **精霊 damaged スプライト閾値 life≤2→≤3**：`isAllyDamaged`＝`life>0 && life<=3`（被弾2回＝life3 で被弾スプライトへ）。
+- 触ったのは `public/overlay.js` のみ。`public/app.js`（補助 Web ビュー）は対象外。

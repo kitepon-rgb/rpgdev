@@ -1311,6 +1311,229 @@ body[data-phase="battle"] .hero {
   }
 }
 
+/* モンスター反撃の被弾エフェクト（slash / blunt / magic）。勇者・精霊どちらにも使う。 */
+.damage-impact {
+  --damage-scale: 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 13;
+  width: 112px;
+  height: 112px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(calc(0.7 * var(--damage-scale)));
+  transform-origin: center;
+  will-change: opacity, transform, filter;
+}
+
+.damage-impact::before,
+.damage-impact::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+}
+
+.damage-slash {
+  animation: damageSlash 0.52s ease-out forwards;
+  filter:
+    drop-shadow(0 0 14px rgba(255, 255, 255, 0.92))
+    drop-shadow(0 0 24px rgba(255, 68, 58, 0.7));
+}
+
+.damage-slash::before,
+.damage-slash::after {
+  left: 6%;
+  right: 6%;
+  top: 50%;
+  height: 11px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #fffdf0 18%, #ffecad 42%, #ff5a4d 74%, transparent);
+  transform: rotate(-30deg);
+}
+
+.damage-slash::after {
+  left: 24%;
+  right: 18%;
+  top: 39%;
+  height: 5px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.98), transparent);
+  transform: rotate(-14deg);
+}
+
+.damage-blunt {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 246, 205, 0.96) 0 10%, rgba(255, 112, 68, 0.7) 11% 24%, transparent 42%),
+    radial-gradient(circle at 50% 50%, rgba(255, 90, 77, 0.34) 0 28%, transparent 62%);
+  animation: damageBlunt 0.58s cubic-bezier(0.12, 0.82, 0.2, 1) forwards;
+  filter:
+    drop-shadow(0 0 18px rgba(255, 103, 62, 0.86))
+    drop-shadow(0 0 30px rgba(255, 209, 92, 0.5));
+}
+
+.damage-blunt::before {
+  inset: 18%;
+  border: 7px solid rgba(255, 237, 188, 0.82);
+  border-right-color: rgba(255, 90, 77, 0.38);
+  border-bottom-color: rgba(255, 90, 77, 0.32);
+  border-radius: 50%;
+  animation: damageShockRing 0.58s ease-out forwards;
+}
+
+.damage-blunt::after {
+  inset: 22%;
+  background:
+    linear-gradient(100deg, transparent 43%, rgba(70, 25, 20, 0.78) 44% 48%, transparent 50%),
+    linear-gradient(18deg, transparent 39%, rgba(255, 235, 162, 0.8) 40% 44%, transparent 48%),
+    linear-gradient(-38deg, transparent 50%, rgba(120, 54, 34, 0.75) 51% 56%, transparent 60%);
+  animation: damageCrack 0.58s steps(3, end) forwards;
+}
+
+.damage-magic {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.95) 0 8%, rgba(197, 140, 255, 0.52) 9% 22%, transparent 38%),
+    conic-gradient(from 20deg, transparent 0 9%, rgba(196, 142, 255, 0.94) 10% 14%, transparent 15% 28%, rgba(114, 232, 255, 0.92) 30% 35%, transparent 36% 55%, rgba(255, 255, 255, 0.86) 57% 61%, transparent 63% 100%);
+  animation: damageMagic 0.7s ease-out forwards;
+  filter:
+    drop-shadow(0 0 16px rgba(197, 140, 255, 0.92))
+    drop-shadow(0 0 32px rgba(114, 232, 255, 0.56));
+}
+
+.damage-magic::before {
+  inset: 12%;
+  border: 5px solid rgba(230, 205, 255, 0.78);
+  border-left-color: rgba(114, 232, 255, 0.45);
+  border-bottom-color: rgba(197, 140, 255, 0.34);
+  border-radius: 50%;
+  animation: damageMagicRing 0.7s ease-out forwards;
+}
+
+.damage-magic::after {
+  inset: 4%;
+  background:
+    radial-gradient(circle at 20% 74%, rgba(255, 255, 255, 0.98) 0 4%, transparent 8%),
+    radial-gradient(circle at 32% 28%, rgba(197, 140, 255, 0.94) 0 5%, transparent 10%),
+    radial-gradient(circle at 63% 18%, rgba(114, 232, 255, 0.9) 0 4%, transparent 9%),
+    radial-gradient(circle at 82% 62%, rgba(255, 255, 255, 0.86) 0 5%, transparent 11%);
+  animation: damageMagicSparks 0.7s ease-out forwards;
+}
+
+@keyframes damageSlash {
+  0% {
+    opacity: 0;
+    transform: translate(-62%, -58%) scale(calc(0.25 * var(--damage-scale))) rotate(-10deg);
+    filter: blur(1px);
+  }
+  18% {
+    opacity: 1;
+  }
+  74% {
+    opacity: 1;
+    transform: translate(-48%, -50%) scale(calc(1.08 * var(--damage-scale))) rotate(4deg);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-42%, -46%) scale(calc(1.18 * var(--damage-scale))) rotate(12deg);
+  }
+}
+
+@keyframes damageBlunt {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(calc(0.16 * var(--damage-scale)));
+  }
+  16% {
+    opacity: 1;
+  }
+  48% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(calc(1.08 * var(--damage-scale)));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(calc(1.5 * var(--damage-scale)));
+    filter: blur(2px);
+  }
+}
+
+@keyframes damageShockRing {
+  0% {
+    opacity: 0;
+    transform: scale(0.24);
+  }
+  24% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.72);
+  }
+}
+
+@keyframes damageCrack {
+  0% {
+    opacity: 0;
+    transform: scale(0.42);
+  }
+  24% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.24) rotate(8deg);
+  }
+}
+
+@keyframes damageMagic {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(calc(0.22 * var(--damage-scale))) rotate(-28deg);
+  }
+  18% {
+    opacity: 1;
+  }
+  58% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(calc(1.06 * var(--damage-scale))) rotate(44deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(calc(1.36 * var(--damage-scale))) rotate(96deg);
+    filter: blur(1.5px);
+  }
+}
+
+@keyframes damageMagicRing {
+  0% {
+    opacity: 0;
+    transform: scale(0.28) rotate(-30deg);
+  }
+  24% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5) rotate(92deg);
+  }
+}
+
+@keyframes damageMagicSparks {
+  0% {
+    opacity: 0;
+    transform: scale(0.42);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.58) translateY(-12px);
+  }
+}
+
 /* 在席中の仲間（SubagentStart/Stop） */
 .allies {
   position: absolute;
@@ -1354,6 +1577,14 @@ body[data-phase="field"] .allies {
   width: 100%;
   height: clamp(54px, 17vw, 76px);
   object-fit: contain;
+}
+
+.ally[data-damaged="true"] img {
+  filter:
+    brightness(1.06)
+    saturate(0.9)
+    drop-shadow(0 0 14px rgba(255, 90, 77, 0.48));
+  animation: allyDamagedPulse 1.4s ease-in-out infinite;
 }
 
 .ally span {
@@ -1562,6 +1793,22 @@ body[data-phase="battle"] .ally span {
   }
   50% {
     transform: translateY(-5px) rotate(1deg);
+  }
+}
+
+@keyframes allyDamagedPulse {
+  0%,
+  100% {
+    filter:
+      brightness(1.03)
+      saturate(0.88)
+      drop-shadow(0 0 8px rgba(255, 90, 77, 0.3));
+  }
+  50% {
+    filter:
+      brightness(1.22)
+      saturate(0.74)
+      drop-shadow(0 0 17px rgba(255, 90, 77, 0.68));
   }
 }
 

@@ -184,6 +184,90 @@ test("stage-specific BGM is used for dungeon and castle exploration and battles"
   assert.equal(castle.state.currentTrack, "castle-battle");
 });
 
+test("field encounters use the original field monster catalog", () => {
+  __setChance(chanceSeq(0, 0.74)); // spawn, then floor(0.74 * 4) => Orc
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, pre());
+  const monster = r.state.monsters[0];
+  assert.equal(monster.stage, "field");
+  assert.equal(monster.sprite, "orc");
+  assert.equal(monster.counterEffect, "slash");
+  assert.ok(["slime", "goblin", "orc", "ogre"].includes(monster.sprite));
+});
+
+test("dungeon encounters use the dungeon monster catalog", () => {
+  let r = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "task 1", status: "completed" },
+      { content: "task 2", status: "completed" },
+      { content: "task 3", status: "in_progress" },
+      { content: "task 4", status: "pending" },
+      { content: "task 5", status: "pending" }
+    ])
+  );
+  __setChance(chanceSeq(0, 0.99)); // spawn, then final dungeon catalog entry
+  r = reduceHookEvent(r.state, pre());
+  const monster = r.state.monsters[0];
+  assert.equal(monster.stage, "dungeon");
+  assert.equal(monster.sprite, "succubus");
+  assert.equal(monster.counterEffect, "magic");
+  assert.ok(["skeleton", "ghoul", "witch", "grim-reaper", "succubus"].includes(monster.sprite));
+});
+
+test("castle encounters exclude dragon and demon-lord before the final TODO or when fewer than four TODOs exist", () => {
+  let tooShort = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "task 1", status: "completed" },
+      { content: "task 2", status: "completed" },
+      { content: "task 3", status: "in_progress" }
+    ])
+  );
+  assert.equal(tooShort.state.adventureStage, "castle");
+  __setChance(chanceSeq(0, 0.34)); // would be demon-lord in the full 6-entry catalog
+  tooShort = reduceHookEvent(tooShort.state, pre());
+  assert.equal(tooShort.state.monsters[0].sprite, "dark-mage");
+
+  let notFinal = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "task 1", status: "completed" },
+      { content: "task 2", status: "completed" },
+      { content: "task 3", status: "completed" },
+      { content: "task 4", status: "completed" },
+      { content: "task 5", status: "in_progress" },
+      { content: "task 6", status: "pending" }
+    ])
+  );
+  assert.equal(notFinal.state.adventureStage, "castle");
+  __setChance(chanceSeq(0, 0.34)); // would be demon-lord if finalTodoOnly were not filtered
+  notFinal = reduceHookEvent(notFinal.state, pre());
+  assert.equal(notFinal.state.monsters[0].sprite, "dark-mage");
+});
+
+test("castle encounters can include dragon and demon-lord only on the final castle TODO with at least four TODOs", () => {
+  const finalCastleTodos = [
+    { content: "task 1", status: "completed" },
+    { content: "task 2", status: "completed" },
+    { content: "task 3", status: "completed" },
+    { content: "task 4", status: "in_progress" }
+  ];
+
+  let dragon = reduceHookEvent(createInitialState(), todoWrite(finalCastleTodos));
+  assert.equal(dragon.state.adventureStage, "castle");
+  __setChance(chanceSeq(0, 0.2)); // floor(0.2 * 6) => Dragon
+  dragon = reduceHookEvent(dragon.state, pre());
+  assert.equal(dragon.state.monsters[0].sprite, "dragon");
+  assert.equal(dragon.state.monsters[0].counterEffect, "magic");
+
+  let demonLord = reduceHookEvent(createInitialState(), todoWrite(finalCastleTodos));
+  __setChance(chanceSeq(0, 0.34)); // floor(0.34 * 6) => Demon Lord
+  demonLord = reduceHookEvent(demonLord.state, pre());
+  assert.equal(demonLord.state.monsters[0].sprite, "demon-lord");
+  assert.equal(demonLord.state.monsters[0].counterEffect, "magic");
+});
+
 test("a real TodoWrite replaces the synthetic user-input quest", () => {
   let r = reduceHookEvent(createInitialState(), {
     provider: "claude",
@@ -659,6 +743,7 @@ test("summoned spirits start with life = 5 (SubagentStart and battle reinforceme
   r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
   assert.equal(r.state.allies.length, 1);
   assert.equal(r.state.allies[0].life, 5, "SubagentStart 召喚の精霊は life=5");
+  assert.ok(r.state.allies[0].damagedSprite, "life<=2 表示用の damaged sprite 名を持つ");
 
   __setChance(chanceSeq(0, 0)); // 出現
   let s = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
@@ -667,6 +752,29 @@ test("summoned spirits start with life = 5 (SubagentStart and battle reinforceme
   s = reduceHookEvent(s.state, pre());
   assert.ok(s.state.allies.length >= 1);
   assert.ok(s.state.allies.every((a) => a.life === 5), "戦闘増援の精霊も life=5");
+  assert.ok(s.state.allies.every((a) => a.damagedSprite), "戦闘増援の精霊も damaged sprite 名を持つ");
+});
+
+test("CounterHit effects inherit the current monster counter effect", () => {
+  let r = reduceHookEvent(
+    createInitialState(),
+    todoWrite([
+      { content: "task 1", status: "completed" },
+      { content: "task 2", status: "completed" },
+      { content: "task 3", status: "in_progress" }
+    ])
+  );
+  __setChance(chanceSeq(0, 0.34)); // castle without boss unlock => dark-mage, counterEffect=magic
+  r = reduceHookEvent(r.state, pre());
+  assert.equal(r.state.monsters[0].sprite, "dark-mage");
+  assert.equal(r.state.monsters[0].counterEffect, "magic");
+  __setChance(() => 0);
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  const allyId = r.state.allies[0].id;
+  r = reduceHookEvent(r.state, { event: "CounterHit", allyId, raw: {} });
+  const hit = r.effects.find((e) => e.type === "ally_hit");
+  assert.equal(hit.counterEffect, "magic");
+  assert.equal(hit.monsterId, r.state.monsters[0].id);
 });
 
 test("a spirit vanishes after 5 counter hits; earlier hits only decrement its life", () => {

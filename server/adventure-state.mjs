@@ -3,12 +3,29 @@
 // TODO（クエスト）は表示用の一覧であり、進行中 TODO の完了が「紐づくエンカウント」の討伐条件になる。
 // この reducer は純粋関数（I/O なし）: reduceHookEvent(prev, event) -> { state, effects, normalized }。
 
-const MONSTER_CATALOG = [
-  { name: "Slime", element: "syntax", sprite: "slime", hp: 72 },
-  { name: "Goblin", element: "runtime", sprite: "goblin", hp: 96 },
-  { name: "Orc", element: "build", sprite: "orc", hp: 124 },
-  { name: "Ogre", element: "logic", sprite: "ogre", hp: 156 }
-];
+const MONSTER_CATALOGS = {
+  field: [
+    { name: "Slime", element: "syntax", sprite: "slime", hp: 72, counterEffect: "blunt" },
+    { name: "Goblin", element: "runtime", sprite: "goblin", hp: 96, counterEffect: "blunt" },
+    { name: "Orc", element: "build", sprite: "orc", hp: 124, counterEffect: "slash" },
+    { name: "Ogre", element: "logic", sprite: "ogre", hp: 156, counterEffect: "blunt" }
+  ],
+  dungeon: [
+    { name: "Skeleton", element: "bone", sprite: "skeleton", hp: 104, counterEffect: "slash" },
+    { name: "Ghoul", element: "decay", sprite: "ghoul", hp: 116, counterEffect: "slash" },
+    { name: "Witch", element: "hex", sprite: "witch", hp: 108, counterEffect: "magic" },
+    { name: "Grim Reaper", element: "death", sprite: "grim-reaper", hp: 144, counterEffect: "slash" },
+    { name: "Succubus", element: "charm", sprite: "succubus", hp: 128, counterEffect: "magic" }
+  ],
+  castle: [
+    { name: "Dullahan", element: "steel", sprite: "dullahan", hp: 156, counterEffect: "slash" },
+    { name: "Dragon", element: "flame", sprite: "dragon", hp: 220, counterEffect: "magic", finalTodoOnly: true },
+    { name: "Demon Lord", element: "abyss", sprite: "demon-lord", hp: 240, counterEffect: "magic", finalTodoOnly: true },
+    { name: "Dark Mage", element: "void", sprite: "dark-mage", hp: 148, counterEffect: "magic" },
+    { name: "Wolf Beastwoman", element: "moon", sprite: "wolf-beastwoman", hp: 164, counterEffect: "slash" },
+    { name: "Dark Knight", element: "shadow", sprite: "dark-knight", hp: 176, counterEffect: "slash" }
+  ]
+};
 
 const MAX_LOG = 80;
 const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃（演出用の HP 減少量。攻撃は PostToolUse だけ）
@@ -73,10 +90,10 @@ export function createInitialState() {
 }
 
 const ALLY_CATALOG = [
-  { name: "Ignis", sprite: "ally-fire", element: "fire" },
-  { name: "Terra", sprite: "ally-earth", element: "earth" },
-  { name: "Sylph", sprite: "ally-wind", element: "wind" },
-  { name: "Aqua", sprite: "ally-water-facing-slit", element: "water" }
+  { name: "Ignis", sprite: "ally-fire", damagedSprite: "ally-fire-damaged", element: "fire" },
+  { name: "Terra", sprite: "ally-earth", damagedSprite: "ally-earth-damaged", element: "earth" },
+  { name: "Sylph", sprite: "ally-wind", damagedSprite: "ally-wind-damaged", element: "wind" },
+  { name: "Aqua", sprite: "ally-water-facing-slit", damagedSprite: "ally-water-facing-slit-damaged", element: "water" }
 ];
 
 export function reduceHookEvent(previousState, hookEvent, now) {
@@ -224,7 +241,9 @@ function maybeSpawnEncounter(state, event, effects) {
   if (!(sinceSpawn >= MIN_SPAWN_INTERVAL_MS)) return null;
   if (chance() >= ENCOUNTER_SPAWN_CHANCE) return null;
   const linkedTodo = hasRealTodoInProgress(state); // 合成クエスト(ユーザー入力)は紐づけ対象にしない
-  const template = MONSTER_CATALOG[Math.floor(chance() * MONSTER_CATALOG.length)];
+  const stage = currentAdventureStage(state);
+  const catalog = monsterCatalogForState(state, stage);
+  const template = catalog[Math.floor(chance() * catalog.length)];
   const monster = {
     id: `monster-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     label: template.name,
@@ -232,6 +251,8 @@ function maybeSpawnEncounter(state, event, effects) {
     name: template.name,
     element: template.element,
     sprite: template.sprite,
+    stage,
+    counterEffect: template.counterEffect,
     maxHp: template.hp,
     hp: template.hp,
     dying: false,
@@ -356,7 +377,12 @@ function counter(state, event, effects) {
   ensureActive(state, event, effects);
   const target = currentTarget(state);
   pushLog(state, "counter", event.toolName || event.summary, event);
-  effects.push({ type: "counter", skill: event.toolName, monsterId: target ? target.id : null });
+  effects.push({
+    type: "counter",
+    skill: event.toolName,
+    monsterId: target ? target.id : null,
+    counterEffect: target ? target.counterEffect : "blunt"
+  });
 }
 
 // --- フェーズ遷移 ---
@@ -437,6 +463,7 @@ function summonAlly(state, event, effects) {
     id: `ally-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name: template.name,
     sprite: template.sprite,
+    damagedSprite: template.damagedSprite,
     element: template.element,
     life: ALLY_MAX_LIFE, // 残りライフ（被弾で減算、0で退場。要件4）
     appearedAt: event.now // 表示用。時刻はサーバー now で統一（event.at＝エージェント時計は使わない）
@@ -468,11 +495,29 @@ function applyCounterHit(state, event, effects) {
   // 旧 state.json（life 無し ally）互換：undefined は満タン扱い（移行時の既定。握りつぶしではなく移行措置）。
   const current = Number.isFinite(ally.life) ? ally.life : ALLY_MAX_LIFE;
   ally.life = current - 1;
+  const target = currentTarget(state);
+  const counterEffect = target ? target.counterEffect : "blunt";
   if (ally.life > 0) {
-    effects.push({ type: "ally_hit", allyId: ally.id, element: ally.element, name: ally.name, life: ally.life });
+    effects.push({
+      type: "ally_hit",
+      allyId: ally.id,
+      element: ally.element,
+      name: ally.name,
+      life: ally.life,
+      monsterId: target ? target.id : null,
+      counterEffect
+    });
   } else {
     state.allies = state.allies.filter((a) => a.id !== ally.id); // id 指定で当該1体だけ退場
-    effects.push({ type: "ally_defeated", allyId: ally.id, element: ally.element, name: ally.name, reason: "depleted" });
+    effects.push({
+      type: "ally_defeated",
+      allyId: ally.id,
+      element: ally.element,
+      name: ally.name,
+      reason: "depleted",
+      monsterId: target ? target.id : null,
+      counterEffect
+    });
   }
 }
 
@@ -500,6 +545,20 @@ function hasEngaged(state) {
 // 「本物の TODO（TodoWrite/update_plan 由来）」が進行中か。ユーザー入力の合成クエスト(synthetic)は数えない。
 function hasRealTodoInProgress(state) {
   return state.quest.some((q) => q.status === "in_progress" && !q.synthetic);
+}
+
+function monsterCatalogForState(state, stage = currentAdventureStage(state)) {
+  const catalog = MONSTER_CATALOGS[stage] || MONSTER_CATALOGS.field;
+  if (stage !== "castle" || canSpawnFinalCastleBoss(state)) return catalog;
+  return catalog.filter((monster) => !monster.finalTodoOnly);
+}
+
+function canSpawnFinalCastleBoss(state) {
+  const quest = (state.quest || []).filter((q) => q && !q.synthetic);
+  if (quest.length < 4) return false;
+  const finalQuest = quest[quest.length - 1];
+  const firstUnfinished = quest.find((q) => q.status !== "completed");
+  return Boolean(firstUnfinished && firstUnfinished === finalQuest && finalQuest.stage === "castle");
 }
 
 // クエスト更新を許すのはオーナー(親)セッションだけか（要件6）。
