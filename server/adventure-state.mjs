@@ -11,8 +11,7 @@ const MONSTER_CATALOG = [
 ];
 
 const MAX_LOG = 80;
-const NORMAL_DAMAGE = 8; // PreToolUse 通常攻撃（演出用の HP 減少量）
-const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃（演出用の HP 減少量）
+const SKILL_DAMAGE = 18; // PostToolUse スキル攻撃（演出用の HP 減少量。攻撃は PostToolUse だけ）
 
 // ランダムエンカウント＆増援
 const ENCOUNTER_SPAWN_CHANCE = 0.2; // ツール使用(PreToolUse)毎にモンスターが出現する確率（TODO 有無に関わらず統一）
@@ -20,10 +19,24 @@ const WILD_HITS_TO_DEFEAT = 5; // TODO 不在で出たエンカウントは hero
 const BATTLE_SUMMON_CHANCE = 0.1; // 戦闘中、ツール使用(PreToolUse)毎に精霊が1体だけ増援する確率
 const MAX_ALLIES = 4; // 精霊の同時在席上限（表示枠・属性数＝4）
 
+// --- ペーシング（唯一の頭＝サーバーが時刻で律速する。多エージェントの洪水でも点滅させない）---
+// 時刻はサーバーが reduceHookEvent に注入する（event.at＝エージェント側の時計はペーシングに使わない。
+// 並行エージェントの時計はズレ・逆転しうるため）。event.at は表示/トレース専用。
+const SPAWN_COOLDOWN_MS = 4000; // 討伐後、次の出現までのクールダウン
+const MIN_SPAWN_INTERVAL_MS = 2000; // 連続出現の最小間隔
+const MIN_MONSTER_LIFETIME_MS = 4000; // 出現から最低この時間は討伐しない（即死防止）。フロント APPEAR_ATTACK_DELAY_MS(4s) 以上に保つ。
+
 // ゲーム確率の判定に使う乱数。テストから差し替え可能（id 生成の Math.random とは分離）。
 let chance = Math.random;
 export function __setChance(fn) {
   chance = typeof fn === "function" ? fn : Math.random;
+}
+
+// ペーシング用のサーバー時刻。reduceHookEvent に now を渡さなかった時の既定値を供給する seam。
+// テストはこれを単調増加クロックに差し替えて決定的にする（__setChance と同じ発想）。
+let nowFn = () => Date.now();
+export function __setNow(fn) {
+  nowFn = typeof fn === "function" ? fn : () => Date.now();
 }
 
 // プロバイダ別 TODO ツール（docs §6 / §7 で実機確認済み）。
@@ -39,9 +52,12 @@ export function createInitialState() {
     active: false,
     phase: "idle", // idle | field | battle | complete
     turn: 0,
+    hookSeq: 0, // 受信した Hook の通し番号（演出トレース用。state.json に永続化＝再起動でも連番継続）
     currentTrack: "field", // field | adventure | battle | dungeon-adventure | dungeon-battle | castle-adventure | castle-battle
     adventureStage: "field", // field | dungeon | castle
     monsters: [], // 出現中のエンカウント（同時に最大1体）
+    lastSpawnAt: 0, // 直近の出現時刻（サーバー now）。出現クールダウン/最小間隔の判定に使う
+    lastDefeatAt: 0, // 直近の討伐時刻（サーバー now）。出現クールダウンの判定に使う
     defeated: [],
     quest: [], // 最新 TodoWrite スナップショット（元の順序・status 付き）= クエスト一覧の表示用
     allies: [], // 在席中の精霊（攻撃時に増援 / SubagentStart でも参戦）
@@ -60,9 +76,8 @@ const ALLY_CATALOG = [
   { name: "Sylph", sprite: "ally-wind", element: "wind" },
   { name: "Aqua", sprite: "ally-water-facing-slit", element: "water" }
 ];
-const ALLY_DAMAGE = 6; // 精霊アシストの1撃（演出。討伐ヒット数には数えない）
 
-export function reduceHookEvent(previousState, hookEvent) {
+export function reduceHookEvent(previousState, hookEvent, now) {
   const state = cloneState(previousState);
   // 旧/部分的な state.json を読んでもクラッシュしないよう配列を正規化（無い場合のみ）。
   if (!Array.isArray(state.monsters)) state.monsters = [];
@@ -73,7 +88,20 @@ export function reduceHookEvent(previousState, hookEvent) {
   const event = normalizeHookEvent(hookEvent);
   const effects = [];
 
+  // ペーシングの基準時刻はサーバーが決める（呼び出し側＝handleHook が Date.now() を渡す。
+  // 渡されなければ seam の nowFn）。event.at（エージェントの時計）はここでは使わない。
+  const serverNow = Number.isFinite(now) ? now : nowFn();
+  event.now = serverNow;
+
+  // この Hook に通し番号を割り当てる（演出トレースの一次キー）。id は Hook CLI 由来 or 正規化生成。
+  state.hookSeq = (Number(state.hookSeq) || 0) + 1;
+  event.seq = state.hookSeq;
+
   state.lastEvent = event;
+
+  // 最低在席時間の遅延討伐スイープ：5撃や TODO 完了で討伐保留(pendingDefeat)になったモンスターは、
+  // 出現から MIN_MONSTER_LIFETIME_MS 経過後の「次の任意の Hook」で確定討伐する（即死を防ぎつつ取りこぼさない）。
+  sweepPendingDefeats(state, event, effects);
 
   switch (event.event) {
     case "SessionStart":
@@ -83,7 +111,7 @@ export function reduceHookEvent(previousState, hookEvent) {
       beginTurn(state, event, effects);
       break;
     case "PreToolUse":
-      normalAttack(state, event, effects);
+      onPreToolUse(state, event, effects);
       break;
     case "PermissionRequest":
       hold(state, event, effects);
@@ -129,7 +157,25 @@ export function reduceHookEvent(previousState, hookEvent) {
   state.adventureStage = currentAdventureStage(state);
   state.currentTrack = trackForState(state);
   state.log = state.log.slice(-MAX_LOG);
+  // 単一の出口で「この Hook が生んだ全 effect」へ由来 Hook を刻む。
+  // 個別の effects.push を取りこぼさないため、ここで一括して付ける（演出面すべてに由来を保証）。
+  stampOrigin(effects, event);
   return { state, effects, normalized: event };
+}
+
+// すべての effect に由来 Hook を付与する。フロントはこの origin を再生/取りこぼしのトレースに使う。
+function stampOrigin(effects, event) {
+  for (let index = 0; index < effects.length; index += 1) {
+    effects[index].origin = {
+      seq: event.seq, // Hook 通し番号（順序の正準キー）
+      hookId: event.id, // Hook 個体 ID（CLI 由来 or 正規化生成）
+      event: event.event, // PreToolUse / PostToolUse / Stop ...
+      provider: event.provider,
+      tool: event.toolName || null,
+      at: event.at,
+      action: index // 同一 Hook 内での effect 連番（seq#index で一意参照できる）
+    };
+  }
 }
 
 // --- クエスト（TODO 一覧。表示用＋紐づくエンカウントの討伐条件）---
@@ -164,6 +210,13 @@ function reconcileQuest(state, event, effects) {
 // 無ければ 5撃/ターン終了で討伐。
 function maybeSpawnEncounter(state, event, effects) {
   if (state.monsters.length > 0) return null; // 同時に2体出現はしない
+  // 出現ペーシング（唯一の頭が律速）：討伐クールダウン＋連続出現の最小間隔。
+  // lastDefeatAt/lastSpawnAt が 0（未討伐/未出現＝直近イベント無し）なら経過時間を Infinity 扱い＝許可。
+  // それ以外は差分で判定。負/NaN（時計逆転）なら !(x>=th) が true＝出現しない（安全側）。
+  const sinceDefeat = state.lastDefeatAt ? event.now - state.lastDefeatAt : Infinity;
+  const sinceSpawn = state.lastSpawnAt ? event.now - state.lastSpawnAt : Infinity;
+  if (!(sinceDefeat >= SPAWN_COOLDOWN_MS)) return null;
+  if (!(sinceSpawn >= MIN_SPAWN_INTERVAL_MS)) return null;
   if (chance() >= ENCOUNTER_SPAWN_CHANCE) return null;
   const linkedTodo = hasRealTodoInProgress(state); // 合成クエスト(ユーザー入力)は紐づけ対象にしない
   const template = MONSTER_CATALOG[Math.floor(chance() * MONSTER_CATALOG.length)];
@@ -180,25 +233,59 @@ function maybeSpawnEncounter(state, event, effects) {
     wild: true,
     hits: 0,
     linkedTodo,
-    appearedAt: event.at
+    pendingDefeat: false,
+    appearedAt: event.now // サーバー時刻（最低在席時間の判定に使う。表示は origin.at）
   };
   state.monsters.push(monster);
+  state.lastSpawnAt = event.now;
   state.spawned += 1;
   pushLog(state, "monster_appeared", monster.label, event);
   effects.push({ type: "monster_appeared", monster });
   return monster;
 }
 
-function finishMonster(state, monster, event, effects) {
+// 出現から MIN_MONSTER_LIFETIME_MS 経過後の「次の任意の Hook」で、保留中の討伐を確定する。
+// これで「5撃で即死／TODO完了で即死」でも最低在席時間は画面に残り、点滅しない（取りこぼしもしない）。
+function sweepPendingDefeats(state, event, effects) {
+  for (const monster of [...state.monsters]) {
+    if (!monster.pendingDefeat) continue;
+    const elapsed = event.now - (monster.appearedAt || 0);
+    // 寿命経過で確定。時計が逆転(elapsed<0：NTP step 等でサーバー now が巻き戻った)場合も、
+    // モンスターを取り残さないよう強制確定する（maybeSpawnEncounter と同じ「逆転は安全側」方針）。
+    if (elapsed >= MIN_MONSTER_LIFETIME_MS || elapsed < 0) {
+      finishMonster(state, monster, event, effects, true);
+    }
+  }
+}
+
+// force=false: 最低在席時間に満たない討伐は保留（monster.pendingDefeat=true）し、後続 Hook のスイープで確定する。
+// force=true（ターン終了 Stop 等）: 寿命を無視して即討伐する（戦闘を次ターンへ持ち越さない）。
+function finishMonster(state, monster, event, effects, force = false) {
+  if (!force && event.now - (monster.appearedAt || 0) < MIN_MONSTER_LIFETIME_MS) {
+    monster.pendingDefeat = true; // 在席が浅い＝今は倒さず保留（即死防止）
+    return false;
+  }
   removeMonster(state, monster);
-  state.defeated.push({ ...monster, hp: 0, dying: false, defeatedAt: event.at });
+  state.defeated.push({ ...monster, hp: 0, dying: false, defeatedAt: event.now }); // 表示用。時刻はサーバー now で統一
   state.defeatedCount += 1;
+  state.lastDefeatAt = event.now; // 出現クールダウンの基準（サーバー now）
   pushLog(state, "monster_defeated", monster.label, event);
   effects.push({ type: "monster_defeated", monsterId: monster.id, finisher: true });
 
   // モンスターを倒すたびに在席中の精霊は全員退場（戦闘終了で消滅）。
-  for (const ally of state.allies) effects.push({ type: "ally_return", allyId: ally.id });
+  // 撃破演出を見せ切ってから1体ずつ順番に帰すため、出現順（FIFO）で並べ、最後の1体に last を立てる
+  // （フロントは last の帰還が終わってから背景を切り替える）。属性/名前は帰還エフェクト・効果音の出し分け用。
+  state.allies.forEach((ally, index) => {
+    effects.push({
+      type: "ally_return",
+      allyId: ally.id,
+      element: ally.element,
+      name: ally.name,
+      last: index === state.allies.length - 1
+    });
+  });
   state.allies = [];
+  return true;
 }
 
 function removeMonster(state, monster) {
@@ -207,20 +294,21 @@ function removeMonster(state, monster) {
 
 // --- 攻撃 ---
 
-function normalAttack(state, event, effects) {
+// PreToolUse：出現判定（敵不在）／精霊召喚（戦闘中）／前進（敵不在で出現せず）。
+// 勇者の通常攻撃は廃止＝PreToolUse は攻撃しない。攻撃は PostToolUse のスキル攻撃だけ
+// （wild の討伐ヒットも PostToolUse スキル攻撃でのみ加算される）。
+function onPreToolUse(state, event, effects) {
   ensureActive(state, event, effects);
   state.steps += 1;
-  // 1つの Hook では1アクションだけ：出現 / 召喚 / 攻撃 / 前進 のいずれか1つ。
+  // 1つの Hook では1アクションだけ：出現 / 召喚 / 前進 のいずれか1つ（攻撃はしない）。
   if (!currentTarget(state)) {
-    // モンスター不在：出現判定。出たらそれが今回のアクション（攻撃はしない）、出なければ前進。
+    // モンスター不在：出現判定。出たらそれが今回のアクション、出なければ前進。
     if (maybeSpawnEncounter(state, event, effects)) return;
     step(state, event, effects);
     return;
   }
-  // モンスター在：精霊召喚（10%）か 通常攻撃 の片方だけ。召喚できたら今回は攻撃しない。
-  if (maybeSummonReinforcement(state, event, effects)) return;
-  const target = currentTarget(state);
-  damage(state, target, NORMAL_DAMAGE, "normal", "", event, effects);
+  // モンスター在：精霊召喚（10%）だけ。召喚しなくても勇者は攻撃しない（PreToolUse は攻撃を出さない）。
+  maybeSummonReinforcement(state, event, effects);
 }
 
 function skillAttack(state, event, effects) {
@@ -230,16 +318,10 @@ function skillAttack(state, event, effects) {
   const skill = skillName(event);
   if (target) {
     damage(state, target, SKILL_DAMAGE, "skill", skill, event, effects);
-    if (state.monsters.includes(target)) allyAssist(state, target, event, effects);
+    // 精霊の追撃はここでは出さない。Hook 依存にすると多エージェントで多重化するため、
+    // フロント側（overlay.js）が「勇者スキル攻撃の再生時」に在席精霊から順番に演出として生成する。
   } else {
     step(state, event, effects);
-  }
-}
-
-// 在席中の精霊が hero の攻撃に続けて現在の敵を追撃（演出。討伐ヒット数には数えない）。
-function allyAssist(state, target, event, effects) {
-  for (const ally of state.allies) {
-    damage(state, target, ALLY_DAMAGE, "ally", ally.name, event, effects, ally);
   }
 }
 
@@ -250,18 +332,17 @@ function maybeSummonReinforcement(state, event, effects) {
   return summonAlly(state, event, effects);
 }
 
-function damage(state, monster, amount, kind, skill, event, effects, ally = null) {
-  const allyId = ally ? ally.id : undefined;
-  const allyElement = ally ? ally.element : undefined;
+function damage(state, monster, amount, kind, skill, event, effects) {
   const applied = Math.max(0, Math.min(amount, monster.hp));
   monster.hp = Math.max(0, monster.hp - amount); // HP は演出用
-  effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied, allyId, allyElement });
+  effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied });
   pushLog(state, "attack", `${skill || kind} -${applied}`, event);
 
   // 討伐条件: linkedTodo なら攻撃では倒れない（TODO 完了かターン終了で討伐）。
-  // 紐づき無しなら hero の攻撃 WILD_HITS_TO_DEFEAT 回で討伐（精霊の追撃は数えない）。
-  if (!monster.linkedTodo) {
-    if (!ally) monster.hits = (monster.hits || 0) + 1;
+  // 紐づき無しなら hero の攻撃 WILD_HITS_TO_DEFEAT 回。ただし最低在席時間に満たなければ
+  // finishMonster が pendingDefeat に保留し、後続 Hook のスイープで確定する（即死防止）。
+  if (!monster.linkedTodo && !monster.pendingDefeat) {
+    monster.hits = (monster.hits || 0) + 1;
     if (monster.hits >= WILD_HITS_TO_DEFEAT) finishMonster(state, monster, event, effects);
   }
 }
@@ -283,6 +364,8 @@ function townReset(state, event, effects) {
   state.monsters = [];
   state.allies = [];
   state.adventureStage = "field";
+  state.lastSpawnAt = 0; // 新セッションは出現ペーシングもリセット
+  state.lastDefeatAt = 0;
   pushLog(state, "session_start", "拠点に到着", event);
   effects.push({ type: "session_start", track: "field" });
 }
@@ -290,6 +373,9 @@ function townReset(state, event, effects) {
 function beginTurn(state, event, effects) {
   state.active = true;
   state.turn += 1;
+  // 新ターンは出現クールダウンを引きずらない（前ターンの討伐で最初のエンカウントを律速しない）。
+  state.lastSpawnAt = 0;
+  state.lastDefeatAt = 0;
   // TODO がまだ無い間は、ユーザー入力を1つのクエストとして表示する（synthetic）。
   // TodoWrite/update_plan が来たら reconcileQuest が本物の TODO で置き換える。
   // synthetic は表示専用で、エンカウントの linkedTodo（討伐条件）には数えない。
@@ -307,21 +393,16 @@ function ensureActive(state, event, effects) {
 }
 
 function finishTurn(state, event, effects) {
-  // ターン終了は最終クリーンアップ。TODO の status 整理漏れがあっても戦闘を持ち越さない。
+  // ターン終了は最終クリーンアップ。force=true で全モンスターを強制討伐（最低在席時間も無視）し、
+  // 戦闘を次ターンへ持ち越さない。force 討伐は必ず removeMonster するので残存は起こらない
+  // （＝旧 remaining>0/turn_blocked 分岐は到達不能なので撤去）。
   for (const monster of [...state.monsters]) {
-    finishMonster(state, monster, event, effects);
+    finishMonster(state, monster, event, effects, true);
   }
-  const remaining = state.monsters.length;
-  if (remaining === 0) {
-    state.active = false;
-    state.phase = "complete";
-    pushLog(state, "turn_completed", `Turn ${state.turn} completed`, event);
-    effects.push({ type: "turn_completed", track: "field" });
-  } else {
-    state.phase = hasEngaged(state) ? "battle" : "field";
-    pushLog(state, "turn_blocked", `${remaining} monsters remain`, event);
-    effects.push({ type: "turn_blocked", remaining });
-  }
+  state.active = false;
+  state.phase = "complete";
+  pushLog(state, "turn_completed", `Turn ${state.turn} completed`, event);
+  effects.push({ type: "turn_completed", track: "field" });
 }
 
 function hold(state, event, effects) {
@@ -344,7 +425,7 @@ function summonAlly(state, event, effects) {
     name: template.name,
     sprite: template.sprite,
     element: template.element,
-    appearedAt: event.at
+    appearedAt: event.now // 表示用。時刻はサーバー now で統一（event.at＝エージェント時計は使わない）
   };
   state.allies.push(ally);
   pushLog(state, "ally_summon", ally.name, event);
@@ -359,7 +440,7 @@ function returnAlly(state, event, effects) {
     return;
   }
   pushLog(state, "ally_return", ally.name, event);
-  effects.push({ type: "ally_return", allyId: ally.id });
+  effects.push({ type: "ally_return", allyId: ally.id, element: ally.element, name: ally.name });
 }
 
 function ambient(state, event, effects, type) {
@@ -545,6 +626,7 @@ function extractExitCode(raw) {
 function pushLog(state, type, message, event) {
   state.log.push({
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    seq: event.seq, // 由来 Hook の通し番号（effects.origin.seq と突き合わせ可能）
     at: event.at,
     type,
     message: trimLine(String(message || ""), 96),

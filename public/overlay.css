@@ -969,12 +969,14 @@ body[data-phase="battle"] .hero {
 /* クエスト（ミッション）トラッカー: TodoWrite スナップショットを MMO 風のパネルで表示。
    探検（フェーズラベル）の下、ステージ左上に固定。 */
 .roster {
-  /* ヘッダーより上＝画面最上部に来られるよう .overlay 直下に配置（.stage の外） */
+  /* クエスト窓は最下層に近い：背景画像(#sceneBg)/暗幕(.shade)のすぐ前、かつ .stage(z-index:2)が
+     内包するモンスター・勇者・精霊・パーティクル(#fxCanvas)・各種エフェクトより必ず後ろに置く。
+     ＝クエスト欄の後ろにあるのは背景だけ。z-index:1 で stage 群(z>=2)の背面に回す。 */
   position: absolute;
   top: 6px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 9;
+  z-index: 1;
   width: min(40%, 340px);
   max-height: calc(100% - 24px);
   padding: 9px 13px 11px;
@@ -1518,6 +1520,30 @@ body[data-phase="battle"] .ally span {
 
 .ally[data-action="stagger"] {
   animation: allyStagger 0.38s ease-out, allyFloat 1.6s ease-in-out 0.38s infinite;
+}
+
+/* 撃破後の帰還：光を放ちながら上へ縮んで消える（allyFloat は止める＝forwards で終端を保持） */
+.ally[data-action="return"] {
+  animation: allyReturn 0.52s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes allyReturn {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    filter: drop-shadow(0 6px 4px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 8px rgba(127, 224, 255, 0.55));
+  }
+  35% {
+    transform: translateY(-7px) scale(1.08);
+    opacity: 1;
+    filter: drop-shadow(0 0 18px rgba(255, 255, 255, 0.95));
+  }
+  100% {
+    transform: translateY(-36px) scale(0.36);
+    opacity: 0;
+    filter: drop-shadow(0 0 24px rgba(255, 255, 255, 0));
+  }
 }
 
 @keyframes allyFloat {

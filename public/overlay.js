@@ -184,9 +184,9 @@ let particles = [];
 let shakeTimer = null;
 let monsterActionTimer = null;
 let lastRenderedMonster = null;
-let worldVisualsHeld = false;
-let pendingWorldState = null;
-let pendingWorldTimer = null;
+let worldVisualsHeld = false; // 撃破演出中だけ true：精霊カードの即時消去を保留する（ally_return が1体ずつ帰す）
+let currentHook = null; // いま処理中の state 更新の由来 Hook（origin 形）。world 効果の帰属に使う。
+let latestAllies = []; // 最新の在席精霊（state.allies）。精霊追撃をフロント生成する時の名簿スナップショット。
 let audio = {
   enabled: false,
   ctx: null,
@@ -203,14 +203,64 @@ let audio = {
 
 new EventSource("/events").addEventListener("state", (message) => {
   const payload = JSON.parse(message.data);
-  const effectList = payload.effects || [];
-  if (effectList.some((effect) => effect.type === "monster_defeated")) {
-    holdWorldVisuals(payload.state);
-  }
+  const effectList = (payload.effects || []).slice();
+  currentHook = hookOrigin(payload.event); // この更新を起こした Hook（初期スナップショット/reset は null）
+  const hasDefeat = effectList.some((effect) => effect.type === "monster_defeated");
+  // 撃破バッチは精霊カードの即時消去を保留（ally_return が1体ずつ帰す。末尾の world 効果で最終同期）。
+  if (hasDefeat) worldVisualsHeld = true;
+  // あらゆる画面変化を「一本のキュー」に集約する：背景/BGM/phase/シーンの遷移も world 効果として
+  // effectList の末尾へ積む。撃破バッチなら finisher→撃破→精霊帰還→world(背景切替) の順に直列化され、
+  // 「精霊が全員帰ってから背景が変わる」が自然に保証される（旧 holdWorldVisuals のタイマー hack を廃止）。
+  const worldEffect = diffWorldEffect(payload.state, hasDefeat);
+  if (worldEffect) effectList.push(worldEffect);
   prepareMonsterEffects(effectList);
   render(payload.state);
   effects(effectList);
 });
+
+// --- 内部トレース（演出の再生/取りこぼし/世界遷移を由来 Hook 付きで記録）---
+// overlay（デスクトップ窓の本体 UI）が「実際に何を再生し、何を捨て、いつ待たせたか」を
+// サーバの /trace へ送り、.rpgdev/playback.ndjson に残す。reducer の emit ログ
+// (.rpgdev/events.ndjson) と origin.seq で突き合わせれば、二連続/欠落の原因を解析できる。
+let traceN = 0;
+function trace(record) {
+  const line = { view: "overlay", n: (traceN += 1), t: Date.now(), ...record };
+  try {
+    fetch("/trace", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(line),
+      keepalive: true
+    }).catch((error) => console.error("[rpgdev] trace POST failed", error));
+  } catch (error) {
+    // トレースは診断専用。失敗してもゲーム進行は止めないが、黙って握りつぶさず必ず記録に残す。
+    console.error("[rpgdev] trace failed", error);
+  }
+}
+
+// 正規化 Hook（payload.event）を effect.origin と同形の由来情報へ変換する。
+function hookOrigin(hookEvent) {
+  if (!hookEvent || typeof hookEvent !== "object") return null;
+  return {
+    seq: hookEvent.seq,
+    hookId: hookEvent.id,
+    event: hookEvent.event,
+    provider: hookEvent.provider,
+    tool: hookEvent.toolName || null,
+    at: hookEvent.at
+  };
+}
+
+// 攻撃 effect の簡易ラベル（トレースの可読性用）。
+function effectTag(effect) {
+  if (!effect) return null;
+  if (effect.type === "attack") {
+    if (effect.kind === "ally") return `attack:ally:${effect.allyElement || "spirit"}`;
+    if (effect.kind === "skill") return `attack:skill:${effect.skill || "?"}`;
+    return "attack:normal";
+  }
+  return effect.type;
+}
 
 audioButton.addEventListener("click", async () => {
   if (audio.enabled) {
@@ -238,17 +288,15 @@ resetButton?.addEventListener("click", async () => {
 requestAnimationFrame(draw);
 
 function render(state) {
-  if (worldVisualsHeld) {
-    pendingWorldState = state;
-  } else {
-    applyWorldVisuals(state);
-  }
+  latestAllies = state.allies || []; // 精霊追撃のフロント生成に使う最新名簿
+  // 背景/BGM/phase/シーンは render では適用しない＝キューの world 効果が順番に適用する（単一キューへ集約）。
+  renderRoster(state.quest || [], state.phase);
+  // 撃破演出中(worldVisualsHeld)は精霊カードを即時に消さず保留する。
+  // 帰還は ally_return が1体ずつアニメ付きで行い、末尾の world 効果で最終状態（＝空）を反映する。
+  if (!worldVisualsHeld) renderAllies(state.allies || []);
 
   const monsters = state.monsters || [];
   const target = monsters.find((m) => m.status === "in_progress") || null;
-  renderRoster(state.quest || [], state.phase);
-  renderAllies(state.allies || []);
-
   if (!target) {
     // 探検中（in_progress なし）または待機: 戦闘相手を出さない
     if (monsterStage.dataset.action === "defeat" || monsterStage.dataset.action === "defeat-pending") return;
@@ -266,47 +314,55 @@ function render(state) {
   lastRenderedMonster = { ...target, sprite };
 }
 
-function applyWorldVisuals(state) {
-  document.body.dataset.phase = state.phase;
-  const stageName = adventureStage(state);
+const worldPrev = { phase: null, stage: null, track: null }; // 直前に「キューへ積んだ」世界状態（差分検出用）
+
+// 背景/BGM/phase/シーンの遷移をキュー項目（world 効果）に変換する。
+// 変化が無く撃破解除も不要なら null。撃破バッチ(releaseDefeat)では、保留した精霊カードの最終同期のため
+// 変化が無くても world 効果を出す。worldPrev は「積んだ時点」で更新し、実際の適用は再生時(applyWorld)に行う。
+function diffWorldEffect(state, releaseDefeat) {
+  const phase = state.phase;
+  const stage = adventureStage(state);
+  const track = state.currentTrack || "field";
+  const changed = phase !== worldPrev.phase || stage !== worldPrev.stage || track !== worldPrev.track;
+  if (!changed && !releaseDefeat) return null;
+  const from = { ...worldPrev };
+  worldPrev.phase = phase;
+  worldPrev.stage = stage;
+  worldPrev.track = track;
+  return { type: "world", phase, stage, track, from, releaseDefeat: Boolean(releaseDefeat), origin: currentHook };
+}
+
+// world 効果の再生＝背景/BGM/勇者スプライト/phase を実際に切り替える（単一キューの中で順番に適用）。
+function applyWorld(effect) {
+  const phase = effect.phase;
+  const stageName = stageBackgrounds[effect.stage] ? effect.stage : "field";
+  document.body.dataset.phase = phase;
   document.body.dataset.adventureStage = stageName;
-  phaseLabel.textContent = phaseText[state.phase] || state.phase;
-  const isResting = state.phase === "idle" || state.phase === "complete";
+  phaseLabel.textContent = phaseText[phase] || phase;
+  const isResting = phase === "idle" || phase === "complete";
   sceneBg.src = isResting ? "/assets/town.png" : stageBackgrounds[stageName];
-  heroImage.src = state.phase === "battle"
+  heroImage.src = phase === "battle"
     ? "/assets/sprites/hero-battle.png"
     : isResting
       ? "/assets/sprites/hero-relax.png"
       : "/assets/sprites/hero.png";
-  currentTrack = state.currentTrack || "field";
+  currentTrack = effect.track || "field";
   if (!audio.enabled && !audio.userMuted) {
     audio.enabled = true;
     audioButton.classList.add("is-on");
   }
   setTrack(currentTrack);
+  // どの Hook でフェーズ／ステージ（フィールド前進・街帰還）／BGM が変わったかを記録する。
+  traceWorldTransition("phase", effect.from.phase, phase, effect.origin);
+  traceWorldTransition("stage", effect.from.stage, stageName, effect.origin);
+  traceWorldTransition("track", effect.from.track, currentTrack, effect.origin);
 }
 
-function holdWorldVisuals(state) {
-  worldVisualsHeld = true;
-  pendingWorldState = state;
-  if (pendingWorldTimer) {
-    window.clearTimeout(pendingWorldTimer);
-    pendingWorldTimer = null;
-  }
-}
-
-function scheduleWorldVisualRelease(delayMs = 920) {
-  // 受信時ではなく、実際に撃破アニメを再生した時点から解除する。
-  // キュー待ち中に背景/BGMだけ先行して field/town へ変わるのを防ぐ。
-  if (pendingWorldTimer) return;
-  pendingWorldTimer = window.setTimeout(() => {
-    pendingWorldTimer = null;
-    worldVisualsHeld = false;
-    if (!pendingWorldState) return;
-    const state = pendingWorldState;
-    pendingWorldState = null;
-    applyWorldVisuals(state);
-  }, delayMs);
+// 世界状態（phase/stage/track）が変化したら、その由来 Hook と共にトレースする。
+// Hook 不在（初期スナップショット/reset）の変化は記録を出さない。
+function traceWorldTransition(field, from, to, hook) {
+  if (from === to || !hook) return;
+  trace({ kind: "world", field, from, to, origin: hook });
 }
 
 function adventureStage(state) {
@@ -322,9 +378,11 @@ const QUEST_MAX_ROWS = 9;
 function renderRoster(quest, phase) {
   if (!roster) return;
   const items = Array.isArray(quest) ? quest.filter((it) => it && it.label) : [];
-  // 全項目が完了していたらクエストウィンドウは消す（残さない）。街(idle)でも出さない。
+  // 全項目が完了していたらクエストウィンドウは消す（残さない）。街(idle/complete=待機)でも出さない。
+  // ターン終了(complete)で街に戻ったら、未討伐の TODO が残っていてもクエスト窓は畳む
+  // （AI が TODO に止めを刺さず complete になることがあり、街で TODO が残ると違和感が出るため）。
   const allDone = items.length > 0 && items.every((it) => it.status === "completed");
-  if (!items.length || phase === "idle" || allDone) {
+  if (!items.length || phase === "idle" || phase === "complete" || allDone) {
     roster.dataset.active = "false";
     roster.replaceChildren();
     return;
@@ -425,8 +483,11 @@ let fxBusy = false;
 let monsterDefeatInProgress = false;
 let appearAttackHoldUntil = 0; // この時刻(ms)まで attack の再生を保留（出現演出と被らせない）
 const ANIM_GAP = 100; // アニメ間の空き（0.1 秒）
-const ATTACK_QUEUE_INTERVAL_MS = 1000;
-const APPEAR_ATTACK_DELAY_MS = 4000; // 出現演出の再生開始から、攻撃キュー再生を待たせる時間（4 秒）
+const ATTACK_QUEUE_INTERVAL_MS = 1000; // 勇者攻撃の間隔
+const ALLY_FOLLOWUP_INTERVAL_MS = 360; // 精霊追撃の間隔（勇者スキルに続けて素早く連続させる）
+// 出現演出の開始から攻撃キュー再生を待たせる時間。サーバーの最低在席時間(MIN_MONSTER_LIFETIME_MS=4s)より
+// 十分短くし、出現後すぐ討伐されても攻撃が画面に出るようにする（出現アニメ自体は ~0.7s）。
+const APPEAR_ATTACK_DELAY_MS = 1500;
 const MAX_QUEUED_ATTACKS = 10; // 詰まりすぎ防止（超過した攻撃アニメは間引く）
 
 // そのエフェクトのアニメが終わるまでの目安(ms)。0 は即時（アニメ枠を占有せず次へ）。
@@ -443,8 +504,10 @@ function fxAnimMs(effect) {
       return 520;
     case "finisher":
       return 640; // 会心の一撃（斬撃）を見せ切ってから撃破へ進む
+    case "ally_return":
+      return 560; // 撃破後、精霊を1体ずつ順番に帰す（キューを占有して整列退場させる）
     default:
-      return 0; // 出現・召喚・離脱・CLEAR 等はアニメを占有しない（即時）
+      return 0; // 出現・召喚・CLEAR 等はアニメを占有しない（即時）
   }
 }
 
@@ -456,22 +519,32 @@ function effects(list) {
 
   const hasDefeat = list.some((effect) => effect.type === "monster_defeated");
   if (hasDefeat) {
-    clearStaleCombatQueueForDefeat();
+    clearStaleCombatQueueForDefeat("defeat-received");
   }
 
   let defeatQueued = monsterDefeatInProgress || fxQueue.some((effect) => effect.type === "monster_defeated");
   for (const effect of list) {
-    if (defeatQueued && effect.type === "attack") continue;
+    if (defeatQueued && effect.type === "attack") {
+      // 撃破が確定したバッチ以降の攻撃は再生しない＝由来 Hook 付きで「取りこぼし」を記録。
+      trace({ kind: "drop", tag: effectTag(effect), reason: "defeat-queued", origin: effect.origin });
+      continue;
+    }
     if (effect.type === "attack") {
       const queued = fxQueue.reduce((n, e) => (e.type === "attack" ? n + 1 : n), 0);
-      if (queued >= MAX_QUEUED_ATTACKS) continue; // 間引き
+      if (queued >= MAX_QUEUED_ATTACKS) {
+        trace({ kind: "drop", tag: effectTag(effect), reason: "max-queued", origin: effect.origin });
+        continue; // 間引き
+      }
     }
     if (effect.type === "monster_defeated") {
       // 撃破の前に、まだ再生していない攻撃（トドメに至った一連の攻撃）はそのまま流し、
       // その後に会心の一撃（finisher）→撃破とする。攻撃アニメは捨てない＝欠落させない。
       // ただし撃破がキューに入った後の別バッチ攻撃は、モンスター消滅後に漏れて見えるため受け付けない。
-      fxQueue.push({ type: "finisher" });
+      // finisher はフロント合成（synthetic）。由来は撃破を起こした Hook を引き継ぐ。
+      fxQueue.push({ type: "finisher", synthetic: true, origin: effect.origin });
       defeatQueued = true;
+      fxQueue.push(effect); // 撃破。背景切替はバッチ末尾の world 効果が担う（精霊帰還の後）。
+      continue;
     }
     fxQueue.push(effect);
   }
@@ -484,12 +557,14 @@ function pumpFx() {
     const effect = fxQueue[0]; // まだ消費しない（保留判定のため覗くだけ）
     if (monsterDefeatInProgress && effect.type === "attack") {
       fxQueue.shift();
+      trace({ kind: "drop", tag: effectTag(effect), reason: "defeat-in-progress", origin: effect.origin });
       continue;
     }
     // 出現演出と被らせない：出現開始から APPEAR_ATTACK_DELAY_MS の間は攻撃キューを再生しない。
     if (effect.type === "attack") {
       const wait = appearAttackHoldUntil - Date.now();
       if (wait > 0) {
+        trace({ kind: "hold", tag: effectTag(effect), reason: "appear-hold", wait, origin: effect.origin });
         fxBusy = true;
         window.setTimeout(() => {
           fxBusy = false;
@@ -499,7 +574,21 @@ function pumpFx() {
       }
     }
     fxQueue.shift();
+    trace({
+      kind: "play",
+      tag: effectTag(effect),
+      attackKind: effect.kind,
+      skill: effect.skill,
+      allyElement: effect.allyElement,
+      synthetic: effect.synthetic,
+      origin: effect.origin
+    });
     playEffect(effect);
+    // 勇者スキル攻撃を再生したら、在席精霊の追撃をフロント生成で直後に割り込ませる（Hook非依存）。
+    // これで Hook の数で精霊攻撃が多重化せず、画面側で「スキル→精霊が順番に追撃」になる。
+    if (effect.type === "attack" && effect.kind === "skill" && !effect.synthetic) {
+      enqueueSpiritFollowup(effect);
+    }
     const anim = fxAnimMs(effect);
     if (anim > 0) {
       // 攻撃キューは固定 1 秒、その他はアニメ目安 + 0.1 秒待って次へ。
@@ -515,10 +604,40 @@ function pumpFx() {
 }
 
 function fxQueueDelayMs(effect, anim) {
-  return effect.type === "attack" ? ATTACK_QUEUE_INTERVAL_MS : anim + ANIM_GAP;
+  if (effect.type === "attack") {
+    // 精霊の追撃は短間隔で連続させる（勇者スキルに続く一連の追撃として畳み込み、詰まりを防ぐ）。
+    return effect.kind === "ally" ? ALLY_FOLLOWUP_INTERVAL_MS : ATTACK_QUEUE_INTERVAL_MS;
+  }
+  return anim + ANIM_GAP;
 }
 
-function clearStaleCombatQueueForDefeat() {
+// 勇者スキル攻撃の再生に続けて、在席精霊（latestAllies）の追撃をキュー先頭へ割り込ませる。
+// Hook 依存ではなく画面側の演出なので、Hook が何回来ても「スキル1回につき精霊が1巡」だけ。
+// 撃破中は追撃しない（撃破演出を優先）。撃破時の defeat-clear で未再生の追撃は破棄される。
+function enqueueSpiritFollowup(skillEffect) {
+  if (monsterDefeatInProgress) return;
+  if (!Array.isArray(latestAllies) || !latestAllies.length) return;
+  // キュー上限(MAX_QUEUED_ATTACKS)を超えないぶんだけ積む（スキル連打でも攻撃キューを詰まらせない）。
+  const queuedAttacks = fxQueue.reduce((n, e) => (e.type === "attack" ? n + 1 : n), 0);
+  const budget = MAX_QUEUED_ATTACKS - queuedAttacks;
+  if (budget <= 0) return;
+  const followups = latestAllies.slice(0, budget).map((ally) => ({
+    type: "attack",
+    kind: "ally",
+    synthetic: true,
+    allyId: ally.id,
+    allyElement: ally.element,
+    origin: skillEffect.origin // 由来は親スキルの Hook を引き継ぐ
+  }));
+  fxQueue.unshift(...followups); // 親スキルの直後（他の後続より前）に割り込ませる
+}
+
+function clearStaleCombatQueueForDefeat(reason = "defeat-clear") {
+  for (const effect of fxQueue) {
+    if (effect.type === "attack" || effect.type === "finisher") {
+      trace({ kind: "drop", tag: effectTag(effect), reason, origin: effect.origin });
+    }
+  }
   fxQueue = fxQueue.filter((effect) => effect.type !== "attack" && effect.type !== "finisher");
   appearAttackHoldUntil = 0;
 }
@@ -546,6 +665,8 @@ function playEffect(effect) {
       break;
     case "attack":
       if (effect.kind === "ally") {
+        // 再生時点で精霊が既に居なければ（帰還等で消えた）追撃を出さない＝ゴースト攻撃防止。
+        if (effect.allyId && allies && !allies.querySelector(`[data-ally-id="${effect.allyId}"]`)) break;
         pulseAlly(effect.allyId, effect.stagger ? "stagger" : "assist");
         const element = allyElement(effect);
         spawnMonsterImpact(element);
@@ -589,11 +710,11 @@ function playEffect(effect) {
       break;
     case "monster_defeated":
       monsterDefeatInProgress = true; // 以後（次の出現まで）に届く攻撃アニメは破棄する
-      clearStaleCombatQueueForDefeat();
+      clearStaleCombatQueueForDefeat("defeat-play"); // 攻撃/finisher は掃除、ally_return は残す
       holdDefeatedMonster();
       monsterDefeatImpact();
       monsterDefeatSound();
-      scheduleWorldVisualRelease();
+      // 背景/BGM 切替は、このバッチ末尾に積まれた world 効果が（撃破→精霊帰還の後に）担う。
       break;
     case "monster_fled":
       burst(0.5, 0.46, "#9aa6b2", 16);
@@ -616,7 +737,18 @@ function playEffect(effect) {
       sting([64, 67, 71, 76]);
       break;
     case "ally_return":
-      showToast("仲間帰還", "info");
+      // 撃破演出のあと、精霊を1体ずつ順番に帰す（属性色のエフェクト＋効果音つき）。
+      // 背景切替は末尾の world 効果が担うので、ここでは帰還演出だけ。
+      returnSpiritCard(effect.allyId, effect.element);
+      allyReturnSound(effect.element);
+      break;
+    case "world":
+      // 背景/BGM/勇者スプライト/phase をこのタイミングで切り替える（単一キューの順番どおり）。
+      applyWorld(effect);
+      if (effect.releaseDefeat) {
+        worldVisualsHeld = false; // 精霊が全員帰った＝撃破時の保留を解除
+        renderAllies(latestAllies); // 保留していた精霊カードを最終同期（撃破後＝空）
+      }
       break;
     case "compact_pre":
       showToast("記憶が霞む…", "info");
@@ -681,6 +813,48 @@ function pulseAlly(allyId, kind) {
   window.setTimeout(() => {
     if (card.dataset.action === kind) delete card.dataset.action;
   }, 520);
+}
+
+const ELEMENT_COLORS = { fire: "#ff7a35", earth: "#d6b16a", wind: "#caff8a", water: "#72e8ff" };
+
+// 撃破後の精霊帰還：該当カードを帰還アニメ（data-action="return"）＋属性色の上昇エフェクトで消す。
+function returnSpiritCard(allyId, element) {
+  const card = allyId && allies ? allies.querySelector(`[data-ally-id="${allyId}"]`) : null;
+  allyReturnImpact(element, card);
+  if (!card) return;
+  card.dataset.action = "return";
+  window.setTimeout(() => card.remove(), 520); // 帰還アニメが終わってからカードを消す
+}
+
+function allyReturnImpact(element, card) {
+  const center = cardCanvasCenter(card);
+  const color = ELEMENT_COLORS[element] || "#cfeaff";
+  for (let index = 0; index < 20; index += 1) {
+    particles.push({
+      x: center.x + randomRange(-13, 13),
+      y: center.y + randomRange(-8, 10),
+      vx: randomRange(-0.7, 0.7),
+      vy: randomRange(-3.4, -1.3), // 光が上へ還る
+      life: randomRange(22, 40),
+      color: index % 3 === 0 ? "#ffffff" : color,
+      size: randomRange(2, 4)
+    });
+  }
+  particles.push({ kind: "ring", x: center.x, y: center.y + 6, vx: 0, vy: 0, life: 16, maxLife: 16, color, size: 30 });
+}
+
+function cardCanvasCenter(card) {
+  const rect = canvas.getBoundingClientRect();
+  if (!card) return { x: rect.width * 0.5, y: rect.height * 0.72 };
+  const box = card.getBoundingClientRect();
+  return { x: box.left - rect.left + box.width * 0.5, y: box.top - rect.top + box.height * 0.5 };
+}
+
+function allyReturnSound(element) {
+  if (postNativeAudio({ sfx: "ally-return" })) return;
+  // ネイティブブリッジが無い時の合成音：光に還る上昇音。
+  const base = allyElementNotes(element, false);
+  sting([...base, base[base.length - 1] + 12]);
 }
 
 function prepareMonsterEffects(list) {

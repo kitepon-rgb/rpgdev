@@ -12,7 +12,8 @@ const PROJECT_DIR = resolve(process.env.RPGDEV_PROJECT_DIR || process.cwd());
 const PUBLIC_DIR = join(PACKAGE_ROOT, "public");
 const DATA_DIR = join(PROJECT_DIR, ".rpgdev");
 const STATE_PATH = join(DATA_DIR, "state.json");
-const EVENTS_PATH = join(DATA_DIR, "events.ndjson");
+const EVENTS_PATH = join(DATA_DIR, "events.ndjson"); // reducer の emit ログ（{normalized, effects}）
+const PLAYBACK_PATH = join(DATA_DIR, "playback.ndjson"); // フロントの再生/取りこぼしログ（由来 Hook 付き）
 const DEFAULT_PORT = Number(process.env.RPGDEV_PORT || 37373);
 const HOST = process.env.RPGDEV_HOST || "127.0.0.1";
 const MIME = new Map([
@@ -56,6 +57,12 @@ const server = createServer(async (request, response) => {
       return json(response, result);
     }
 
+    if (request.method === "POST" && url.pathname === "/trace") {
+      const body = await readJsonBody(request);
+      await appendPlayback(body);
+      return json(response, { ok: true });
+    }
+
     if (request.method === "POST" && url.pathname === "/control/reset") {
       state = createInitialState();
       await saveState();
@@ -82,19 +89,58 @@ const server = createServer(async (request, response) => {
   }
 });
 
+// 二重起動防止：同ポートで既にサーバが居れば、後発インスタンスは綺麗に退場する。
+// （複数フックの ensureServer が競合して二重 spawn しても、ポートを握れた1つだけが生き残る。
+//  握れなかった側は EADDRINUSE をクラッシュさせず、既存ありと明示して exit 0 する＝成功偽装はしない。）
+server.on("error", async (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`RPG Dev server: ${HOST}:${DEFAULT_PORT} is already serving; this duplicate instance exits.`);
+    process.exit(0);
+  }
+  try {
+    await appendFile(join(DATA_DIR, "server-errors.log"), `${new Date().toISOString()} listen ${error.stack || error}\n`);
+  } catch {}
+  process.exit(1);
+});
+
 server.listen(DEFAULT_PORT, HOST, () => {
   const url = `http://${HOST}:${DEFAULT_PORT}/`;
   console.log(`RPG Dev Adventure listening on ${url}`);
   if (process.argv.includes("--open")) openWindow(url);
 });
 
+const recentHookIds = []; // 冪等化用：直近に処理した Hook id（再送/二重配達で二重処理しない）
+const RECENT_HOOK_IDS_MAX = 256;
+
 async function handleHook(body) {
-  const { state: nextState, effects, normalized } = reduceHookEvent(state, body);
+  // 冪等化：同じ id の Hook が二重配達されたら無視する（多エージェント/再送で二重出現させない）。
+  const id = body && body.id;
+  if (id && recentHookIds.includes(id)) {
+    return { ok: true, duplicate: true, effects: [], state };
+  }
+  if (id) {
+    recentHookIds.push(id);
+    if (recentHookIds.length > RECENT_HOOK_IDS_MAX) recentHookIds.shift();
+  }
+  // ペーシングの基準時刻はサーバー（唯一の頭）が決める。Date.now() を注入し、event.at は使わない。
+  const { state: nextState, effects, normalized } = reduceHookEvent(state, body, Date.now());
   state = nextState;
   await saveState();
   await appendFile(EVENTS_PATH, `${JSON.stringify({ normalized, effects })}\n`);
   broadcast("state", { state, effects, event: normalized });
   return { ok: true, effects, state };
+}
+
+// フロント（overlay.js）が実際に再生/取りこぼした演出を内部ログへ追記する。
+// 1 レコード（オブジェクト）または配列を受け付ける。各行に受信時刻を添える。
+async function appendPlayback(body) {
+  const records = Array.isArray(body) ? body : Array.isArray(body?.records) ? body.records : [body];
+  const receivedAt = new Date().toISOString();
+  const lines = records
+    .filter((record) => record && typeof record === "object")
+    .map((record) => JSON.stringify({ ...record, receivedAt }))
+    .join("\n");
+  if (lines) await appendFile(PLAYBACK_PATH, `${lines}\n`);
 }
 
 function attachSse(request, response) {

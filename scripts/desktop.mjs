@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, mkdir, stat, appendFile, writeFile } from "node:fs/promises";
+import { access, mkdir, rmdir, stat, appendFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
@@ -15,6 +15,7 @@ const APP_MACOS = join(APP_CONTENTS, "MacOS");
 const WINDOW_BINARY = join(APP_MACOS, "RPGDev");
 const INFO_PLIST = join(APP_CONTENTS, "Info.plist");
 const LOG_PATH = join(DATA_DIR, "desktop-errors.log");
+const LOCK_DIR = join(DATA_DIR, "desktop.lock"); // 窓 open の直列化ロック（二重窓防止）
 const PORT = Number(process.env.RPGDEV_PORT || 37373);
 const HOST = process.env.RPGDEV_HOST || "127.0.0.1";
 const BASE_URL = `http://${HOST}:${PORT}`;
@@ -31,14 +32,26 @@ try {
   if (args.has("--build-only")) process.exit(0);
 
   await ensureServer();
+  // 既存窓があれば open せずフォーカスして終了（多重窓防止の最速経路）。
   if (await focusExistingWindow()) process.exit(0);
 
-  const child = spawn("open", ["-n", APP_BUNDLE, "--args", `${BASE_URL}/overlay.html`], {
-    cwd: PACKAGE_ROOT,
-    detached: true,
-    stdio: args.has("--from-hook") ? "ignore" : "inherit"
-  });
-  child.unref();
+  // 窓 open を直列化：ビルド/起動が競合しても窓は1つだけにする。
+  const locked = await acquireWindowLock();
+  try {
+    // ロック取得の前後で、他インスタンスが先に窓を立てていないか最終確認。
+    if (await focusExistingWindow()) process.exit(0);
+    if (!locked && (await waitForWindow(5000))) process.exit(0);
+
+    const child = spawn("open", ["-n", APP_BUNDLE, "--args", `${BASE_URL}/overlay.html`], {
+      cwd: PACKAGE_ROOT,
+      detached: true,
+      stdio: args.has("--from-hook") ? "ignore" : "inherit"
+    });
+    child.unref();
+    await waitForWindow(6000); // 自分の窓が立つまで待ってからロック解放（後続インスタンスの取りこぼし防止）
+  } finally {
+    if (locked) await releaseWindowLock();
+  }
 } catch (error) {
   await appendFile(LOG_PATH, `${new Date().toISOString()} ${error.stack || error}\n`);
   if (!args.has("--from-hook")) {
@@ -100,6 +113,40 @@ async function pgrepWindow() {
   });
   const pid = result.trim().split(/\s+/).find(Boolean);
   return pid || "";
+}
+
+// 窓 open を直列化するロック。mkdir はアトミックなので排他に使える。
+// 取得できれば true（自分が open 担当）。既存窓がある等で取れなければ false（呼び出し側は待機/フォーカス）。
+async function acquireWindowLock() {
+  for (let attempt = 0; attempt < 60; attempt += 1) { // 最大 ~6 秒
+    try {
+      await mkdir(LOCK_DIR);
+      return true;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const info = await statOrNull(LOCK_DIR);
+      if (info && Date.now() - info.mtimeMs > 30000) {
+        await rmdir(LOCK_DIR).catch(() => {}); // 30 秒以上前の stale ロック（前回クラッシュ等）は奪う
+        continue;
+      }
+      if (await pgrepWindow()) return false; // 既に窓があるなら、ロックは諦めて既存を使う
+      await delay(100);
+    }
+  }
+  return false;
+}
+
+async function releaseWindowLock() {
+  await rmdir(LOCK_DIR).catch(() => {});
+}
+
+async function waitForWindow(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await pgrepWindow()) return true;
+    await delay(150);
+  }
+  return false;
 }
 
 async function health() {

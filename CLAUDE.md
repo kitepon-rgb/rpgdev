@@ -34,9 +34,12 @@ npm start                             # ビルド + macOS デスクトップウ�
 npm run build:desktop                 # Swift ウィンドウのコンパイルのみ（起動しない）
 npm run render:bgm                    # public/audio/*.wav を再生成
 npm run demo                          # 起動中のサーバに対して擬似 Hook シーケンスを流す
+npm run trace                         # 演出トレースを解析（二連続/欠落/取りこぼしの検出。docs §10）
 ```
 
 `npm run demo` は事前にサーバが起動している必要がある（`rpgdev` / `npm run server`）。
+`npm run trace` は `.rpgdev/events.ndjson`（reducer の emit）と `playback.ndjson`（overlay の再生）を
+由来 Hook の `seq` で突き合わせる（`--all` / `--seq N` / `--anomalies`）。
 
 ## リリース（npm publish）
 
@@ -54,6 +57,12 @@ npm run demo                          # 起動中のサーバに対して擬似 
 `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）からランダムに選ぶ（HP は演出専用）。`battle`
 フェーズになるのは「エンカウントのモンスターが画面に居る時」だけで、TODO があるだけでは
 戦闘にならない。
+
+**ペーシング（唯一の頭＝サーバーが時刻で律速。多エージェントの洪水でも点滅させない。詳細は docs §12）**：
+出現は確率に加えて**出現クールダウン（討伐後 4s）＋連続出現の最小間隔（2s）**で律速する。討伐条件を満たしても
+**最低在席時間（出現から 4s）**未満なら即討伐せず `pendingDefeat` に保留し、寿命経過後の次の Hook でスイープ確定する
+（Stop だけは寿命無視で強制討伐）。これで「倒して即湧き→即死」の点滅が起きない。ペーシングの基準時刻は
+**サーバーが `reduceHookEvent` に注入**する（`event.at`＝エージェント側の時計は使わない）。`handleHook` は `event.id` で冪等化する。
 
 各エンカウントは出現時の状況で `linkedTodo` フラグを持ち、討伐条件が変わる：
 - `linkedTodo=false`（出現時に in_progress の TODO 無し）：hero の攻撃 5回、または
@@ -79,9 +88,13 @@ TODO 一覧を元の順序のまま3区画へ均等割りし（端数は field �
 
 精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 10% で1体だけ増援し、
 `SubagentStart` でも1体参戦する。常に1体ずつで属性の重複を避け（火 Ignis / 地 Terra /
-風 Sylph / 水 Aqua）、上限4体。**PostToolUse（スキル攻撃）の時だけ**現在の敵に追撃する
-（演出のみで討伐の5撃にはカウントしない。effect に `allyElement` が付き、属性別エフェクトを出す）。
-モンスターを倒すたびに精霊は全員消滅し、`SubagentStop` で1体ずつ FIFO（最初に出た精霊から）帰還する。
+風 Sylph / 水 Aqua）、上限4体。**精霊の追撃は reducer では出さない（脱Hook。多エージェントで多重化するため）。
+フロント（overlay.js `enqueueSpiritFollowup`）が「勇者スキル攻撃を再生した時点」で在席精霊ぶんの追撃を
+キューへ生成する**＝Hook 数で増えず「再生された勇者スキル1回につき1巡」だけ（属性別エフェクト＋効果音、討伐の5撃には数えない）。詳細は docs §12。
+モンスターを倒すたびに精霊は全員退場するが、**撃破演出（モンスター消滅）を見せ切ってから1体ずつ順番に
+FIFO で帰還**する（各帰還に属性色のエフェクト＋`ally-return` 効果音。reducer は `ally_return` に `element`/`name`/
+`last` を付け、フロントは最後の `last` 帰還が終わってから背景/BGMを切り替える＝精霊が全員帰る前に背景を変えない）。
+`SubagentStop` でも1体ずつ FIFO（最初に出た精霊から）帰還する。
 `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 
 設計判断・Codex/Claude のフック実機検証結果・実装ステータスは
@@ -128,13 +141,14 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
    - モンスターはランダムエンカウント：PreToolUse ごとに 20% で出現し（同時最大1体）、
      `MONSTER_CATALOG`（Slime/Goblin/Orc/Ogre）から sprite/HP をランダムに選ぶ。HP は演出専用。
      TodoWrite/update_plan はモンスターを湧かさず、state.quest を更新する（各項目に field/dungeon/castle の `stage` を割り当て）だけ。
-   - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` なら攻撃5回または
+   - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` ならスキル攻撃5回または
      ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
      なった時のみ討伐（in_progress TODO が消えると linkedTodo は解除）。
-   - 攻撃/増援判定：PreToolUse は通常攻撃に加えて 20% エンカウント出現判定と、戦闘中は
-     10% 精霊増援判定を行う（1ツール呼び出し1回）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
+   - 攻撃/増援判定：**PreToolUse は攻撃しない（勇者の通常攻撃は廃止）**。PreToolUse は 20% エンカウント出現判定、
+     戦闘中は 10% 精霊増援判定、出なければ前進（1ツール呼び出し1アクション）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
      PascalCase / MCP はサーバ名。コマンド/パッチ本文は見ない＝apply_patch の「***」を回避）のみで
-     出現・増援判定はせず、在席精霊の追撃はこの PostToolUse 時のみ。
+     出現・増援判定はしない。**攻撃も討伐ヒットも PostToolUse スキル攻撃だけ**。精霊の追撃はフロントが
+     スキル攻撃の再生時に生成する（reducer では出さない＝docs §12）。
      `SubagentStart` でも精霊1体参戦、`SubagentStop` で FIFO 帰還（最初に出た精霊から）。
    ここの挙動を変えたら [test/adventure-state.test.mjs](test/adventure-state.test.mjs) を更新すること。
 
@@ -159,8 +173,9 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 ## 状態・永続化・設定
 
 - 実行時の状態はすべて **プロジェクト単位** で `<PROJECT_DIR>/.rpgdev/` 配下に書かれる:
-  `state.json`（現在の状態、起動時に読み込む）、`events.ndjson`（追記専用イベントログ）、
-  `*-errors.log`。`.rpgdev/` は gitignore 済み。
+  `state.json`（現在の状態、起動時に読み込む）、`events.ndjson`（reducer の emit ログ。各 effect は
+  由来 Hook の `origin` 付き）、`playback.ndjson`（overlay が実際に再生/取りこぼした演出のトレース。
+  `POST /trace` 由来。演出の乱れ解析用＝docs §10）、`*-errors.log`。`.rpgdev/` は gitignore 済み。
 - `PROJECT_DIR` は既定で `process.cwd()`。`RPGDEV_PROJECT_DIR` 環境変数経由で起動した
   子プロセスに伝播されるので、3 つのエントリポイントすべてが読み書き先で一致する。
 - 環境変数: `RPGDEV_PORT`（既定 37373）、`RPGDEV_HOST`（既定 127.0.0.1）、
@@ -174,6 +189,12 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
   記録し、成功を装わずに非ゼロ終了する。サーバは `.rpgdev/server-errors.log` に記録する。
   編集時もこの挙動を維持し、エラーを握りつぶさないこと。
 - サーバと reducer は **npm 依存ゼロ**。stdlib のみを保つこと。
+- **二重起動防止**：同一プロジェクト・同一ポートでサーバ／ウィンドウが二重に立たないようにする。
+  サーバは listen の `EADDRINUSE` を捕捉し、既存ありとして**後発を `exit 0` で退場**させる（クラッシュ・
+  エラーログ汚染をしない）。デスクトップは `desktop.mjs` が既存窓を `focusExistingWindow` で検出したら開かず、
+  かつ `.rpgdev/desktop.lock`（mkdir のアトミック性＋30秒で stale 奪取）で起動を直列化する。編集時もこの不変条件を壊さない。
+- **攻撃/帰還 SFX** は [scripts/render-sfx.mjs](scripts/render-sfx.mjs)（`npm run render:sfx`）で生成し、
+  Swift の `sfxNames`（[desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift)）にも登録する。新しい SFX を足したら両方を更新する。
 - BGM（`field` / `adventure` / `battle` / `dungeon-*` / `castle-*` の7トラック）は
   [scripts/render-bgm.mjs](scripts/render-bgm.mjs) で生成される（既存曲を使わないオリジナルの
   クラシック JRPG 調シーケンスを WAV に合成。決定的で乱数なし）。ジェネレータを編集してから

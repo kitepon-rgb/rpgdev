@@ -113,7 +113,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 
 ### 攻撃＝ツールフック（1 Hook = 1 アクション）[決定]
 - **1つの Hook では「出現 / 召喚 / 攻撃 / 前進」のいずれか1つだけ**を実行する（出現→攻撃→召喚を同一 Hook で連鎖させない＝演出上の違和感を排除）。
-- **PreToolUse**：敵不在なら 20% で出現（出たらそれだけ／出なければ前進）。敵在席なら 20% で精霊増援（召喚したらそれだけ）／召喚しなければ通常攻撃（`NORMAL_DAMAGE`, 演出）。
+- **PreToolUse**：敵不在なら 20% で出現（出たらそれだけ／出なければ前進）。敵在席なら 10% で精霊増援（召喚したらそれだけ）／召喚しなくても**勇者は攻撃しない（通常攻撃は廃止。§12）**。攻撃は PostToolUse のスキル攻撃だけ。
 - **PostToolUse → スキル攻撃。技名＝tool_name 基準**（`SKILL_DAMAGE`, 演出）。`skillName()` が tool_name を整形する：通常ツールは PascalCase（アンダースコア除去＋各語頭大文字。`apply_patch`→ApplyPatch, `spawn_agent`→SpawnAgent, `Bash`→Bash）、MCP はサーバ名（動作の1つ手前の区画を PascalCase・末尾 "mcp" 除去。`mcp__aiterm__pty_read`→Aiterm, `mcp__codex_apps__x_hermes_mcp__generate_image`→XHermes）。**コマンド/パッチ本文は一切見ない**（Codex の `apply_patch` は command が "*** Begin Patch…" だが技名は「ApplyPatch」になり「***」にならない）。出現・増援の判定はしない（Pre のみ）。
 - 攻撃も増援召喚も、敵（エンカウント）が居なければ起きない（敵不在 Hook は前進のみ）。トドメになった攻撃は、その帰結として撃破＋精霊退場を伴う（同一アクションの結果であり別アクションではない）。
 - 技名＝ツール名はプロバイダで品揃えが違う（後述）。未知ツールは生のツール名をそのまま技名に出す
@@ -128,9 +128,13 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 - 戦闘中、**ツール使用ごと（PreToolUse）に 10% で1体だけ増援**（`BATTLE_SUMMON_CHANCE`）。さらに **SubagentStart でも1体参戦**。
 - 常に1体ずつ追加し、**属性の重複は避ける**（火 `Ignis` / 地 `Terra` / 風 `Sylph` / 水 `Aqua`）。**上限4体**。
   `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
-- 在席中の精霊は **PostToolUse（スキル攻撃）の時だけ**現在の敵に**追撃する**（演出。`attack` effect, `kind:"ally"`, `allyId` + `allyElement` 付き。討伐の 5撃にはカウントしない）。
-  PreToolUse の通常攻撃では追撃しない（攻撃が二重に出て煩雑になるのを避ける）。フロントは `allyElement` で属性別の追撃エフェクト（火/地/風/水）を出す。
-- **モンスターを倒すたびに精霊は全員消滅**する（戦闘終了で退場）。
+- 在席中の精霊は勇者スキル攻撃に続けて現在の敵に**追撃する**（演出。`kind:"ally"`, `allyElement` 付き。討伐の5撃にはカウントしない）。
+  **【§12で更新】この追撃は reducer ではなくフロントが「勇者スキル攻撃を再生した時点」で在席精霊ぶんだけ生成する**
+  （脱Hook＝多エージェントで多重化しないため）。フロントは `allyElement` で属性別の追撃エフェクト（火/地/風/水）を出す。
+- **モンスターを倒すたびに精霊は全員退場**する（戦闘終了で退場）。ただし演出は **撃破（モンスター消滅）を
+  見せ切ってから、精霊を1体ずつ順番（FIFO）に帰還**させる。reducer は `ally_return` に `element`/`name`/`last`
+  を付与し、フロントは各帰還を属性色のエフェクト＋`ally-return` 効果音で再生、**最後（`last`）の精霊が帰り切って
+  から背景/BGM/phase を切り替える**（精霊が全員帰る前に背景を変えない＝`holdWorldVisuals` の解除を last 帰還に委譲）。
 - `SubagentStop` で1体帰還（**FIFO＝最初に参戦した精霊から離脱**。hook payload が個体 id を持つとは限らないため、出た順に帰す）。
   在席ゼロでの Stop は無反応（黙って成功扱いにしない＝effect を出さない）。
 
@@ -147,7 +151,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 |---|---|---|
 | SessionStart | 待機 | 拠点起動・状態ロード・BGM=town（quest/monsters/allies をクリア） |
 | UserPromptSubmit | 待機→探検 | クエスト受注、フィールドへ、BGM=field、ターン開始 |
-| PreToolUse | 探検/戦闘 | 通常攻撃（前振り）＋20% エンカウント出現判定＋戦闘中なら 10% 精霊増援判定 |
+| PreToolUse | 探検/戦闘 | 20% エンカウント出現判定＋戦闘中なら 10% 精霊増援判定＋前進（**攻撃はしない**。§12） |
 | PermissionRequest | 保留 | 足止め「!」、判断待ちの硬直 |
 | PostToolUse | ★中核 | スキル攻撃＋クエスト一覧更新＋成否分岐（下記） |
 | PreCompact | 演出 | 「記憶が霞む／霧」長期戦の区切り |
@@ -306,7 +310,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ---
 
-## 9. 実装ステータス（2026-06-07 更新・ランダムエンカウント モデル + 冒険ステージ v0.3.0 / 撃破演出の磨き込み v0.3.1）
+## 9. 実装ステータス（2026-06-07 更新・ランダムエンカウント モデル + 冒険ステージ v0.3.0 / 撃破演出の磨き込み v0.3.1 / v0.4.0：演出トレース §10・二重起動防止 §11・唯一の頭+単一キュー+精霊脱Hook §12・PreToolUse 通常攻撃廃止）
 
 - **reducer：実装済み・検証済み。** `server/adventure-state.mjs` をランダムエンカウント モデルへ。
   - 旧 `detectFailure` の単語マッチ正規表現は廃止。Claude の失敗イベント名（PostToolUseFailure/PermissionDenied）と
@@ -319,7 +323,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - TODO ツール（`tool_name ∈ {TodoWrite, update_plan}`）は `state.quest`（label+status+stage のスナップショット）を更新するだけ。
     新たに completed になった項目があれば紐づくエンカウントを討伐。**TODO を field/dungeon/castle の3区画へ均等割り**して各項目に `stage` を付与（§2.1）。
   - **冒険ステージ**：`adventureStage`（field/dungeon/castle）＝最初の未完了 TODO のステージ。`trackForState` がステージ×phase で7種の BGM トラックを選ぶ。SessionStart で field に戻す（§2.1）。
-  - PreToolUse=通常攻撃 / PostToolUse=スキル攻撃（技名＝tool_name を `skillName()` で整形＝PascalCase / MCP はサーバ名。コマンドは見ない）。出現・増援の判定は PreToolUse のみ。
+  - PreToolUse=攻撃しない（通常攻撃廃止。§12）/ PostToolUse=スキル攻撃（技名＝tool_name を `skillName()` で整形＝PascalCase / MCP はサーバ名。コマンドは見ない）。出現・増援の判定は PreToolUse のみ。
   - **1 Hook = 1 アクション**：1つの Hook では出現/召喚/攻撃/前進のいずれか1つだけ（同一 Hook で連鎖しない）。
   - **TODO 未発生時はユーザー入力を1つの合成クエスト(`synthetic`, in_progress, stage:"field")として表示**し、TodoWrite で本物に置換。synthetic は表示専用で linkedTodo に数えない。
   - 精霊：戦闘中の PreToolUse ごとに **10%** で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
@@ -343,11 +347,13 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - **効果音（SFX）**：出現＝`monster-appear.wav`、撃破＝`monster-defeat.wav`。攻撃は勇者の通常攻撃
     `hero-normal-attack.wav`、スキル攻撃 `hero-skill-attack.wav`、会心の一撃 `hero-finisher-attack.wav`、
     精霊追撃 `ally-fire-attack.wav` / `ally-earth-attack.wav` / `ally-wind-attack.wav` /
-    `ally-water-attack.wav`。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
+    `ally-water-attack.wav`、**精霊帰還 `ally-return.wav`**（撃破後に1体ずつ帰る音）。ネイティブブリッジ（Swift `AVAudioPlayer`）があればそれで、無ければ WebAudio の合成音にフォールバック。
+    攻撃/帰還 SFX は `scripts/render-sfx.mjs`（`npm run render:sfx`）で生成し、Swift の `sfxNames` に登録する。
   - **演出の直列化**：攻撃/リアクションのアニメは全体共通の単一キューで直列化。**攻撃は固定 1 秒間隔**、その他は「アニメ目安 + 0.1秒」で次へ。
     **モンスター出現の演出開始から 4 秒間（`APPEAR_ATTACK_DELAY_MS`）は攻撃キューを再生しない**（出現演出と直後の PostToolUse スキル攻撃が被らないよう保留する）。出現/召喚/帰還/クリア等の即時演出はキューを占有しない。撃破 effect を含むバッチを受信した瞬間に、過去バッチから溜まっていた攻撃/finisher キューを破棄する。そのうえで**同じバッチ内でトドメに至った未再生攻撃だけは破棄しない**（旧実装は破棄していたため、出現直後に先頭の skill だけ再生され後続の normal が撃破で消えて「通常攻撃が欠落」して見えた）。`monster_defeated` がキューに入った後の別バッチ攻撃は受け付けず、消滅演出を開始した時点でも残っている攻撃/finisher キューを再度破棄する。トドメに至った一連の攻撃を順に再生してから会心の一撃（`finisher`）→撃破演出へ進む。撃破フラグ（`monsterDefeatInProgress`）は撃破演出を**再生した時点**で立てる。詰まり防止に攻撃アニメは最大10件で間引く。
   - **クエストトラッカー UI**：MMO ミッション風パネルを画面中央上に表示。未着手 ◇ / 進行中 ◆ / 達成 ✓。
-    全項目完了 or idle では非表示。
+    全項目完了 / `idle`（街）/ `complete`（ターン終了＝街の待機）では非表示。AI が TODO に止めを刺さず complete に
+    なることがあり、街に戻ったのに未完了 TODO が残ると違和感が出るため、街の待機（idle/complete）ではクエスト窓ごと畳む。
   - **ヘッダーは1行**：「RPGDev ◆ <フェーズ>」。RPGDev は金グラデのゲームタイトル（フェーズ名と同サイズ、菱形セパレータ）。ヘッダー高 60px。
   - **戦闘配置**：勇者は左下（戦闘時 +10%）、モンスター中央（-20%）、精霊は属性ごとに固定（水=左上, 風=右上, 火=右端・下げ気味, 地=中央下）。モンスター名は1.7倍。
     勇者は常にモンスターより前面に描く（`.hero` z-index=5 > `.monster` z-index=4。同値だと DOM 後勝ちで勇者が敵の裏に回るため。v0.3.1）。
@@ -362,3 +368,114 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - フロント変更を窓に反映するには WKWebView のリロード（窓の開き直し）が必要。
 - 実機検証の生データ：`tmp/codex-probe/`（gitignore 対象、`hook-capture.log` / `probe*-events.jsonl`）。
   ※ 検証中に `~/.codex/auth.json` を `tmp/codex-home/` にコピーしたが、機密のため削除済み。
+
+---
+
+## 10. 演出トレース（内部診断ログ）[実装済み・2026-06-07]
+
+**目的**：「通常攻撃が2連続」「同じスキルが2連続」など、設計（1 Hook = 1 アクション）と
+合わない演出の乱れを、**どの Hook 由来か**まで遡って解析できるようにする内部ログ。表向きの
+機能ではなく診断専用。演出面すべてに由来 Hook を刻むのが鉄則。
+
+### 由来 Hook の識別子（2層）
+- **`hookId`**：Hook 個体 ID。Hook CLI（`scripts/rpg-hook.mjs` の `hookId()`）が
+  `<provider>.<event>.<時刻36進>-<乱数>` で付け、POST payload の `id` で送る。プロセス境界を跨いでも一意。
+  `normalizeHookEvent` は `input.id` を優先採用（demo/manual で未指定なら正規化側で生成）。
+- **`seq`**：Hook 通し番号（順序の正準キー）。reducer が `state.hookSeq` を Hook ごとに +1 して付与し、
+  `state.json` に永続化＝サーバ再起動でも連番が継続する。「2連続」の判定はこの seq の並びで行う。
+
+### 由来の刻印（reducer：`server/adventure-state.mjs`）
+- `reduceHookEvent` の**単一の出口**で `stampOrigin(effects, event)` を呼び、**その Hook が生んだ
+  全 effect** に `origin = { seq, hookId, event, provider, tool, at, action }` を付ける。
+  個別の `effects.push` を取りこぼさないよう一括で刻む（＝演出面すべてに由来が必ず付く）。
+  `action` は同一 Hook 内の effect 連番で、`seq#action` で1つの演出を一意参照できる。
+- `state.log` の各行にも `seq` を持たせ、effect の `origin.seq` と突き合わせ可能にした。
+
+### 2つの内部ログ（`<PROJECT_DIR>/.rpgdev/`、gitignore 済み）
+1. **`events.ndjson`（emit ログ）**：reducer が出した `{ normalized, effects }` を Hook ごとに1行。
+   `normalized` は `id`/`seq` を、各 effect は `origin` を持つ。＝「reducer が何を出したか」。
+2. **`playback.ndjson`（再生ログ／新規）**：overlay（デスクトップ窓の本体 UI）が**実際に何を
+   再生し、何を取りこぼし、いつ待たせたか**を `/trace` へ POST して残す。各行は
+   `{ kind, tag, origin, ... }`。`kind` は `play`（再生）/ `drop`（取りこぼし＋`reason`）/
+   `hold`（出現演出と被るので保留＋`wait`）/ `world`（phase/stage/track の遷移＝フィールド前進・
+   街帰還・BGM 切替を `from→to` で）。＝「窓が何をしたか」。
+
+   - サーバ：`POST /trace` → `appendPlayback`（`server/rpgdev-server.mjs`）。
+   - フロント：`overlay.js` の `trace()`（`fetch keepalive`、失敗は `console.error`、握りつぶさない）。
+     計測点＝`effects()`/`pumpFx()`/`clearStaleCombatQueueForDefeat()`（取りこぼしを reason 付きで）、
+     `applyWorldVisuals()`（世界遷移を由来 Hook 付きで）。`finisher` はフロント合成（`synthetic:true`）で、
+     由来は撃破を起こした Hook を引き継ぐ。
+   - **Web ビュー（`app.js`）は計測しない**：診断対象は本体 UI の overlay。Web は補助ビューのため対象外。
+
+### 解析ツール `scripts/rpg-trace.mjs`（`npm run trace`）
+- 2ログを `origin.seq` で突き合わせ、Hook ごとの emit/play/drop/hold/world を時系列表示。
+- **異常検出**：①実際の再生順（クライアント時刻 t）で**同じ攻撃タグが連続**＝「二連続」を列挙
+  （ユーザー報告の症状を直接検出）。②emit したのに play も drop も記録が無い＝**欠落**（窓が閉じていた
+  可能性も含め明示）。③取りこぼしを reason 別に集計（`defeat-queued`/`max-queued`/`defeat-in-progress`/
+  `defeat-received`/`defeat-play`/`appear-hold`）。
+- オプション：`--all`（全件）/ `--seq N`（周辺詳細）/ `--anomalies`（異常まとめと再生順のみ）。
+
+> この章は「演出の乱れを後から解析するための計装」であり、ゲーム挙動（討伐条件・確率・1 Hook 1
+> アクション）は変えていない。乱れの**原因の特定と修正**は、このログを採取してから別途行う。
+
+---
+
+## 11. 二重起動防止 [実装済み・2026-06-07]
+
+同一プロジェクト・同一ポートで **サーバ／デスクトップウィンドウが二重に立たない**ようにする。
+フック（`rpg-hook.mjs` の `ensureServer`）とデスクトップ起動（`desktop.mjs`）が競合しても1つに収束させる。
+
+- **サーバ（`server/rpgdev-server.mjs`）**：`server.on("error")` で `EADDRINUSE` を捕捉し、
+  「既に稼働中」と明示して **後発インスタンスを `exit 0` で退場**させる（クラッシュさせず、`server-errors.log` も汚さない＝
+  静かなフォールバック禁止に沿って、成功偽装はせず明示ログ）。その他の listen エラーは `server-errors.log` に記録して `exit 1`。
+- **ウィンドウ（`scripts/desktop.mjs`）**：既存窓を `focusExistingWindow`（`pgrep` 検出）で見つけたら **開かずに終了**。
+  さらに `.rpgdev/desktop.lock` を `mkdir`（アトミック）で取り、**起動を直列化**する（取得できなければ既存窓の出現を待ってフォーカス／
+  30秒以上前の stale ロックは奪う）。これでビルド（`swiftc`）中に複数の起動要求が来ても窓は1つに収束する。
+- 検証（2026-06-07）：同ポートに2台目のサーバ起動 → 後発が `already serving` で `exit 0`・`server-errors.log` 生成なし。
+  既存窓ありで `desktop.mjs` 実行 → 窓数は1のまま・ロックは解放。
+
+> 背景：開発中に隔離インスタンス（別ポート）を併走させた際、本番ウィンドウと二重に見えたのが発端。
+> 別ポート・別バンドルは別物として正しく扱う（防止は同一ポート・同一バンドルの二重を対象）。
+
+---
+
+## 12. 唯一の頭＋単一キュー＋精霊攻撃の脱Hook化（多エージェント耐性）[実装済み・検証済み 2026-06-07]
+
+**動機**：多数のエージェント／並列ワークフローが高速に Hook を撃つと、各 Hook が独立に確率を振って
+「倒して即湧き→即死」を繰り返す点滅や、精霊攻撃の多重化が起き、ロジックは正しくても**演出が不健全**に見えた。
+原則を「Hook＝配達人 / サーバー＝全エージェント共通の唯一の頭 / 1窓＝1本の絶対キュー / 精霊攻撃＝フロント演出」に統一した。
+
+### サーバー＝唯一の頭（時刻もサーバーが付与してペーシング）
+- `reduceHookEvent(prev, event, now)`：**ペーシング基準時刻はサーバーが注入**（`handleHook` が `Date.now()` を渡す。
+  テストは `__setNow` で差し替え）。`event.at`（エージェント側の時計）は表示/トレース専用で**ペーシングには使わない**
+  （並行エージェントの時計はズレ・逆転しうるため）。`handleHook` は `event.id` で**冪等化**（二重配達で二重出現しない）。
+- **出現クールダウン**：`SPAWN_COOLDOWN_MS=4000`（討伐後）＋`MIN_SPAWN_INTERVAL_MS=2000`（連続出現）。
+  `state.lastSpawnAt`/`lastDefeatAt`（=0 は「直近イベント無し＝許可」）。`beginTurn`/`townReset` でリセット。差分が負/NaN（時計逆転）なら出現しない（安全側）。
+- **最低在席時間**：`MIN_MONSTER_LIFETIME_MS=4000`。5撃や TODO 完了で討伐条件を満たしても、在席が浅ければ
+  `finishMonster` が `monster.pendingDefeat=true` に**保留**し、`reduceHookEvent` 冒頭の `sweepPendingDefeats` が
+  寿命経過後の「次の任意の Hook」で確定討伐する（取りこぼさない。時計逆転 `now<appearedAt` でも強制確定）。
+  `Stop`(`finishTurn`) は `force=true` で寿命無視の強制討伐＝ターンを跨がせない。
+- 効果：洪水（30秒で約170 PreToolUse）でも**寿命≥4.0s・クールダウン≥4.0s、即死/即湧き0件**（2026-06-07 トレース実測）。
+
+### 精霊攻撃はフロント演出のみ（脱Hook）
+- reducer から `allyAssist`/`ALLY_DAMAGE` を**削除**。PostToolUse は勇者スキル攻撃のみ emit（`kind:"ally"` の attack は出さない）。
+- フロント `overlay.js` の `enqueueSpiritFollowup`：**勇者スキル攻撃を再生した時点**で、在席精霊（`latestAllies`）ぶんの
+  追撃を `kind:"ally"` 合成 effect としてキュー先頭へ割り込ませる（`ALLY_FOLLOWUP_INTERVAL_MS=360` で連続）。
+  撃破中は出さない／`MAX_QUEUED_ATTACKS` を超えない／再生時に精霊が消えていれば出さない（ゴースト防止）。
+  ＝**Hook が何回来ても精霊攻撃は「再生された勇者スキル1回につき1巡」**だけで、Hook数では増えない。
+
+### 1窓＝1本の絶対キュー（背景/BGM/シーンも集約）
+- 背景/BGM/phase/シーンの遷移を `diffWorldEffect` で **world 効果**に変換し、SSE バッチ末尾へ積む。
+  `playEffect` の `world` ケースが `applyWorld` で適用。撃破バッチは `finisher→撃破→精霊帰還→world(背景)` の順に直列化され、
+  「精霊が全員帰ってから背景が変わる」が**キュー順で自然に保証**される（旧 `holdWorldVisuals`/`scheduleWorldVisualRelease`
+  タイマー hack は撤去）。`render()` は world を適用しない（静的パネル＝クエスト一覧のみ即時反映）。
+- 既知の軽微点（パーティクル＋効果音は出るが演出が簡略）：`SubagentStop` 単独の精霊帰還は `render` が先にカードを
+  消すためカードのフェード演出は出ない（パーティクル＋音は出る）。撃破保留中に来た `SubagentStart` は保留解除まで反映が遅れる。
+
+### クエスト窓は最下層
+- `.roster` を `z-index:1` に（背景画像/暗幕のすぐ前、`.stage`(z:2) が内包するモンスター・勇者・精霊・パーティクル・
+  各種エフェクトより後ろ）＝クエスト欄の後ろにあるのは背景だけ。
+
+> 検証（2026-06-07）：reducer テスト 34/34 pass（`__setNow` 注入で決定化＋ペーシング新テスト）。
+> 窓を開いた高負荷トレースで点滅0・reducer の `kind:"ally"` attack 0 を確認。多角レビュー（22エージェント）で確定した
+> 指摘7件は全て minor、うち5件（時計逆転ガード・dead else 撤去・時刻統一・ゴースト防止・キュー上限遵守）を反映済み。

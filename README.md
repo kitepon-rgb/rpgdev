@@ -2,9 +2,9 @@
 
 Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトップウィンドウの演出に変換する macOS アプリです。
 
-**モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は Slime / Goblin / Orc / Ogre からランダムに選ばれます。ツールを使うたびに攻撃し（`PreToolUse`＝通常攻撃 / `PostToolUse`＝技名がツール名（整形：PascalCase、MCP はサーバ名）のスキル攻撃）、敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
+**モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は Slime / Goblin / Orc / Ogre からランダムに選ばれます。ツールを使うたびに勇者がスキル攻撃します（`PostToolUse`＝技名がツール名（整形：PascalCase、MCP はサーバ名）のスキル攻撃。`PreToolUse` は攻撃せず、エンカウント出現／精霊増援／前進のみ）。敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
 
-討伐条件は出現タイミングで変わります。**進行中の TODO が無いとき**に出た敵は、通常攻撃5回、またはターン終了（`Stop`）で討伐します。**進行中（`in_progress`）の TODO があるとき**に出た敵はその項目に紐づき、攻撃では倒せず、TODO 項目が1つ `completed` になった瞬間、またはターン終了（`Stop`）で討伐します。`Stop` は TODO status の整理漏れが残っても戦闘を次ターンへ持ち越さない最終クリーンアップです。HP は演出専用です。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` などで検知。Codex は hook がツールの成否を出さないため反撃は出ません）。
+討伐条件は出現タイミングで変わります。**進行中の TODO が無いとき**に出た敵は、勇者のスキル攻撃（`PostToolUse`）5回、またはターン終了（`Stop`）で討伐します。**進行中（`in_progress`）の TODO があるとき**に出た敵はその項目に紐づき、攻撃では倒せず、TODO 項目が1つ `completed` になった瞬間、またはターン終了（`Stop`）で討伐します。`Stop` は TODO status の整理漏れが残っても戦闘を次ターンへ持ち越さない最終クリーンアップです。HP は演出専用です。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` などで検知。Codex は hook がツールの成否を出さないため反撃は出ません）。
 
 TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエストとして画面上部に一覧表示され、紐づくエンカウントの討伐トリガーになります。モンスターは湧かしません。
 
@@ -61,13 +61,13 @@ Codex / Claude Code 側で project-local hooks の trust / review が必要な�
 ## Hook Flow
 
 - `UserPromptSubmit`: 冒険開始、ウィンドウを開く、フィールドへ
-- `PreToolUse`: 通常攻撃。さらに 20% でモンスターのエンカウント判定、戦闘中なら 10% で精霊の増援判定も行う（出現・増援判定は Pre のみ）
+- `PreToolUse`: 20% でモンスターのエンカウント出現判定、戦闘中なら 10% で精霊の増援判定、出なければ前進（**攻撃はしない＝勇者の通常攻撃は廃止**。攻撃は `PostToolUse` のスキル攻撃だけ）
 - `PostToolUse`:
   - `TodoWrite` / `update_plan` → クエスト一覧を更新（`pending`＝未着手, `in_progress`＝進行中, `completed`＝達成）。各項目を冒険ステージ（field/dungeon/castle）に割り当て。新たに `completed` になった項目があれば、紐づくエンカウントを討伐
   - それ以外のツール → スキル攻撃（技名＝ツール名を整形：PascalCase、MCP はサーバ名。例: `Bash`→Bash、`apply_patch`→ApplyPatch、`spawn_agent`→SpawnAgent、`mcp__aiterm__pty_read`→Aiterm。コマンド/パッチ本文は見ないので Codex `apply_patch` でも「***」にならない）。在席している精霊もこの時だけ追撃する
 - `PostToolUseFailure` / `PermissionDenied`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
-- `SubagentStart` / `SubagentStop`: 精霊の仲間が参戦 / 帰還（FIFO＝最初に出た仲間から帰る）
-- `Stop`: ターン終了。在席エンカウントを TODO 紐づきの有無に関係なく討伐し、街へ戻る
+- `SubagentStart` / `SubagentStop`: 精霊の仲間が参戦 / 帰還（FIFO＝最初に出た仲間から帰る）。モンスター討伐時は、撃破演出を見せ切ってから精霊を1体ずつ順番に帰還させ（属性色エフェクト＋帰還音）、全員帰り切ってから背景を切り替える
+- `Stop`: ターン終了。在席エンカウントを TODO 紐づきの有無に関係なく討伐し、街へ戻る（街＝待機ではクエスト窓は畳む）
 
 モンスターはランダムエンカウント（ツール使用ごと 20%）で出現し、討伐条件は出現時に進行中 TODO があったかで決まります。
 Hook がサーバへ送れない場合は静かに成功扱いせず、stderr と `.rpgdev/hook-errors.log` にエラーを出します。
@@ -91,7 +91,7 @@ npm run demo
 - 仲間精霊: `public/assets/sprites/ally-fire.png`, `ally-earth.png`, `ally-wind.png`, `ally-water-facing-slit.png`
   （水精霊の別案として `ally-water.png`, `ally-water-facing.png` も同梱）
 - BGM: `public/audio/field.wav`, `adventure.wav`, `battle.wav`, `dungeon-adventure.wav`, `dungeon-battle.wav`, `castle-adventure.wav`, `castle-battle.wav`
-- 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`, `hero-normal-attack.wav`, `hero-skill-attack.wav`, `hero-finisher-attack.wav`, `ally-fire-attack.wav`, `ally-earth-attack.wav`, `ally-wind-attack.wav`, `ally-water-attack.wav`
+- 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`, `hero-normal-attack.wav`, `hero-skill-attack.wav`, `hero-finisher-attack.wav`, `ally-fire-attack.wav`, `ally-earth-attack.wav`, `ally-wind-attack.wav`, `ally-water-attack.wav`, `ally-return.wav`（精霊が撃破後に1体ずつ帰還する音）
 
 BGM は既存曲のメロディを使わないオリジナルのクラシック JRPG 調シーケンスで、冒険ステージ（草原 / 洞窟 / 城）×
 探索・戦闘の7トラックを `scripts/render-bgm.mjs` から生成します（洞窟は不穏で低速、城は荘厳な行進調）。
@@ -104,9 +104,14 @@ BGM は既存曲のメロディを使わないオリジナルのクラシック 
 
 ```bash
 npm test
-npm run render:bgm
-npm run build:desktop
+npm run render:bgm        # BGM(7トラック)を再生成
+npm run render:sfx        # 攻撃/帰還の効果音を再生成
+npm run build:desktop     # Swift ウィンドウのコンパイル
+npm run trace             # 演出トレース解析（.rpgdev/ のログから二連続/欠落/取りこぼしを検出）
 ```
+
+`.rpgdev/` には現在の状態（`state.json`）に加え、演出の診断ログ（`events.ndjson`＝reducer の emit、`playback.ndjson`＝
+ウィンドウが実際に再生/取りこぼした演出。各レコードに由来 Hook が付く）が残ります。`npm run trace` で突き合わせて解析できます。
 
 ## License
 

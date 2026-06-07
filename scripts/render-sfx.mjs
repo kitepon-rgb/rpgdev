@@ -188,6 +188,27 @@ const sfx = [
       addImpact(mix, 0.08, 0.26, 86, 44, 0.24);
       addRumble(mix, 0.18, 0.46, 68, 0.12);
     }
+  },
+  {
+    // 精霊の帰還音：光に還るような、低→高へ上がっていく柔らかなシマー。
+    name: "ally-return",
+    duration: 0.7,
+    build(mix) {
+      addImpact(mix, 0.02, 0.34, 240, 760, 0.24); // 上昇トーン（低→高）
+      addImpact(mix, 0.12, 0.3, 360, 990, 0.16);
+      addFilteredNoise(mix, {
+        start: 0.04,
+        duration: 0.5,
+        volume: 0.26,
+        highpass: 620,
+        lowpass: 5200,
+        attack: 0.05,
+        decay: 2.4,
+        seed: 81,
+        texture: "spray"
+      });
+      addRumble(mix, 0.0, 0.18, 180, 0.07);
+    }
   }
 ];
 

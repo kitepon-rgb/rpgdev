@@ -7,7 +7,12 @@
 
 ## 通常の更新（2回目以降）= これが普段の手順
 
-パッケージは既に npm に存在するので、更新は **granular automation トークン（bypass 2FA）で publish できる**（初回のような OTP は不要）。
+パッケージは既に npm に存在するので、更新は **トークンで publish できる**（初回のような OTP は不要）。
+
+> **⚠ 訂正（2026-06-07 解決）**：Claude（自動）から publish するには、実際には **classic Automation トークン ＋
+> パッケージ側 `Publishing access = Require two-factor authentication or automation tokens`（`mfa=automation`）** の
+> 両方が必要だった。**granular トークンや 2FA 無効化では通らない**。`~/.npmrc` に classic automation トークンを入れた状態で
+> `npm whoami` が通れば OK（granular だと 401 になる）。以下の granular 記述は初期の試行錯誤の記録として残す。
 
 1. バージョンを上げる（`package.json` の `version`）。pre-1.0 なので、モデル変更など大きいものは **minor**（0.1.0 → 0.2.0）、小修正は patch。`npm version patch|minor` でもよい（git タグも自動で作る）。
 2. テスト: `npm test`

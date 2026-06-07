@@ -1,6 +1,6 @@
 {
   "name": "rpgdev",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "A small macOS RPG overlay for Codex and Claude Code hook events.",
   "license": "MIT",
   "type": "module",
@@ -17,6 +17,7 @@
     "render:bgm": "node scripts/render-bgm.mjs",
     "render:sfx": "node scripts/render-sfx.mjs",
     "demo": "node scripts/demo.mjs",
+    "trace": "node scripts/rpg-trace.mjs",
     "test": "node --test"
   },
   "files": [

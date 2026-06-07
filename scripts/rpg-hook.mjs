@@ -19,6 +19,7 @@ try {
   const raw = await readStdinJson();
   await ensureServer();
   const payload = {
+    id: hookId(provider, event), // Hook 個体 ID（演出トレースの由来識別子。サーバ側 seq と対で使う）
     provider,
     event,
     raw,
@@ -99,4 +100,12 @@ function launchDesktopWindow() {
 
 function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+// 由来が読み取れる Hook ID。例: claude.PreToolUse.lq3k9x-a1b2c3。
+// プロセス境界を跨いでも一意（時刻 36 進＋乱数）。サーバの seq が順序の正準キー、これは個体識別。
+function hookId(provider, event) {
+  const time = Date.now().toString(36);
+  const rand = Math.random().toString(16).slice(2, 8);
+  return `${provider}.${event}.${time}-${rand}`;
 }

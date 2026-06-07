@@ -238,7 +238,8 @@ final class RPGDevAppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageH
             "ally-fire-attack",
             "ally-earth-attack",
             "ally-wind-attack",
-            "ally-water-attack"
+            "ally-water-attack",
+            "ally-return"
         ]
 
         for name in sfxNames {
