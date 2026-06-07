@@ -116,6 +116,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
   in_progress TODO が無くなったら `linkedTodo` は解除され、その後は通常の 5撃／ターン終了で倒せる。
   これはターン終盤に TODO status の整理漏れが残っても、戦闘を次ターンへ持ち越さないための最終クリーンアップ。
 - HP は演出専用で、HP では討伐しない（上の条件のみで討伐）。
+- 注（v0.5.3＝§15）：ここでの「ターン終了（Stop）」は**オーナーの Stop 限定**。全セッションが Stop を発火するため、非オーナーの Stop はターンを終わらせず討伐もしない（`step` のみ）。
 
 ### 攻撃＝ツールフック（1 Hook = 1 アクション）[決定]
 - **1つの Hook では「出現 / 召喚 / 攻撃 / 前進」のいずれか1つだけ**を実行する（出現→攻撃→召喚を同一 Hook で連鎖させない＝演出上の違和感を排除）。
@@ -520,8 +521,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - **被覆ピーク（中央静止）で `applyWorld`（背景/勇者/phase 差替）を実行**＝勇者配置の瞬間移動を隠す。キュー直列の末尾（撃破→精霊帰還の後）で再生される。
 - サーバーの MIME に `.woff2/.woff/.ttf/.otf` を追加（無いと 404→無言フォールバックでフォントが効かないため必須）。
 
-### 13.6 クエストは親(オーナー)セッション限定（要件6）[サーバー]
-- `state.ownerSession`＝最初に UserPromptSubmit したセッション（`raw.session_id`）。`isOwnerSession` で**非オーナーの UserPromptSubmit/TodoWrite はクエストを更新しない**（spawned した `codex exec` が provider=codex の UserPromptSubmit で親のクエストを乗っ取る事故を防ぐ）。エンカウント/攻撃は §12 どおり全エージェントぶん受ける＝**クエストだけスコープ**。`SessionStart` でリセット。
+### 13.6 クエストはオーナーセッション限定（要件6。v0.5.3 で動的化＝§15）[サーバー]
+- `state.ownerSession`＝クエスト/ターンのオーナー（`raw.session_id`）。当初は「最初に UserPromptSubmit したセッションに固定」だったが、**v0.5.3 で動的化**（§15）：オーナーがアイドルなら別セッションの TODO が奪取できる。`isOwnerSession` で**非オーナーの素の UserPromptSubmit はクエストを更新しない**（spawned した `codex exec` の UserPromptSubmit による乗っ取りは引き続き防ぐ）。エンカウント/攻撃は §12 どおり全エージェントぶん受ける＝**クエストだけスコープ**。`SessionStart`／ターン終了でリセット。
 
 ### 13.7 SubagentStart/SubagentStop の配線 [設定]
 - reducer は元々 `SubagentStart→summonAlly` / `SubagentStop→returnAlly`（FIFO）対応済みだが、**フックが未配線**だった（`.claude/settings.local.json` / `.codex/hooks.json` に無い）。両方に追加。
@@ -551,3 +552,27 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - **モンスター反撃間隔 10→8秒**：`COUNTER_INTERVAL_MS=8000`（v0.5.1 は 10000）。
 - **精霊 damaged スプライト閾値 life≤2→≤3**：`isAllyDamaged`＝`life>0 && life<=3`（被弾2回＝life3 で被弾スプライトへ）。
 - 触ったのは `public/overlay.js` のみ。`public/app.js`（補助 Web ビュー）は対象外。
+
+---
+
+## 15. v0.5.3：ownerSession の動的化（TODO 奪取＋稼働ロック）[実装済み 2026-06-07・reducer]
+
+要件6（§13.6）の「最初の UserPromptSubmit に固定」を緩和。**実作業（TODO）をしているセッションが最初のオーナーと別だと、そのTODOがクエストに反映されない**硬直を解消する。multi-session（親 claude＋spawned codex 等）が併走する実環境向け。
+
+**仕様**
+- **オーナー奪取は TODO（TodoWrite/update_plan）でのみ**。素の UserPromptSubmit は従来どおり乗っ取らない（要件6のプロンプト保護は維持）。サブエージェント/ワークフローによる「別セッションへの切替」は**しない**（実機事実：SubagentStart/Stop は親=オーナーの session_id で発火し、独自 session を持たない。区別子は別フィールド `agent_id`）。
+- 非オーナー B の TODO が奪取できるのは、**現オーナーがアイドル**＝`ownerLocked(state)` が false の時だけ。`ownerLocked` = 未完了の本物TODOがある（`ownerHasOpenTodos`＝pending/in_progress。アイドルは全完了か本物TODO無し）／オーナー名義の稼働サブエージェント・ワークフローがある（`subagentCounts[ownerSession] > 0`）。
+- ロック解除は**二段構え**：(1) アイドル化（最適化：奪取を早める）、(2) **ターン終了＝オーナーの Stop だけ**（保証付き安全弁：`finishTurn` が `ownerSession=null`・`subagentCounts={}`）。アイドル判定は不完全（**ワークフローの SubagentStart/Stop 発火は未実証**・取りこぼしもありうる）なので、誤って“稼働中”でロックが残っても**ターン終了が必ずオーナーを手放す**＝恒久ロックにしない。
+- **ターン終了はオーナーの Stop 限定**：全セッションが Stop を発火するため、非オーナーの Stop は `step()`（親ターンを終わらせない・モンスター強制討伐もしない）。
+
+**実装（`server/adventure-state.mjs`）**
+- 追加 state：`subagentCounts: { [sessionId]: number }`（`createInitialState`／旧 state 正規化／`townReset`／`finishTurn` で初期化・クリア）。`bumpSubagentCount` を SubagentStart(+1)/SubagentStop(-1) で呼ぶ（`summonAlly` の表示上限4とは独立に常に数える）。
+- ヘルパ：`ownerHasOpenTodos` / `ownerActiveSubagents` / `ownerLocked` / `canClaimQuest`（=`isOwnerSession || (sessionId && !ownerLocked)`）/ `claimQuestOwnership`（実 session のときだけ `ownerSession` を書き換え＝P7：null をオーナーにしない）。
+- PostToolUse(TODO)：`if (todoItems && canClaimQuest()) { claimQuestOwnership(); reconcileQuest(); }`。ロック中の非オーナー TODO は奪取せず `skillAttack`（ツール使用は §12 で全員ぶん戦闘駆動・クエスト不変）。
+- Stop/SessionEnd：`isOwnerSession()` なら `finishTurn`、でなければ `step`。
+
+**回帰なし**：単一セッション運用（全イベント同一 session_id、または session_id null）は `isOwnerSession` が常に true ＝奪取ロジックは発火せず**従来と完全一致**。demo/manual（session 不明）はクエスト更新は許可・オーナーは変えない。
+
+**未確認リスク**：ワークフローのエージェントが SubagentStart/Stop を出すかは未実証（docs §13.7「発火見込み」）。出さなければワークフロー稼働分はロックに反映されない（TODO・サブエージェント分は効く）。フォールバックはターン終了で必ず解除。→ Workflow を1回流し events.ndjson に SubagentStart/Stop（session_id 付き）が出るか実機確認する。
+
+**テスト**：`test/adventure-state.test.mjs` に5本（synthetic オーナーからの奪取／TODOロック／サブエージェントロック＋解除/全TODO完了での解除／オーナー限定 Stop）。reducer **51/51 pass**。

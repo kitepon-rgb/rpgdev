@@ -442,7 +442,9 @@ function renderRoster(quest, phase) {
   crest.textContent = "❖";
   const title = document.createElement("span");
   title.className = "roster-title";
-  title.textContent = "クエスト";
+  // TODO（TodoWrite/update_plan）由来は「連続」、TODO 不在時のユーザー入力(synthetic)は「単発」。
+  const isSynthetic = items.some((it) => it.synthetic);
+  title.textContent = isSynthetic ? "クエスト（単発）" : "クエスト（連続）";
   const count = document.createElement("span");
   count.className = "roster-count";
   count.textContent = `${doneCount} / ${total}`;

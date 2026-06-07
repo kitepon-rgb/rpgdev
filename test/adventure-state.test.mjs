@@ -682,40 +682,179 @@ test("spirits do not attack when there is no encounter (exploration)", () => {
 
 // --- 要件6: クエストは親(オーナー)セッション限定（spawned な別セッションに乗っ取らせない）---
 
-test("quest updates are scoped to the owner session; a spawned session cannot hijack the quest", () => {
-  // セッションA が最初に UserPromptSubmit → オーナー＝A、synthetic クエスト＝A の入力。
-  let r = reduceHookEvent(createInitialState(), {
-    provider: "claude",
-    event: "UserPromptSubmit",
-    raw: { session_id: "A", prompt: "親の作業" }
-  });
+// 動的オーナー用のセッション付きイベントビルダー（要件6→動的化）。
+const promptBy = (sid, prompt) => ({ provider: "claude", event: "UserPromptSubmit", raw: { session_id: sid, prompt } });
+const todoBy = (sid, todos) => ({
+  provider: "claude",
+  event: "PostToolUse",
+  raw: { session_id: sid, tool_name: "TodoWrite", tool_input: { todos } }
+});
+const planBy = (sid, plan) => ({
+  provider: "codex",
+  event: "PostToolUse",
+  raw: { session_id: sid, tool_name: "update_plan", tool_input: { plan } }
+});
+const subStartBy = (sid) => ({ provider: "claude", event: "SubagentStart", raw: { session_id: sid } });
+const subStopBy = (sid) => ({ provider: "claude", event: "SubagentStop", raw: { session_id: sid } });
+const stopBy = (sid) => ({ provider: "claude", event: "Stop", raw: { session_id: sid } });
+
+test("素のプロンプト乗っ取りは防ぐが、アイドルなオーナー(synthetic のみ)からは別セッションの TODO が奪取する", () => {
+  // A が最初に UserPromptSubmit → オーナー A、synthetic クエスト。
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
   assert.equal(r.state.ownerSession, "A");
   assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
 
-  // 別セッションB（spawned codex 等）の UserPromptSubmit はクエストを乗っ取らない＝前進のみ。
-  r = reduceHookEvent(r.state, {
-    provider: "codex",
-    event: "UserPromptSubmit",
-    raw: { session_id: "B", prompt: "あなたはこのリポジトリ..." }
-  });
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"], "非オーナーの入力でクエストは変わらない");
+  // B の素の UserPromptSubmit はクエストを乗っ取らない＝前進のみ（要件6のプロンプト保護は維持）。
+  r = reduceHookEvent(r.state, promptBy("B", "spawned prompt"));
+  assert.equal(r.state.ownerSession, "A", "素の非オーナー入力ではオーナーは変わらない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
   assert.ok(r.effects.some((e) => e.type === "step"), "非オーナーの UserPromptSubmit は前進のみ");
 
-  // 別セッションB の update_plan（TODO）もクエストを更新しない。
-  r = reduceHookEvent(r.state, {
-    provider: "codex",
-    event: "PostToolUse",
-    raw: { session_id: "B", tool_name: "update_plan", tool_input: { plan: [{ step: "spawned task", status: "in_progress" }] } }
-  });
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"], "非オーナーの TODO はクエストを更新しない");
+  // オーナー A はアイドル（本物TODO/サブエージェント無し）なので、B の update_plan が奪取する。
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "B", "アイドルなオーナーからは TODO で奪取できる");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["B task"], "奪取後はそのセッションの TODO を表示");
+});
 
-  // オーナーA の TodoWrite は反映される。
-  r = reduceHookEvent(r.state, {
-    provider: "claude",
-    event: "PostToolUse",
-    raw: { session_id: "A", tool_name: "TodoWrite", tool_input: { todos: [{ content: "本物タスク", status: "in_progress" }] } }
-  });
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["本物タスク"], "オーナーの TODO はクエストを更新する");
+test("TODOロック：オーナーが進行中の本物TODOを持つ間は、別セッションの TODO は奪取できない", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["A task"]);
+
+  // A が作業中（in_progress の本物TODO）→ B の update_plan は奪取不可・クエスト不変。
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A", "ロック中はオーナーを奪われない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["A task"], "ロック中の非オーナーTODOはクエストを変えない");
+});
+
+test("サブエージェントロック：オーナーが稼働サブエージェントを持つ間は奪取不可、SubagentStop でアイドル化したら奪取可", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業")); // オーナーA・synthetic（本物TODOなし）
+  r = reduceHookEvent(r.state, subStartBy("A")); // A 名義のサブエージェント稼働
+  assert.equal(r.state.subagentCounts.A, 1);
+
+  // 本物TODOは無いが A のサブエージェントが稼働中＝ロック → B の TODO は奪取不可。
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A", "稼働サブエージェントがあれば奪取不可");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
+
+  // SubagentStop で A の稼働数が 0 ＝アイドル → 次の B の TODO は奪取できる。
+  r = reduceHookEvent(r.state, subStopBy("A"));
+  assert.equal(r.state.subagentCounts.A, 0);
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "B", "サブエージェント完了でアイドル化したら奪取可");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["B task"]);
+});
+
+test("TODOロック解除：オーナーが全TODOを完了したら、別セッションの TODO が奪取できる", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "in_progress" }]));
+  // 進行中 → ロック → B 奪取不可。
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A");
+  // A が完了 → アイドル化。
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "completed" }]));
+  assert.equal(r.state.ownerSession, "A");
+  // 解除後は B が奪取できる。
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "B", "全TODO完了でロック解除→奪取可");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["B task"]);
+});
+
+test("ターン終了はオーナーの Stop だけ：非オーナーの Stop は親ターンを終わらせない／オーナーの Stop でオーナー解放", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  assert.equal(r.state.active, true);
+
+  // 非オーナー B の Stop はターンを終わらせない（active 継続・オーナー継続）。
+  r = reduceHookEvent(r.state, stopBy("B"));
+  assert.equal(r.state.active, true, "非オーナーの Stop でターンは終わらない");
+  assert.notEqual(r.state.phase, "complete");
+  assert.equal(r.state.ownerSession, "A", "非オーナーの Stop でオーナーは解放されない");
+
+  // オーナー A の Stop でターン終了＆オーナー/カウンタ解放。
+  r = reduceHookEvent(r.state, stopBy("A"));
+  assert.equal(r.state.phase, "complete", "オーナーの Stop でターン終了");
+  assert.equal(r.state.ownerSession, null, "ターン終了でオーナーを手放す（安全弁）");
+  assert.deepEqual(r.state.subagentCounts, {}, "ターン終了で稼働カウンタもクリア");
+});
+
+// 以下はレビュー（多視点＋敵対的検証ワークフロー）で見つかった抜けを塞ぐ回帰テスト。
+
+test("オーナーStopで owner=null 化した後、野良の非オーナーStopは再びターンを終わらせない（要件5の穴の回帰）", () => {
+  // バグ：isOwnerSession は owner==null で true を返すため、オーナーStop後の野良Stopが再 finishTurn して
+  // 再活性化したモンスターを強制討伐していた。canEndTurn で塞ぐ。
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, stopBy("A")); // オーナー終了 → owner=null, phase=complete
+  assert.equal(r.state.ownerSession, null);
+
+  // 野良の非オーナー B が PreToolUse で再活性化＆出現（onPreToolUse はオーナー非依存＝§12）。
+  __setChance(chanceSeq(0, 0));
+  r = reduceHookEvent(r.state, { provider: "codex", event: "PreToolUse", raw: { session_id: "B", tool_name: "Read" } });
+  assert.equal(r.state.monsters.length, 1, "非オーナーのツール使用は出現する（§12）");
+
+  // 野良の Stop（C）は owner=null でも finishTurn を呼ばず、モンスターを強制討伐しない。
+  r = reduceHookEvent(r.state, stopBy("C"));
+  assert.equal(r.state.monsters.length, 1, "owner=null でも野良Stopは強制討伐しない");
+  assert.ok(!r.effects.some((e) => e.type === "turn_completed"), "野良Stopで turn_completed を再発しない");
+  assert.ok(!r.effects.some((e) => e.type === "monster_defeated"), "野良Stopで強制討伐しない");
+});
+
+test("非オーナーの Stop は進行中のモンスターを強制討伐しない（要件5）", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業")); // owner A, active
+  __setChance(chanceSeq(0, 0)); // 次の Pre で出現
+  r = reduceHookEvent(r.state, pre());
+  assert.equal(r.state.monsters.length, 1);
+
+  r = reduceHookEvent(r.state, stopBy("B")); // 非オーナー Stop
+  assert.equal(r.state.monsters.length, 1, "非オーナーStopでモンスターは消えない");
+  assert.ok(!r.effects.some((e) => e.type === "monster_defeated"), "非オーナーStopは強制討伐しない");
+  assert.ok(r.effects.some((e) => e.type === "step"), "非オーナーStopは step のみ");
+});
+
+test("SessionEnd も Stop と同じくオーナー限定でターン終了する", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  // 非オーナー B の SessionEnd はターンを終わらせない。
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SessionEnd", raw: { session_id: "B" } });
+  assert.equal(r.state.active, true, "非オーナーの SessionEnd でターンは終わらない");
+  assert.equal(r.state.ownerSession, "A");
+  // オーナー A の SessionEnd はターン終了＆解放。
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SessionEnd", raw: { session_id: "A" } });
+  assert.equal(r.state.phase, "complete", "オーナーの SessionEnd でターン終了");
+  assert.equal(r.state.ownerSession, null);
+});
+
+test("P7：session 不明(demo/manual)の TODO はクエストを更新するがオーナーは変えない（ロック中でも）", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "in_progress" }])); // owner A, ロック中
+  assert.equal(r.state.ownerSession, "A");
+  // session 不明の手動 TodoWrite（demo）→ permissive にクエスト更新するが owner は奪わない。
+  r = reduceHookEvent(r.state, todoWrite([{ content: "demo task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A", "null session はオーナーを奪わない（P7）");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["demo task"], "null session でもクエストは更新（permissive）");
+});
+
+test("ターン終了は漏れた subagentCounts ロックも解放する（安全弁）", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業")); // owner A, synthetic
+  r = reduceHookEvent(r.state, subStartBy("A"));
+  r = reduceHookEvent(r.state, subStartBy("A")); // count A = 2
+  r = reduceHookEvent(r.state, subStopBy("A")); // count A = 1（2 start / 1 stop ＝取りこぼし相当）
+  assert.equal(r.state.subagentCounts.A, 1);
+
+  // 漏れた稼働カウントでロックが残る＝B の TODO は奪取不可。
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A", "漏れた稼働カウントでロックが残る");
+
+  // オーナーの Stop（ターン終了）で漏れたロックも必ず解放（安全弁）。
+  r = reduceHookEvent(r.state, stopBy("A"));
+  assert.deepEqual(r.state.subagentCounts, {}, "ターン終了で稼働カウンタをクリア");
+  assert.equal(r.state.ownerSession, null, "ターン終了でオーナー解放");
+});
+
+test("TODO（session付き）が最初のオーナー確定イベントになれる", () => {
+  // 誰も UserPromptSubmit していない（owner null）状態から、X の update_plan がオーナーを確定。
+  let r = reduceHookEvent(createInitialState(), planBy("X", [{ step: "X task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "X", "owner 未確定なら TODO でオーナー確定");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["X task"]);
 });
 
 test("owner session resets on SessionStart so a fresh session can own the quest", () => {

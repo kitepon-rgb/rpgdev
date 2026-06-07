@@ -78,7 +78,8 @@ export function createInitialState() {
     lastDefeatAt: 0, // 直近の討伐時刻（サーバー now）。出現クールダウンの判定に使う
     defeated: [],
     quest: [], // 最新 TodoWrite スナップショット（元の順序・status 付き）= クエスト一覧の表示用
-    ownerSession: null, // クエスト/ターンのオーナー＝最初に UserPromptSubmit したセッション(要件6: クエストは親セッション限定)
+    ownerSession: null, // クエスト/ターンのオーナー（要件6→動的化）。TODO で奪取・ターン終了で解放。
+    subagentCounts: {}, // session_id 別の稼働サブエージェント数（オーナーのロック判定に使う。SubagentStart/Stop で増減）
     allies: [], // 在席中の精霊（攻撃時に増援 / SubagentStart でも参戦）
     steps: 0,
     attacks: 0,
@@ -103,6 +104,7 @@ export function reduceHookEvent(previousState, hookEvent, now) {
   if (!Array.isArray(state.defeated)) state.defeated = [];
   if (!Array.isArray(state.allies)) state.allies = [];
   if (!Array.isArray(state.quest)) state.quest = [];
+  if (!state.subagentCounts || typeof state.subagentCounts !== "object") state.subagentCounts = {};
   if (!QUEST_STAGES.includes(state.adventureStage)) state.adventureStage = "field";
   const event = normalizeHookEvent(hookEvent);
   const effects = [];
@@ -136,11 +138,14 @@ export function reduceHookEvent(previousState, hookEvent, now) {
       hold(state, event, effects);
       break;
     case "PostToolUse":
-      if (event.todoItems && isOwnerSession(state, event)) {
+      if (event.todoItems && canClaimQuest(state, event)) {
+        // 非オーナーでも、現オーナーがロック中でなければ（アイドル）クエストを奪取して反映（要件: TODO 奪取）。
+        claimQuestOwnership(state, event);
         reconcileQuest(state, event, effects);
       } else if (detectFailure(event)) {
         counter(state, event, effects);
       } else {
+        // ロック中の非オーナー TODO は奪取せず＝ツール使用として戦闘駆動（§12。クエストは不変）。
         skillAttack(state, event, effects);
       }
       break;
@@ -151,9 +156,11 @@ export function reduceHookEvent(previousState, hookEvent, now) {
       break;
     case "SubagentStart":
       summonAlly(state, event, effects);
+      bumpSubagentCount(state, event, 1); // オーナーのロック判定用（summonAlly の上限とは独立に常に数える）
       break;
     case "SubagentStop":
       returnAlly(state, event, effects);
+      bumpSubagentCount(state, event, -1);
       break;
     case "CounterHit":
       applyCounterHit(state, event, effects);
@@ -166,7 +173,13 @@ export function reduceHookEvent(previousState, hookEvent, now) {
       break;
     case "Stop":
     case "SessionEnd":
-      finishTurn(state, event, effects);
+      // ターン終了は確定オーナー本人の Stop だけ（全セッションが Stop を発火するため。非オーナーの Stop は親ターンを終わらせない）。
+      // owner 未確定(null)を「全員オーナー」と扱わない＝オーナー Stop で owner=null 化した後の野良 Stop による再 finishTurn を防ぐ。
+      if (canEndTurn(state, event)) {
+        finishTurn(state, event, effects);
+      } else {
+        step(state, event, effects);
+      }
       break;
     default:
       step(state, event, effects);
@@ -395,7 +408,8 @@ function townReset(state, event, effects) {
   state.monsters = [];
   state.allies = [];
   state.adventureStage = "field";
-  state.ownerSession = null; // 新セッションでオーナーをリセット（次の UserPromptSubmit が新オーナー。要件6）
+  state.ownerSession = null; // 新セッションでオーナーをリセット（次の UserPromptSubmit/TODO が新オーナー。要件6）
+  state.subagentCounts = {}; // 稼働サブエージェントカウンタもリセット
   state.lastSpawnAt = 0; // 新セッションは出現ペーシングもリセット
   state.lastDefeatAt = 0;
   pushLog(state, "session_start", "拠点に到着", event);
@@ -440,6 +454,9 @@ function finishTurn(state, event, effects) {
   }
   state.active = false;
   state.phase = "complete";
+  // ターン終了は「必ず効く安全弁」＝オーナーロックを解放する（アイドル判定が不正確でも恒久ロックにしない）。
+  state.ownerSession = null; // 次ターンの最初の入力/TODO が新オーナーになれる
+  state.subagentCounts = {}; // 稼働カウンタの残骸（取りこぼし含む）もクリア
   pushLog(state, "turn_completed", `Turn ${state.turn} completed`, event);
   effects.push({ type: "turn_completed", track: "field" });
 }
@@ -569,6 +586,58 @@ function isOwnerSession(state, event) {
   if (!state.ownerSession) return true;
   if (!event.sessionId) return true;
   return event.sessionId === state.ownerSession;
+}
+
+// session_id 別の稼働サブエージェント数を増減（オーナーのロック判定に使う）。session 不明なら無視。
+// SubagentStart/Stop は親（=起動した）セッションの session_id で発火する（実測。区別子は別途 agent_id）ので、
+// 「オーナーが起動したサブエージェント/ワークフローが稼働中か」は subagentCounts[ownerSession] で分かる。
+function bumpSubagentCount(state, event, delta) {
+  const sid = event.sessionId;
+  if (!sid) return;
+  if (!state.subagentCounts || typeof state.subagentCounts !== "object") state.subagentCounts = {};
+  state.subagentCounts[sid] = Math.max(0, (Number(state.subagentCounts[sid]) || 0) + delta);
+}
+
+// オーナーが「作業中」でロック（＝非オーナーの奪取を拒む）か。
+// 条件：未完了の本物 TODO がある（pending/in_progress＝`status !== "completed"`。アイドル＝全完了か本物TODO無し）／
+// オーナー名義の稼働サブエージェント・ワークフローがある。
+// この「アイドル判定」は完全ではない（WF の SubagentStart/Stop 発火は未実証・取りこぼしもありうる）。
+// 誤って“稼働中”でロックが残っても、ターン終了（オーナーStop＝finishTurn）が必ずオーナーを手放すので恒久ロックにはならない。
+function ownerHasOpenTodos(state) {
+  return (state.quest || []).some((q) => q && !q.synthetic && q.status !== "completed");
+}
+function ownerActiveSubagents(state) {
+  if (!state.ownerSession) return 0;
+  return Number((state.subagentCounts || {})[state.ownerSession]) || 0;
+}
+function ownerLocked(state) {
+  return ownerHasOpenTodos(state) || ownerActiveSubagents(state) > 0;
+}
+
+// TODO（TodoWrite/update_plan）でクエストを更新・オーナー化できるか。
+// - 現オーナー / オーナー未確定 / session 不明（demo/manual）→ 従来どおり可（isOwnerSession）。
+// - 非オーナーでも、現オーナーがロック中でなければ（アイドル）奪取可（実 session を持つ場合のみ）。
+function canClaimQuest(state, event) {
+  if (isOwnerSession(state, event)) return true;
+  return Boolean(event.sessionId) && !ownerLocked(state);
+}
+
+// 実 session を持つ別セッションがクエストを更新するなら、オーナーをそのセッションへ書き換える。
+// session 不明（null）のときは書き換えない（null をオーナーにすると isOwnerSession が全許可になりスコープが崩れる＝P7）。
+function claimQuestOwnership(state, event) {
+  if (event.sessionId && state.ownerSession !== event.sessionId) {
+    state.ownerSession = event.sessionId;
+  }
+}
+
+// ターン終了（finishTurn）できるのは「確定オーナー本人の Stop/SessionEnd」だけ。
+// P7 を Stop 側にも適用＝owner 未確定(null)を「全員オーナー」とは扱わない。さもないとオーナーの Stop が
+// owner を null にした後、後続の非オーナー Stop が isOwnerSession===true に化けて再び finishTurn を呼び、
+// 再活性化したターンのモンスターを強制討伐してしまう（要件5違反）。
+// session 不明（demo/manual・単一フロー前提）は従来どおり終了させる（既存検証・raw:{} Stop を壊さない）。
+function canEndTurn(state, event) {
+  if (!event.sessionId) return true;
+  return state.ownerSession === event.sessionId;
 }
 
 function currentAdventureStage(state) {
