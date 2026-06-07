@@ -526,7 +526,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ### 13.7 SubagentStart/SubagentStop の配線 [設定]
 - reducer は元々 `SubagentStart→summonAlly` / `SubagentStop→returnAlly`（FIFO）対応済みだが、**フックが未配線**だった（`.claude/settings.local.json` / `.codex/hooks.json` に無い）。両方に追加。
-- 実測（2026-06-07・events.ndjson）：ワークフロー実行中、メイン待機の時間帯に親セッションの PreToolUse/PostToolUse が多数記録＝**サブエージェントのツール使用は親フックを発火する**。一方 SubagentStart/Stop は未配線ゆえ 0 件だった（だから戦闘中 10% 増援以外で精霊が出なかった）。これを配線した（Task は公式に親で発火。Workflow も親フックは飛ぶので発火見込み）。
+- 実測（2026-06-07・events.ndjson）：ワークフロー実行中、メイン待機の時間帯に親セッションの PreToolUse/PostToolUse が多数記録＝**サブエージェントのツール使用は親フックを発火する**。一方 SubagentStart/Stop は未配線ゆえ 0 件だった（だから戦闘中 10% 増援以外で精霊が出なかった）。これを配線した（Task は公式に親で発火。**Workflow も親 session_id で SubagentStart/Stop を発火するのを実測確認＝2026-06-07・§15**）。
 
 > テスト：reducer **47/47 pass**（要件6・精霊ライフ/CounterHit/退場/旧 state 互換・ステージ別モンスターのテスト含む）。
 
@@ -562,7 +562,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 **仕様**
 - **オーナー奪取は TODO（TodoWrite/update_plan）でのみ**。素の UserPromptSubmit は従来どおり乗っ取らない（要件6のプロンプト保護は維持）。サブエージェント/ワークフローによる「別セッションへの切替」は**しない**（実機事実：SubagentStart/Stop は親=オーナーの session_id で発火し、独自 session を持たない。区別子は別フィールド `agent_id`）。
 - 非オーナー B の TODO が奪取できるのは、**現オーナーがアイドル**＝`ownerLocked(state)` が false の時だけ。`ownerLocked` = 未完了の本物TODOがある（`ownerHasOpenTodos`＝pending/in_progress。アイドルは全完了か本物TODO無し）／オーナー名義の稼働サブエージェント・ワークフローがある（`subagentCounts[ownerSession] > 0`）。
-- ロック解除は**二段構え**：(1) アイドル化（最適化：奪取を早める）、(2) **ターン終了＝オーナーの Stop だけ**（保証付き安全弁：`finishTurn` が `ownerSession=null`・`subagentCounts={}`）。アイドル判定は不完全（**ワークフローの SubagentStart/Stop 発火は未実証**・取りこぼしもありうる）なので、誤って“稼働中”でロックが残っても**ターン終了が必ずオーナーを手放す**＝恒久ロックにしない。
+- ロック解除は**二段構え**：(1) アイドル化（最適化：奪取を早める）、(2) **ターン終了＝オーナーの Stop だけ**（保証付き安全弁：`finishTurn` が `ownerSession=null`・`subagentCounts={}`）。アイドル判定は不完全（**SubagentStop の取りこぼし**がありうる）なので、誤って“稼働中”でロックが残っても**ターン終了が必ずオーナーを手放す**＝恒久ロックにしない。
 - **ターン終了はオーナーの Stop 限定**：全セッションが Stop を発火するため、非オーナーの Stop は `step()`（親ターンを終わらせない・モンスター強制討伐もしない）。
 
 **実装（`server/adventure-state.mjs`）**
@@ -573,6 +573,6 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 **回帰なし**：単一セッション運用（全イベント同一 session_id、または session_id null）は `isOwnerSession` が常に true ＝奪取ロジックは発火せず**従来と完全一致**。demo/manual（session 不明）はクエスト更新は許可・オーナーは変えない。
 
-**未確認リスク**：ワークフローのエージェントが SubagentStart/Stop を出すかは未実証（docs §13.7「発火見込み」）。出さなければワークフロー稼働分はロックに反映されない（TODO・サブエージェント分は効く）。フォールバックはターン終了で必ず解除。→ Workflow を1回流し events.ndjson に SubagentStart/Stop（session_id 付き）が出るか実機確認する。
+**実測確認（2026-06-07）**：Workflow を1回（19エージェント）流したところ events.ndjson の SubagentStart/Stop がちょうど +19/+19 増え、いずれも**親（オーナー）の session_id で発火**（区別子は `agent_id`/`agent_type`）。＝**ワークフロー稼働分もオーナーのロックに正しく反映される**（docs §13.7 の「発火見込み」を実証）。残る不確実性は SubagentStop の取りこぼしのみだが、ターン終了（オーナーStop）が必ず解放する安全弁で恒久ロックは起きない。
 
 **テスト**：`test/adventure-state.test.mjs` に5本（synthetic オーナーからの奪取／TODOロック／サブエージェントロック＋解除/全TODO完了での解除／オーナー限定 Stop）。reducer **51/51 pass**。

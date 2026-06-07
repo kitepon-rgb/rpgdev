@@ -601,7 +601,8 @@ function bumpSubagentCount(state, event, delta) {
 // オーナーが「作業中」でロック（＝非オーナーの奪取を拒む）か。
 // 条件：未完了の本物 TODO がある（pending/in_progress＝`status !== "completed"`。アイドル＝全完了か本物TODO無し）／
 // オーナー名義の稼働サブエージェント・ワークフローがある。
-// この「アイドル判定」は完全ではない（WF の SubagentStart/Stop 発火は未実証・取りこぼしもありうる）。
+// この「アイドル判定」は完全ではない（SubagentStop の取りこぼしがありうる。WF も親 session_id で
+// SubagentStart/Stop を発火するのは実測確認済み＝2026-06-07）。
 // 誤って“稼働中”でロックが残っても、ターン終了（オーナーStop＝finishTurn）が必ずオーナーを手放すので恒久ロックにはならない。
 function ownerHasOpenTodos(state) {
   return (state.quest || []).some((q) => q && !q.synthetic && q.status !== "completed");
