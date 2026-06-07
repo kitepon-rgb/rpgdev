@@ -98,7 +98,7 @@ FIFO で帰還**する（各帰還に属性色のエフェクト＋`ally-return`
 `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 
 **v0.5.0 追加（詳細は docs §13）**：①精霊は勇者スキル攻撃の後に在席全員がランダム順で追撃（フロント生成・脱Hook維持）。
-②勇者＋全精霊が攻撃し切ってキューが空くと、モンスターが2秒おきに反撃（対象は勇者/在席精霊からランダム）＝被弾エフェクト＋`damage-hit` 音。
+②勇者＋全精霊が攻撃し切ってキューが空くと、モンスターが10秒おきに反撃（対象は勇者/在席精霊からランダム）＝被弾エフェクト＋`damage-hit` 音。
 タイミングは実クロックを持つフロント駆動（reducer はタイマー非保持）。③各精霊は被弾5回で退場（`life`＝サーバー権威。フロントが
 `POST /control/counter-hit {hitId,allyId}` で通知→`applyCounterHit` がライフ確定・`ally_hit`/`ally_defeated` を emit）。
 ④戦闘→探検の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で

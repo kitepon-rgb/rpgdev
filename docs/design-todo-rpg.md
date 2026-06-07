@@ -491,7 +491,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   `latestAllies` 本体は破壊しない。脱Hook（reducer は精霊攻撃を出さない＝§12）は維持。
 
 ### 13.2 モンスターの反撃ループ（要件2）[フロント駆動＋サーバー権威]
-- 生存モンスターが居て、勇者＋全精霊の攻撃を再生し切り（キュー枯渇）、出現演出も明けたら、`COUNTER_INTERVAL_MS=2000` で反撃する。
+- 生存モンスターが居て、勇者＋全精霊の攻撃を再生し切り（キュー枯渇）、出現演出も明けたら、`COUNTER_INTERVAL_MS=10000`（10秒おき）で反撃する。
   対象は勇者と在席精霊からランダム。**タイミングは実クロックを持つフロントだけが駆動できる**（reducer はタイマー非保持＝§12）。
 - `pumpFx` のキュー枯渇時に `startCounterLoop`、新バッチ受信(`effects` 先頭)・撃破・出現で `stopCounterLoop`。`runCounterTick` も毎回 `counterLoopAllowed` を自己点検。
 - 勇者への反撃は state ライフが無いので**フロントで被弾演出のみ**。精霊への反撃は **`POST /control/counter-hit {hitId, allyId}`** でサーバーへ通知し、サーバーがライフ確定（13.3）。二重演出を避けるため精霊被弾はサーバーの `ally_hit/ally_defeated` 受信でのみ再生する。
