@@ -210,9 +210,6 @@ new EventSource("/events").addEventListener("state", (message) => {
   prepareMonsterEffects(effectList);
   render(payload.state);
   effects(effectList);
-  if (worldVisualsHeld) {
-    scheduleWorldVisualRelease();
-  }
 });
 
 audioButton.addEventListener("click", async () => {
@@ -298,7 +295,9 @@ function holdWorldVisuals(state) {
   }
 }
 
-function scheduleWorldVisualRelease() {
+function scheduleWorldVisualRelease(delayMs = 920) {
+  // 受信時ではなく、実際に撃破アニメを再生した時点から解除する。
+  // キュー待ち中に背景/BGMだけ先行して field/town へ変わるのを防ぐ。
   if (pendingWorldTimer) return;
   pendingWorldTimer = window.setTimeout(() => {
     pendingWorldTimer = null;
@@ -307,7 +306,7 @@ function scheduleWorldVisualRelease() {
     const state = pendingWorldState;
     pendingWorldState = null;
     applyWorldVisuals(state);
-  }, 1820);
+  }, delayMs);
 }
 
 function adventureStage(state) {
@@ -594,6 +593,7 @@ function playEffect(effect) {
       holdDefeatedMonster();
       monsterDefeatImpact();
       monsterDefeatSound();
+      scheduleWorldVisualRelease();
       break;
     case "monster_fled":
       burst(0.5, 0.46, "#9aa6b2", 16);
@@ -706,12 +706,24 @@ function primeDefeatedMonster() {
 function setMonsterAction(action, duration) {
   if (!monsterStage) return;
   if (monsterActionTimer) window.clearTimeout(monsterActionTimer);
+  resetMonsterVisualEffect();
   delete monsterStage.dataset.action;
   void monsterStage.offsetWidth;
   monsterStage.dataset.action = action;
   monsterActionTimer = window.setTimeout(() => {
-    if (monsterStage.dataset.action === action) delete monsterStage.dataset.action;
+    if (monsterStage.dataset.action !== action) return;
+    delete monsterStage.dataset.action;
+    if (action === "appear") resetMonsterVisualEffect(true);
   }, duration);
+}
+
+function resetMonsterVisualEffect(forceRest = false) {
+  if (!monsterStage) return;
+  monsterStage.style.removeProperty("filter");
+  if (forceRest) {
+    monsterStage.style.filter = getComputedStyle(monsterStage).getPropertyValue("--monster-rest-filter").trim()
+      || "drop-shadow(0 13px 9px rgba(0, 0, 0, 0.42))";
+  }
 }
 
 function holdDefeatedMonster() {

@@ -228,6 +228,7 @@ body[data-phase="complete"] .hero {
 }
 
 .monster {
+  --monster-rest-filter: drop-shadow(0 13px 9px rgba(0, 0, 0, 0.42));
   left: 50%;
   top: 47%;
   width: min(82vw, 520px);
@@ -237,7 +238,7 @@ body[data-phase="complete"] .hero {
   transform: translate(-50%, -50%) scale(0.76);
   transform-origin: center center;
   transition: opacity 180ms ease, transform 180ms ease, filter 180ms ease;
-  filter: drop-shadow(0 13px 9px rgba(0, 0, 0, 0.42));
+  filter: var(--monster-rest-filter);
 }
 
 .monster::before,
@@ -299,6 +300,7 @@ body[data-phase="complete"] .hero {
 body[data-phase="battle"] .monster {
   opacity: 1;
   transform: translate(-50%, -50%) scale(0.8); /* モンスターを 2 割縮小 */
+  filter: var(--monster-rest-filter);
   animation: monsterBattleIdle 0.9s steps(2) infinite;
 }
 

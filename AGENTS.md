@@ -7,7 +7,7 @@ This file provides guidance to Codex when working with code in this repository.
 RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風 macOS デスクトップ
 ウィンドウの演出に変換するツール。モンスターはツール使用ごとに一定確率で出現する
 **ランダムエンカウント**で、ツール利用が攻撃になる。撃破条件は出現時に紐づいた TODO の
-有無で変わる（攻撃5回／ターン終了で討伐、または紐づき TODO の完了で討伐）。TODO は
+有無で変わる（紐づき無しは攻撃5回／ターン終了で討伐、紐づき有りは TODO 完了／ターン終了で討伐）。TODO は
 クエスト一覧として表示しつつ、紐づきエンカウントの討伐トリガーにもなる。
 macOS 専用、Node 20+、全体が ESM
 (`"type": "module"`)。JS のビルド/バンドル工程はなく、TypeScript も使っていない。
@@ -59,8 +59,9 @@ npm run demo                          # 起動中のサーバに対して擬似 
 - `linkedTodo=false`（出現時に in_progress の TODO 無し）：hero の攻撃 5回、または
   ターン終了（Stop）で討伐。
 - `linkedTodo=true`（出現時に in_progress の TODO あり）：攻撃では倒れない。TODO 項目が
-  1つ `completed` になった時に討伐する。in_progress TODO が無くなると `linkedTodo` は解除され、
-  以後は5撃／ターン終了で倒せるようになる。
+  1つ `completed` になった時、またはターン終了（Stop）で討伐する。in_progress TODO が無くなると
+  `linkedTodo` は解除され、以後は5撃／ターン終了で倒せるようになる。Stop は TODO status の
+  整理漏れが残っても戦闘を次ターンへ持ち越さない最終クリーンアップ。
 
 TODO（TodoWrite / update_plan）は state.quest（label+status+stage のスナップショット、元の順序）を
 更新するだけでモンスターは湧かさない。新たに `completed` になった項目があれば、紐づく
@@ -93,12 +94,14 @@ state / effect に配線済み。overlay には精霊スプライト、斬撃、
 召喚/属性別追撃演出、ステージ別背景、出現（ポータル+煙）/撃破（発光+破片）アニメと効果音
 （`monster-appear.wav` / `monster-defeat.wav` / 攻撃SFX群）があり、攻撃/リアクションのアニメは全体共通の
 単一キューで直列化される（攻撃は固定1秒間隔、その他はアニメ目安+0.1秒で次へ。モンスター出現の
-演出開始から4秒間は攻撃キューを再生しない＝出現演出と直後のスキル攻撃を被らせない。出現/召喚/帰還/
+演出開始から4秒間は攻撃キューを再生しない＝出現演出と直後のスキル攻撃を被らせない。出現演出の
+色変化 filter は終了時に通常状態へ戻し、WKWebView に色味を残留させない。出現/召喚/帰還/
 クリア等の即時演出はキューを占有しない。撃破時は同じバッチ内でトドメに至った攻撃を捨てずに順に
 流してから会心の一撃（`finisher`＝斬撃。技名テキストは出さず視覚演出のみ）→撃破＋消滅を流す。
 撃破effectを含むバッチを受信した瞬間に過去バッチから溜まっていた攻撃キューを破棄し、`monster_defeated`
 がキューに入った後の別バッチ攻撃は受け付けず、消滅演出開始時点でも残った攻撃キューを再度破棄する
-（旧実装は撃破時に攻撃を破棄しており通常攻撃が欠落して見えた）。撃破中はワールド演出を約1.8秒保留して撃破を見せる）。
+（旧実装は撃破時に攻撃を破棄しており通常攻撃が欠落して見えた）。撃破effectを受信したらワールド演出を保留し、
+実際に消滅演出を再生した後で次の背景/BGM/フェーズへ切り替える）。
 勇者は常にモンスターより前面（`.hero` z-index > `.monster`）。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体。
 docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite payload、TODO無しセッション方針）は全て検証・決定済み。
 
@@ -132,7 +135,7 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      TodoWrite/update_plan はモンスターを湧かさず、state.quest を更新する（各項目に field/dungeon/castle の `stage` を割り当て）だけ。
    - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` なら攻撃5回または
      ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
-     なった時のみ討伐（in_progress TODO が消えると linkedTodo は解除）。
+     なった時またはターン終了(Stop)で討伐（in_progress TODO が消えると linkedTodo は解除）。
    - 攻撃/増援判定：PreToolUse は通常攻撃に加えて 20% エンカウント出現判定と、戦闘中は
      10% 精霊増援判定を行う（1ツール呼び出し1回）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
      PascalCase / MCP はサーバ名。コマンド/パッチ本文は見ない＝apply_patch の「***」を回避）のみで

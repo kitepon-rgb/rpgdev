@@ -4,7 +4,7 @@ Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトッ�
 
 **モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は Slime / Goblin / Orc / Ogre からランダムに選ばれます。ツールを使うたびに攻撃し（`PreToolUse`＝通常攻撃 / `PostToolUse`＝技名がツール名（整形：PascalCase、MCP はサーバ名）のスキル攻撃）、敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
 
-討伐条件は出現タイミングで変わります。**進行中の TODO が無いとき**に出た敵は、通常攻撃5回、またはターン終了（`Stop`）で討伐します。**進行中（`in_progress`）の TODO があるとき**に出た敵はその項目に紐づき、攻撃では倒せず、TODO 項目が1つ `completed` になった瞬間に討伐します（進行中 TODO が無くなれば紐づきが解け、以降は5撃／ターン終了で倒せます）。HP は演出専用です。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` などで検知。Codex は hook がツールの成否を出さないため反撃は出ません）。
+討伐条件は出現タイミングで変わります。**進行中の TODO が無いとき**に出た敵は、通常攻撃5回、またはターン終了（`Stop`）で討伐します。**進行中（`in_progress`）の TODO があるとき**に出た敵はその項目に紐づき、攻撃では倒せず、TODO 項目が1つ `completed` になった瞬間、またはターン終了（`Stop`）で討伐します。`Stop` は TODO status の整理漏れが残っても戦闘を次ターンへ持ち越さない最終クリーンアップです。HP は演出専用です。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` などで検知。Codex は hook がツールの成否を出さないため反撃は出ません）。
 
 TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエストとして画面上部に一覧表示され、紐づくエンカウントの討伐トリガーになります。モンスターは湧かしません。
 
@@ -67,7 +67,7 @@ Codex / Claude Code 側で project-local hooks の trust / review が必要な�
   - それ以外のツール → スキル攻撃（技名＝ツール名を整形：PascalCase、MCP はサーバ名。例: `Bash`→Bash、`apply_patch`→ApplyPatch、`spawn_agent`→SpawnAgent、`mcp__aiterm__pty_read`→Aiterm。コマンド/パッチ本文は見ないので Codex `apply_patch` でも「***」にならない）。在席している精霊もこの時だけ追撃する
 - `PostToolUseFailure` / `PermissionDenied`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
 - `SubagentStart` / `SubagentStop`: 精霊の仲間が参戦 / 帰還（FIFO＝最初に出た仲間から帰る）
-- `Stop`: TODO に紐づかないエンカウントはターン終了で討伐。紐づくエンカウントは戦線維持
+- `Stop`: ターン終了。在席エンカウントを TODO 紐づきの有無に関係なく討伐し、街へ戻る
 
 モンスターはランダムエンカウント（ツール使用ごと 20%）で出現し、討伐条件は出現時に進行中 TODO があったかで決まります。
 Hook がサーバへ送れない場合は静かに成功扱いせず、stderr と `.rpgdev/hook-errors.log` にエラーを出します。

@@ -160,7 +160,8 @@ function reconcileQuest(state, event, effects) {
 }
 
 // ツール使用毎に ENCOUNTER_SPAWN_CHANCE でモンスターが出現。同時に2体は出さない（表示は1体）。
-// 出現時に進行中の TODO があれば linkedTodo=true（その TODO 完了で討伐）、無ければ 5撃/ターン終了で討伐。
+// 出現時に進行中の TODO があれば linkedTodo=true（攻撃では倒れず TODO 完了/ターン終了で討伐）。
+// 無ければ 5撃/ターン終了で討伐。
 function maybeSpawnEncounter(state, event, effects) {
   if (state.monsters.length > 0) return null; // 同時に2体出現はしない
   if (chance() >= ENCOUNTER_SPAWN_CHANCE) return null;
@@ -257,7 +258,7 @@ function damage(state, monster, amount, kind, skill, event, effects, ally = null
   effects.push({ type: "attack", kind, skill, monsterId: monster.id, amount: applied, allyId, allyElement });
   pushLog(state, "attack", `${skill || kind} -${applied}`, event);
 
-  // 討伐条件: linkedTodo なら攻撃では倒れない（TODO 完了で討伐）。
+  // 討伐条件: linkedTodo なら攻撃では倒れない（TODO 完了かターン終了で討伐）。
   // 紐づき無しなら hero の攻撃 WILD_HITS_TO_DEFEAT 回で討伐（精霊の追撃は数えない）。
   if (!monster.linkedTodo) {
     if (!ally) monster.hits = (monster.hits || 0) + 1;
@@ -306,9 +307,9 @@ function ensureActive(state, event, effects) {
 }
 
 function finishTurn(state, event, effects) {
-  // TODO に紐づかないエンカウントはターン終了で討伐（紐づきは TODO 完了まで残る）。
+  // ターン終了は最終クリーンアップ。TODO の status 整理漏れがあっても戦闘を持ち越さない。
   for (const monster of [...state.monsters]) {
-    if (!monster.linkedTodo) finishMonster(state, monster, event, effects);
+    finishMonster(state, monster, event, effects);
   }
   const remaining = state.monsters.length;
   if (remaining === 0) {

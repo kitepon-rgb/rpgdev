@@ -443,7 +443,7 @@ test("benign output containing the word 'error' is NOT a failure", () => {
   assert.equal(detectFailure(event), false);
 });
 
-test("Stop completes the turn when no encounter remains; a linked encounter blocks it", () => {
+test("Stop completes the turn and clears even a linked encounter", () => {
   let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
   const clear = reduceHookEvent(r.state, { provider: "claude", event: "Stop", raw: {} });
   assert.equal(clear.state.phase, "complete");
@@ -452,9 +452,11 @@ test("Stop completes the turn when no encounter remains; a linked encounter bloc
   let s = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
   s = reduceHookEvent(s.state, pre()); // linked 出現
   __setChance(() => 0.99);
-  const blocked = reduceHookEvent(s.state, { provider: "claude", event: "Stop", raw: {} });
-  assert.equal(blocked.state.monsters.length, 1, "linked はターン終了で残る");
-  assert.ok(blocked.effects.some((e) => e.type === "turn_blocked"));
+  const completed = reduceHookEvent(s.state, { provider: "claude", event: "Stop", raw: {} });
+  assert.equal(completed.state.monsters.length, 0, "linked もターン終了で討伐する");
+  assert.equal(completed.state.phase, "complete");
+  assert.ok(completed.effects.some((e) => e.type === "monster_defeated"));
+  assert.ok(completed.effects.some((e) => e.type === "turn_completed"));
 });
 
 test("spirits do not attack when there is no encounter (exploration)", () => {
