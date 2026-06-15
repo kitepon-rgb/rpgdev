@@ -16,6 +16,7 @@ const dungeonAdventureAudio = document.querySelector("#dungeonAdventureAudio");
 const dungeonBattleAudio = document.querySelector("#dungeonBattleAudio");
 const castleAdventureAudio = document.querySelector("#castleAdventureAudio");
 const castleBattleAudio = document.querySelector("#castleBattleAudio");
+const SPRITE_CACHE_BUSTER = Date.now().toString(36);
 const canvas = document.querySelector("#fxCanvas");
 const stage = document.querySelector(".stage");
 const ctx = canvas.getContext("2d");
@@ -197,6 +198,7 @@ let monsterActionTimer = null;
 let lastRenderedMonster = null;
 let worldVisualsHeld = false; // 撃破演出中だけ true：精霊カードの即時消去を保留する（ally_return が1体ずつ帰す）
 let currentHook = null; // いま処理中の state 更新の由来 Hook（origin 形）。world 効果の帰属に使う。
+let latestState = null;
 let latestAllies = []; // 最新の在席精霊（state.allies）。精霊追撃をフロント生成する時の名簿スナップショット。
 // 召喚エフェクトが付いて来た精霊の id 集合。召喚も攻撃キューと同じ扱い＝召喚がキューで再生される(appear-hold明け)まで
 // カードを出さない（出現演出と被らせない）。ally_summon 再生時に外し、その瞬間にバーストと同時へカードを出す。
@@ -306,6 +308,7 @@ resetButton?.addEventListener("click", async () => {
 requestAnimationFrame(draw);
 
 function render(state) {
+  latestState = state;
   latestAllies = state.allies || []; // 精霊追撃のフロント生成に使う最新名簿
   // state から消えた精霊(帰還/被弾退場/リセット)は召喚待ち集合からも除く＝取り残してカードを伏せ続けない。
   if (awaitingSummon.size) {
@@ -491,11 +494,10 @@ function renderAllies(list) {
       const card = document.createElement("div");
       card.className = `ally ally-${ally.element || "spirit"}`;
       card.dataset.allyId = ally.id || "";
-      card.dataset.damaged = isAllyDamaged(ally) ? "true" : "false";
       card.style.setProperty("--slot", index);
 
       const image = document.createElement("img");
-      image.src = allySpritePath(allySpriteForLife(ally));
+      image.src = allySpritePath(allyRenderSprite(ally));
       image.alt = "";
 
       const name = document.createElement("span");
@@ -552,6 +554,7 @@ function stopCounterLoop() {
 // 反撃を許す条件：モンスター在席・撃破処理中でない・出現演出が明けている・キューが空（攻撃を全部再生済み）。
 function counterLoopAllowed() {
   return (
+    !latestState?.layoutPreview &&
     monsterStage?.dataset.active === "true" &&
     !monsterDefeatInProgress &&
     appearAttackHoldUntil <= Date.now() &&
@@ -963,17 +966,24 @@ function formatSkillName(value) {
 function allySpritePath(sprite) {
   const name = String(sprite || "ally-fire");
   const ext = svgSpriteNames.has(name) ? "svg" : "png";
-  return `/assets/sprites/${name}.${ext}`;
+  return `/assets/sprites/${name}.${ext}?v=${SPRITE_CACHE_BUSTER}`;
 }
 
-function allySpriteForLife(ally) {
-  if (isAllyDamaged(ally)) return ally.damagedSprite || `${ally.sprite}-damaged`;
-  return ally.sprite;
-}
-
-function isAllyDamaged(ally) {
-  const life = Number.isFinite(ally?.life) ? ally.life : 5;
-  return life > 0 && life <= 3;
+function allyRenderSprite(ally) {
+  const sprite = String(ally?.sprite || "ally-fire");
+  if (ally?.element === "fire" && sprite === "ally-fire" && (ally.life ?? 5) <= 3) {
+    return "ally-fire-damaged";
+  }
+  if (ally?.element === "earth" && sprite === "ally-earth" && (ally.life ?? 5) <= 3) {
+    return "ally-earth-damaged";
+  }
+  if (ally?.element === "water" && sprite === "ally-water-facing-slit" && (ally.life ?? 5) <= 3) {
+    return "ally-water-damaged";
+  }
+  if (ally?.element === "wind" && sprite === "ally-wind" && (ally.life ?? 5) <= 3) {
+    return "ally-wind-damaged";
+  }
+  return sprite;
 }
 
 function pulseAlly(allyId, kind) {
@@ -1266,7 +1276,7 @@ function holdDefeatedMonster() {
 function setMonsterSprite(sprite) {
   const name = spriteByName[sprite] || "goblin";
   monsterStage.dataset.sprite = name;
-  monsterImage.src = `/assets/sprites/${name}.png`;
+  monsterImage.src = `/assets/sprites/${name}.png?v=${SPRITE_CACHE_BUSTER}`;
 }
 
 function allyElement(effect) {

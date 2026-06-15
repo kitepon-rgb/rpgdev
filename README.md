@@ -13,7 +13,7 @@ TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエスト�
 **戦闘の駆け引き（v0.5.0）**：
 
 - 在席している精霊（仲間）は、勇者のスキル攻撃のあとに**全員がランダムな順で追撃**します。
-- 勇者と全精霊が攻撃し切って演出キューが空くと、**モンスターが10秒おきに反撃**します（対象は勇者か在席精霊からランダム）。被弾エフェクトと被ダメージ効果音（`damage-hit`）が出ます。
+- 勇者と全精霊が攻撃し切って演出キューが空くと、**モンスターが8秒おきに反撃**します（対象は勇者か在席精霊からランダム）。被弾エフェクトと被ダメージ効果音（`damage-hit`）が出ます。
 - 各精霊は**被弾を5回受けると退場**します（残ライフはサーバーが管理）。
 - 戦闘から探索へ戻る瞬間は、**タイトル画の全画面トランジション**（「Explore the Dungeon」等のテキストが右上→中央→左下へ流れる）で覆い、勇者の配置が一瞬で変わる違和感を消します。
 - クエスト一覧は**親（最初に入力した）セッション専用**で、サブエージェントや別プロセス（別の `codex`/`claude` 実行）の入力では書き換わりません。
@@ -99,6 +99,7 @@ npm run demo
 - 勇者: `public/assets/sprites/hero.png`, `hero-relax.png`, `hero-battle.png`
 - モンスター: `public/assets/sprites/slime.png`, `goblin.png`, `orc.png`, `ogre.png`
 - 仲間精霊: `public/assets/sprites/ally-fire.png`, `ally-earth.png`, `ally-wind.png`, `ally-water-facing-slit.png`
+  （残ライフ3以下では `ally-fire-damaged.png`, `ally-earth-damaged.png`, `ally-water-damaged.png`, `ally-wind-damaged.png` に差し替え）
   （水精霊の別案として `ally-water.png`, `ally-water-facing.png` も同梱）
 - BGM: `public/audio/field.wav`, `adventure.wav`, `battle.wav`, `dungeon-adventure.wav`, `dungeon-battle.wav`, `castle-adventure.wav`, `castle-battle.wav`
 - 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`, `hero-normal-attack.wav`, `hero-skill-attack.wav`, `hero-finisher-attack.wav`, `ally-fire-attack.wav`, `ally-earth-attack.wav`, `ally-wind-attack.wav`, `ally-water-attack.wav`, `ally-return.wav`（精霊が撃破後に1体ずつ帰還する音）, `damage-hit.wav`（勇者/精霊がモンスターの反撃を受けた時の被ダメージ音）

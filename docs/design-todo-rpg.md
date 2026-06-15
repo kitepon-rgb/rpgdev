@@ -508,7 +508,11 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - `summonAlly` で `life: ALLY_MAX_LIFE(=5)` を付与。`CounterHit` イベント→`applyCounterHit` がライフ減算、`>0` で `ally_hit`、`<=0` で当該1体を除去し `ally_defeated(reason:"depleted")` を emit。
 - サーバー：`POST /control/counter-hit` が `recentCounterIds`（Hook id とは別リング）で `hitId` を冪等化し、合成 `CounterHit` を `reduceHookEvent` に流して broadcast。
 - 撃破時の全員退場（`ally_return` FIFO）は別経路として維持（被弾死とは effect 名を分ける）。旧 state（life 無し）は満タン扱いで互換。
-- **フロント表示**：残ライフ **3以下** で被弾スプライト（`isAllyDamaged`＝`life>0 && life<=3`／`ally-<element>-damaged`）へ切替。満タン(5)〜4 は通常スプライト。
+- **フロント表示**：火・土・水・風精霊は damaged スプライト差し替えを採用済み。
+  `ally-fire` + `life<=3` の時は `ally-fire-damaged.png`、`ally-earth` + `life<=3` の時は
+  `ally-earth-damaged.png`、`ally-water-facing-slit` + `life<=3` の時は `ally-water-damaged.png`、
+  `ally-wind` + `life<=3` の時は `ally-wind-damaged.png`
+  を表示する（表示位置/倍率は通常スプライトと同じ CSS を使う）。
 
 ### 13.4 被弾エフェクト＋被ダメージ音（要件3）[フロント＋アセット]
 - `playEffect` に `monster_counter`（勇者被弾）/`ally_hit`/`ally_defeated`。`damageSound()`＝ネイティブ `damage-hit.wav`（無ければ WebAudio 合成にフォールバック）。
@@ -550,7 +554,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   撃破時に掃除される設計のため、伏せたまま取り残されることはない（撃破→全員帰還で state から消え自己回復）。
   - 帰結：精霊が召喚される戦闘の順序は **登場 →(4秒)→ 召喚 →(1秒)→ 初撃**（召喚が最初のキュー枠を取る）。召喚が無い戦闘は **登場 →(4秒)→ 初撃**。
 - **モンスター反撃間隔 10→8秒**：`COUNTER_INTERVAL_MS=8000`（v0.5.1 は 10000）。
-- **精霊 damaged スプライト閾値 life≤2→≤3**：`isAllyDamaged`＝`life>0 && life<=3`（被弾2回＝life3 で被弾スプライトへ）。
+- **精霊 damaged スプライト**：火・土・水・風精霊は採用済み。`life<=3` で `ally-fire-damaged.png` /
+  `ally-earth-damaged.png` / `ally-water-damaged.png` / `ally-wind-damaged.png` に差し替える。
 - 触ったのは `public/overlay.js` のみ。`public/app.js`（補助 Web ビュー）は対象外。
 
 ---

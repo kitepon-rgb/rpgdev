@@ -927,7 +927,7 @@ test("summoned spirits start with life = 5 (SubagentStart and battle reinforceme
   r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
   assert.equal(r.state.allies.length, 1);
   assert.equal(r.state.allies[0].life, 5, "SubagentStart 召喚の精霊は life=5");
-  assert.ok(r.state.allies[0].damagedSprite, "life<=2 表示用の damaged sprite 名を持つ");
+  assert.equal(r.state.allies[0].damagedSprite, undefined, "damaged sprite 表現は持たない");
 
   __setChance(chanceSeq(0, 0)); // 出現
   let s = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
@@ -936,7 +936,7 @@ test("summoned spirits start with life = 5 (SubagentStart and battle reinforceme
   s = reduceHookEvent(s.state, pre());
   assert.ok(s.state.allies.length >= 1);
   assert.ok(s.state.allies.every((a) => a.life === 5), "戦闘増援の精霊も life=5");
-  assert.ok(s.state.allies.every((a) => a.damagedSprite), "戦闘増援の精霊も damaged sprite 名を持つ");
+  assert.ok(s.state.allies.every((a) => a.damagedSprite === undefined), "戦闘増援の精霊も damaged sprite 名を持たない");
 });
 
 test("CounterHit effects inherit the current monster counter effect", () => {

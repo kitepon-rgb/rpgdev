@@ -86,11 +86,99 @@ TODO 一覧を元の順序のまま3区画へ均等割りし（端数は field �
 モンスターを倒すたびに精霊は全員消滅し、`SubagentStop` で1体ずつ FIFO（最初に出た精霊から）帰還する。
 `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 
+### 精霊・キャラクター画像生成の最重要ルール
+
+**このゲームで精霊・キャラクター画像を生成/再生成/編集する時は、次の語句を必ずプロンプトへ入れる。省略禁止。**
+
+`retro RPG / pixel art / old JRPG sprite / limited palette / chunky pixel clusters`
+
+この語句は火・土・水・風を同じゲーム内ドット粒度へ寄せるための最重要指定であり、
+`current 2020s Japanese 2D anime / VTuber idol / mobile gacha RPG art` などの美麗アニメ指定より優先する。
+これを抜くと風 Sylph のように高解像度イラスト調へズレる。次回以降、精霊画像では必ず入れる。
+
+画像の生成・編集経路（2026-06-15 更新）：
+
+- **StableDiffusion 系 MCP は使わない。** `comfy-sd` / `sd-pipeline` / `sd_*` / `advisor_*` は削除済みで、
+  RPGDev の精霊画像作業では使用禁止。使おうとせず、必要ならこの節を根拠に停止して報告する。
+- 採用済みの火 Ignis / 土 Terra / 水 Aqua / 風 Sylph damaged 画像は StableDiffusion ではない。過去ログで確認済みの手順は
+  **Codex 内蔵 `image_gen` でクロマキー背景つき候補を作る → Pillow で背景を alpha 化 →
+  配置・高さ合わせを機械的に確認 → `view_image` で比較確認 → 採用ファイルへコピー**。
+- **手作業による画像加工は永久禁止。** 過去ログ上、Pillow 等で布・肌・輪郭を描き足す/削る/合成する
+  手作業加工は成功していない。禁止対象は、局所ペイント、衣装や肌の合成、手描きの破れ追加、
+  肌クリーンアップ、アウトラインの後付け、色を塗って見た目を直す処理。失敗候補を手作業で救済しない。
+  許可されるローカル処理は、背景の alpha 化、キャンバス/アスペクト比/サイズ合わせ、bbox/高さの測定、
+  チェック背景や比較画像の作成など、画像内容を創作・改変しない機械的処理だけ。
+- ダメージ差分で表示位置を守る時は、採用中の通常版画像を基準に、キャンバスサイズ・有効 bbox・高さを
+  機械的に比較して合わせる。AI 生成結果をそのまま採用しない。
+- 透過処理では、生成時にキャラ色と衝突しない単色クロマキー背景を指定し、背景色をキャラやエフェクト内で使わせない。
+  風 Sylph は紫・薄紫の衣装/風エフェクトを含むため、濃い紫ではなく濃いピンク `#ff00cc` を使う。
+  その後、Pillow の色判定・外周/接続成分・小穴補正で alpha を作る。濃いピンク背景では閉じた穴の背景も残るので、
+  `#ff00cc` 系の島だけを追加で抜く。黒背景/黒影の透過漏れ検査は必須：
+  `alpha > 24` かつ `r,g,b < 28` のピクセル数を確認し、チェック背景に合成して目視
+  （水 Aqua では採用版に黒背景が 20万px 以上残っていた前例）。
+- 生成プロンプトには、元絵と同じ太い暗色アウトラインを維持する指定を入れる。
+  例：`preserve the original sprite's thick dark readable outline weight` / `bold sprite contour`。
+  `thin delicate line art` / `hairline outline` は明示的に禁止する。輪郭が細い候補は手作業で直さず、再生成で直す。
+- 出力サイズが違う場合は、元画像のアスペクト比へ中央クロップまたは元キャンバスサイズへリサイズする。
+  採用前に通常版との bbox/高さ/位置比較画像を作る。
+- 風 Sylph の damaged 画像を作る場合、他の風画像候補は腰位置がずれた失敗作として扱う。
+  **基準画像は現在ゲームで採用中の `public/assets/sprites/ally-wind.png` だけ**。
+- 採用前に `view_image` または実アプリ表示で確認し、採用後だけ `public/assets/sprites/ally-*.png` へ配置する。
+- 採用後はアプリ側の画像キャッシュを疑う。overlay の精霊画像 URL は cache bust 付き
+  （`SPRITE_CACHE_BUSTER`）で読み、古い画像を見ていない状態で確認する。
+- ツールが失敗した場合、別方式に黙ってフォールバックしない。エラー全文、対象画像の絶対パス、
+  生成・後処理のどの段階で失敗したかを明示する。
+
+既存精霊の再生成/調整プロンプトテンプレート：
+```text
+Edit the currently shown [element] spirit image as the direct base image.
+
+Preserve the original artwork as much as possible: same canvas/framing, same pose, same silhouette, same face direction, same hair shape, same character identity, same fantasy battle costume design, same ornaments/effects, same transparent-looking background. Do not redraw her as a different character and do not change non-target areas.
+
+Required style goals, do not omit: retro RPG / pixel art / old JRPG sprite / limited palette / chunky pixel clusters.
+
+Make this exact artwork read like an old JRPG battle ally sprite: crisp pixel-art-like edges, visible chunky pixel clusters, hard cel-shaded color blocks, reduced smooth gradients, limited palette per material, small stepped highlight/shadow bands at final sprite scale, strong readable outline. Match the rough dot size and sprite-like texture of the existing RPGDev Ignis, Terra, Aqua, and Sylph spirit sprites.
+
+Apply only this local change: [specific requested edit]. No soot, no dirt, no battle damage unless explicitly requested. No chibi transformation, no tiny 8-bit icon simplification, no pose change, no character redesign, no text, no watermark, no extra characters.
+```
+
+風 Sylph 採用版の基準プロンプト（既存画像のドット粒度合わせ）：
+```text
+Edit the currently shown wind spirit image as the direct base image.
+
+Preserve the original artwork as much as possible: same canvas/framing, same horizontal flying pose, same silhouette, same face direction, same mint-green hair shape, same character identity, same fantasy battle costume, same jewelry/feathers, same wind ribbons, same black/transparent-looking background. Do not redraw her as a different character and do not change the outfit design.
+
+The required style correction is pixel/dot granularity. Apply these exact style goals: retro RPG / pixel art / old JRPG sprite / limited palette / chunky pixel clusters.
+
+Make this exact artwork read like an old JRPG battle ally sprite: crisp pixel-art-like edges, visible chunky pixel clusters, hard cel-shaded color blocks, reduced smooth gradients, limited palette per material, small stepped highlight/shadow bands at final sprite scale, strong readable outline. Match the rough dot size and sprite-like texture of the existing RPGDev Ignis, Terra, and Aqua spirit sprites.
+
+Keep the detailed anime JRPG spirit design, but remove the overly smooth high-resolution illustration finish. No chibi transformation, no tiny 8-bit icon simplification, no pose change, no character redesign, no text, no watermark, no extra characters.
+```
+
+新規キャラクターをゼロから作る場合も、上記の必須語句を入れたうえで `game ally sprite source`,
+`full body centered with generous padding`, `3/4 rear-side view from behind-left`,
+`facing right toward enemies`, `crop-friendly`, `crisp sprite-like outline` を指定する。
+禁止方向は generic smooth anime への漂流、Western fantasy painting、photorealism、3D、vector、chibi、
+front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字/UI。
+
+現時点の採用状態：
+- `Aqua` は `public/assets/sprites/ally-water-facing-slit.png`。元 `ally-water-facing.png` の alpha を適用済み。
+- 戦闘表示の `Aqua` は `public/overlay.css` の `.ally-water` で他より 1割大きめに表示する。
+- `Sylph` は `public/assets/sprites/ally-wind.png`。上記の風 Sylph 採用プロンプトで再生成した retro/pixel 版。
+- `Sylph` damaged は `public/assets/sprites/ally-wind-damaged.png`。2026-06-15 に候補 C/v39 相当を採用。通常版 `ally-wind.png`
+  との位置差は頭中心 `+1.0px/+0.5px`、右足先中心 `-1.0px/+0.5px` で、同一 CSS 位置/倍率で表示できる。
+- 精霊4体の配置確認は `/control/layout-spirits` を使う。`layoutPreview: true` の間は反撃ループを止め、
+  確認中に精霊が被弾/帰還して消えないようにする。
+
 **v0.5.0 追加（詳細は docs §13）**：①精霊は勇者スキル攻撃の後に在席全員がランダム順で追撃（フロント生成・脱Hook維持）。
 ②勇者＋全精霊が攻撃し切ってキューが空くと、モンスターが8秒おきに反撃（対象は勇者/在席精霊からランダム）＝被弾エフェクト＋`damage-hit` 音。
 タイミングは実クロックを持つフロント駆動（reducer はタイマー非保持）。③各精霊は被弾5回で退場（`life`＝サーバー権威。フロントが
 `POST /control/counter-hit {hitId,allyId}` で通知→`applyCounterHit` がライフ確定・`ally_hit`/`ally_defeated` を emit。
-残ライフ3以下で被弾スプライト `ally-<element>-damaged` へ切替＝`isAllyDamaged`＝`life<=3`）。
+残ライフ3以下で被弾スプライトへ切替。現採用済みは火・土・水・風精霊で、
+`ally-fire` + `life<=3` → `ally-fire-damaged.png`、`ally-earth` + `life<=3` → `ally-earth-damaged.png`、
+`ally-water-facing-slit` + `life<=3` → `ally-water-damaged.png`、
+`ally-wind` + `life<=3` → `ally-wind-damaged.png`
+（同一キャンバス・同一CSS位置/倍率）。
 ④戦闘→探検の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
 覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストはオーナーセッション限定（`ownerSession`/`isOwnerSession`。
 **ロック中**のオーナーは素の UserPromptSubmit でも TODO でも奪われない＝作業中の乗っ取り防止）。**v0.5.3〜v0.5.4 で動的化**：オーナーがアイドル

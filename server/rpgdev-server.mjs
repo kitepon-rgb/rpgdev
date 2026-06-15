@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile, appendFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createInitialState, reduceHookEvent } from "./adventure-state.mjs";
+import { createInitialState, MONSTER_CATALOGS, reduceHookEvent } from "./adventure-state.mjs";
 
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const PROJECT_DIR = resolve(process.env.RPGDEV_PROJECT_DIR || process.cwd());
@@ -81,6 +81,17 @@ const server = createServer(async (request, response) => {
       return json(response, { ok: true, state });
     }
 
+    if (request.method === "POST" && url.pathname === "/control/layout-spirits") {
+      const result = await showSpiritLayoutPreview();
+      return json(response, result);
+    }
+
+    if (request.method === "POST" && url.pathname === "/control/layout-monster") {
+      const body = await readJsonBody(request);
+      const result = await showMonsterLayoutPreview(body);
+      return json(response, result);
+    }
+
     if (request.method === "POST" && url.pathname === "/control/demo") {
       const demoEvent = await readJsonBody(request);
       const result = await handleHook(demoEvent);
@@ -135,7 +146,7 @@ async function handleHook(body) {
   }
   // ペーシングの基準時刻はサーバー（唯一の頭）が決める。Date.now() を注入し、event.at は使わない。
   const { state: nextState, effects, normalized } = reduceHookEvent(state, body, Date.now());
-  state = nextState;
+  state = { ...nextState, layoutPreview: false };
   await saveState();
   await appendFile(EVENTS_PATH, `${JSON.stringify({ normalized, effects })}\n`);
   broadcast("state", { state, effects, event: normalized });
@@ -167,6 +178,151 @@ async function handleCounterHit(body) {
   await appendFile(EVENTS_PATH, `${JSON.stringify({ normalized, effects })}\n`);
   broadcast("state", { state, effects, event: normalized });
   return { ok: true, effects, state };
+}
+
+async function showSpiritLayoutPreview() {
+  const now = Date.now();
+  const monster = {
+    id: `layout-monster-${now}`,
+    label: "Layout Orc",
+    status: "in_progress",
+    name: "Layout Orc",
+    element: "layout",
+    sprite: "orc",
+    stage: "field",
+    counterEffect: "blunt",
+    maxHp: 999999,
+    hp: 999999,
+    dying: false,
+    wild: true,
+    hits: 0,
+    linkedTodo: true,
+    pendingDefeat: false,
+    appearedAt: now
+  };
+  state = {
+    ...state,
+    active: true,
+    phase: "battle",
+    layoutPreview: true,
+    currentTrack: "battle",
+    adventureStage: "field",
+    lastSpawnAt: now,
+    lastDefeatAt: 0,
+    quest: [{ label: "精霊4体レイアウト確認", status: "in_progress", stage: "field" }],
+    ownerSession: "layout-four-spirits",
+    subagentCounts: { "layout-four-spirits": 4 },
+    monsters: [monster],
+    allies: [
+      { id: `layout-ignis-${now}`, name: "Ignis", sprite: "ally-fire", element: "fire", life: 5, appearedAt: now },
+      { id: `layout-aqua-${now}`, name: "Aqua", sprite: "ally-water-facing-slit", element: "water", life: 5, appearedAt: now },
+      { id: `layout-sylph-${now}`, name: "Sylph", sprite: "ally-wind", element: "wind", life: 5, appearedAt: now },
+      { id: `layout-terra-${now}`, name: "Terra", sprite: "ally-earth", element: "earth", life: 5, appearedAt: now }
+    ],
+    lastEvent: {
+      id: `layout-four-spirits-${now}`,
+      at: new Date(now).toISOString(),
+      sessionId: "layout-four-spirits",
+      provider: "manual",
+      event: "LayoutPreview",
+      toolName: null,
+      summary: "精霊4体レイアウト確認",
+      todoItems: null,
+      exitCode: null,
+      raw: { cwd: PROJECT_DIR },
+      now,
+      seq: state.hookSeq || 0
+    }
+  };
+  if (!Array.isArray(state.log)) state.log = [];
+  state.log.push({
+    id: `${now}-layout-four-spirits`,
+    seq: state.hookSeq || 0,
+    at: new Date(now).toISOString(),
+    type: "layout_preview",
+    message: "精霊4体レイアウト確認",
+    provider: "manual",
+    event: "LayoutPreview"
+  });
+  state.log = state.log.slice(-100);
+  const effects = [{ type: "layout_preview" }];
+  await saveState();
+  broadcast("state", { state, effects });
+  return { ok: true, effects, state };
+}
+
+async function showMonsterLayoutPreview(body = {}) {
+  const now = Date.now();
+  const stage = ["field", "dungeon", "castle"].includes(body.stage) ? body.stage : "dungeon";
+  const catalog = MONSTER_CATALOGS[stage] || MONSTER_CATALOGS.dungeon;
+  const requested = String(body.sprite || body.name || "").toLowerCase();
+  const index = Number.isInteger(body.index) ? body.index : Number.parseInt(body.index, 10);
+  const template = catalog.find((monster) => (
+    monster.sprite.toLowerCase() === requested || monster.name.toLowerCase() === requested
+  )) || catalog[index] || catalog[0];
+  const track = stage === "castle" ? "castle-battle" : stage === "dungeon" ? "dungeon-battle" : "battle";
+  const monster = {
+    id: `layout-monster-${stage}-${template.sprite}-${now}`,
+    label: template.name,
+    status: "in_progress",
+    name: template.name,
+    element: template.element,
+    sprite: template.sprite,
+    stage,
+    counterEffect: template.counterEffect,
+    maxHp: template.hp,
+    hp: template.hp,
+    dying: false,
+    wild: true,
+    hits: 0,
+    linkedTodo: true,
+    pendingDefeat: false,
+    appearedAt: now
+  };
+  state = {
+    ...state,
+    active: true,
+    phase: "battle",
+    layoutPreview: true,
+    currentTrack: track,
+    adventureStage: stage,
+    lastSpawnAt: now,
+    lastDefeatAt: 0,
+    quest: [{ label: `${stage} monster layout: ${template.name}`, status: "in_progress", stage }],
+    ownerSession: "layout-monster-preview",
+    subagentCounts: {},
+    monsters: [monster],
+    allies: [],
+    lastEvent: {
+      id: `layout-monster-${stage}-${template.sprite}-${now}`,
+      at: new Date(now).toISOString(),
+      sessionId: "layout-monster-preview",
+      provider: "manual",
+      event: "LayoutMonsterPreview",
+      toolName: null,
+      summary: `${stage} monster layout: ${template.name}`,
+      todoItems: null,
+      exitCode: null,
+      raw: { cwd: PROJECT_DIR },
+      now,
+      seq: state.hookSeq || 0
+    }
+  };
+  if (!Array.isArray(state.log)) state.log = [];
+  state.log.push({
+    id: `${now}-layout-monster`,
+    seq: state.hookSeq || 0,
+    at: new Date(now).toISOString(),
+    type: "layout_monster_preview",
+    message: `${stage}: ${template.name}`,
+    provider: "manual",
+    event: "LayoutMonsterPreview"
+  });
+  state.log = state.log.slice(-100);
+  const effects = [{ type: "monster_appeared", monster }];
+  await saveState();
+  broadcast("state", { state, effects });
+  return { ok: true, stage, monster, available: catalog.map((entry) => ({ name: entry.name, sprite: entry.sprite })), effects, state };
 }
 
 // フロント（overlay.js）が実際に再生/取りこぼした演出を内部ログへ追記する。

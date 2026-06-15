@@ -3,7 +3,7 @@
 // TODO（クエスト）は表示用の一覧であり、進行中 TODO の完了が「紐づくエンカウント」の討伐条件になる。
 // この reducer は純粋関数（I/O なし）: reduceHookEvent(prev, event) -> { state, effects, normalized }。
 
-const MONSTER_CATALOGS = {
+export const MONSTER_CATALOGS = {
   field: [
     { name: "Slime", element: "syntax", sprite: "slime", hp: 72, counterEffect: "blunt" },
     { name: "Goblin", element: "runtime", sprite: "goblin", hp: 96, counterEffect: "blunt" },
@@ -92,10 +92,10 @@ export function createInitialState() {
 }
 
 const ALLY_CATALOG = [
-  { name: "Ignis", sprite: "ally-fire", damagedSprite: "ally-fire-damaged", element: "fire" },
-  { name: "Terra", sprite: "ally-earth", damagedSprite: "ally-earth-damaged", element: "earth" },
-  { name: "Sylph", sprite: "ally-wind", damagedSprite: "ally-wind-damaged", element: "wind" },
-  { name: "Aqua", sprite: "ally-water-facing-slit", damagedSprite: "ally-water-facing-slit-damaged", element: "water" }
+  { name: "Ignis", sprite: "ally-fire", element: "fire" },
+  { name: "Terra", sprite: "ally-earth", element: "earth" },
+  { name: "Sylph", sprite: "ally-wind", element: "wind" },
+  { name: "Aqua", sprite: "ally-water-facing-slit", element: "water" }
 ];
 
 export function reduceHookEvent(previousState, hookEvent, now) {
@@ -485,7 +485,6 @@ function summonAlly(state, event, effects) {
     id: `ally-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     name: template.name,
     sprite: template.sprite,
-    damagedSprite: template.damagedSprite,
     element: template.element,
     life: ALLY_MAX_LIFE, // 残りライフ（被弾で減算、0で退場。要件4）
     appearedAt: event.now // 表示用。時刻はサーバー now で統一（event.at＝エージェント時計は使わない）
