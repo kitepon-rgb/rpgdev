@@ -193,7 +193,7 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 `ally-water-facing-slit` + `life<=3` → `ally-water-damaged.png`、
 `ally-wind` + `life<=3` → `ally-wind-damaged.png`
 （同一キャンバス・同一CSS位置/倍率）。
-④戦闘→探検の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
+④戦闘→探検／町→探検（idle・complete→field。v0.5.7 追加）の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
 覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストはオーナーセッション限定（`ownerSession`/`isOwnerSession`。
 **ロック中**のオーナーは素の UserPromptSubmit でも TODO でも奪われない＝作業中の乗っ取り防止）。**v0.5.3〜v0.5.4 で動的化**：オーナーがアイドル
 （進行中の本物TODO・稼働サブエージェント/WFのいずれも無い）なら、別セッションが**素のメッセージでも TODO でも**オーナーを奪取してクエストを更新する（v0.5.4 で UserPromptSubmit も対称化＝クエスト単発が休眠オーナーに固定される問題を解消）。

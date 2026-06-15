@@ -355,8 +355,13 @@ function diffWorldEffect(state, releaseDefeat) {
   worldPrev.phase = phase;
   worldPrev.stage = stage;
   worldPrev.track = track;
-  // 要件5: 戦闘→探検(field/complete) の遷移は全画面トランジションで被覆する（勇者配置の瞬間移動を隠す）。
-  const transition = from.phase === "battle" && (phase === "field" || phase === "complete");
+  // 全画面トランジションで被覆する遷移：
+  //  ① 戦闘→探検/街（battle→field/complete）＝勇者配置の瞬間移動を隠す（要件5）。
+  //  ② 街→探検（idle/complete→field）＝街から冒険へ入る切り替えを演出する。
+  // from.phase は初回スナップショット/reset では null なので、明示的な idle/complete からの遷移だけが対象。
+  const leavingBattle = from.phase === "battle" && (phase === "field" || phase === "complete");
+  const enteringFieldFromTown = (from.phase === "idle" || from.phase === "complete") && phase === "field";
+  const transition = leavingBattle || enteringFieldFromTown;
   return {
     type: "world",
     phase,

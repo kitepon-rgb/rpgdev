@@ -519,8 +519,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - `damage-hit.wav` は**対話 Codex が生成**（ミッションのみ指示・ツールは Codex 自由に委譲）。Codex は自律判断で**既存規約どおり `scripts/render-sfx.mjs` に `damage-hit` 合成を追加して `npm run render:sfx` で生成**した（手続き生成の規約を維持）。Swift `sfxNames` に登録済み。
 - CSS：`#heroImage[data-action="hit"]` / `.ally[data-action="hit"] img` の被弾アニメ。
 
-### 13.5 戦闘→探検の全画面トランジション（要件5）[フロント＋アセット]
-- `diffWorldEffect` が phase `battle→field/complete` を検出して world 効果に `transition`＋`label` を付与。`playEffect` の world(transition) が `#sceneTransition` を再生（`fxAnimMs` で 1500ms キューを占有。通常 world は即時=0 のまま）。
+### 13.5 戦闘→探検／町→探検の全画面トランジション（要件5。町→探検は v0.5.7 追加）[フロント＋アセット]
+- `diffWorldEffect` が phase `battle→field/complete`（戦闘から出る＝勇者配置の瞬間移動を隠す）と `idle/complete→field`（町→探検＝冒険へ入る切り替え演出。v0.5.7 追加）を検出して world 効果に `transition`＋`label` を付与。`from.phase` は初回スナップショット/reset では null なので、明示的な battle/idle/complete からの遷移だけが対象＝窓を開いた瞬間の誤発火は無い。`playEffect` の world(transition) が `#sceneTransition` を再生（`fxAnimMs` で 1500ms キューを占有。通常 world は即時=0 のまま）。
 - タイトル一枚絵 `public/assets/title.png`（**対話 Codex 生成**、既存背景とトーン一致、文字焼き込み無し、中央上は穏やか）を全画面背景に、テキストが**右上→中央で一瞬静止→左下**へ流れる（フォント＝自己ホスト Cinzel `public/fonts/cinzel.woff2`・OFL）。
 - **被覆ピーク（中央静止）で `applyWorld`（背景/勇者/phase 差替）を実行**＝勇者配置の瞬間移動を隠す。キュー直列の末尾（撃破→精霊帰還の後）で再生される。
 - サーバーの MIME に `.woff2/.woff/.ttf/.otf` を追加（無いと 404→無言フォールバックでフォントが効かないため必須）。
