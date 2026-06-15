@@ -1,8 +1,9 @@
 {
   "name": "rpgdev",
-  "version": "0.5.9",
+  "version": "0.5.10",
   "description": "A small macOS RPG overlay for Codex and Claude Code hook events.",
   "license": "MIT",
+  "author": "kitepon-rgb (https://github.com/kitepon-rgb)",
   "type": "module",
   "bin": {
     "rpgdev": "bin/rpgdev",

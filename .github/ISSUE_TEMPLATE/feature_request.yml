@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest an idea or improvement for RPGDev
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a feature for RPGDev!
+
+        RPGDev is a macOS-only desktop overlay (Node 20+, pure ESM, zero runtime
+        dependencies, no build step) that turns Codex / Claude Code hook events
+        into a small RPG-style window. Please keep that scope in mind: requests
+        that pull in npm runtime dependencies, a build/bundle step, or non-macOS
+        platforms are unlikely to fit.
+
+        Before opening, please search existing issues to avoid duplicates.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem are you trying to solve, or what is frustrating today? Describe the situation, not just the solution.
+      placeholder: "I'm always frustrated when [...] because [...]"
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you'd like to happen. How should it look or behave (e.g. a new effect, a hook event, a reducer rule)?
+      placeholder: Describe your idea here.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions, workarounds, or features you've considered.
+      placeholder: Other approaches you thought about (and why they fall short).
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: |
+        Anything else that helps — mockups, screenshots, related hook payloads,
+        provider (Codex / Claude Code), macOS / Node versions, or RPGDev version.
+      placeholder: Add any other context, links, or screenshots here.
+    validations:
+      required: false

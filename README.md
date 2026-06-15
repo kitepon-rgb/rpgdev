@@ -1,25 +1,46 @@
-# RPGDev Hook Adventure
+# RPGDev
 
-Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトップウィンドウの演出に変換する macOS アプリです。
+> Turn your Codex CLI / Claude Code hook events into a tiny RPG playing out on your macOS desktop.
 
-**モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は冒険ステージ別の敵カタログ（草原は Slime / Goblin / Orc / Ogre、洞窟は Skeleton / Ghoul / Witch / Grim Reaper / Succubus、城は Dullahan / Dragon / Demon Lord ほか）から、その時いるステージに応じてランダムに選ばれます。ツールを使うたびに勇者がスキル攻撃します（`PostToolUse`＝技名がツール名（整形：PascalCase、MCP はサーバ名）のスキル攻撃。`PreToolUse` は攻撃せず、エンカウント出現／精霊増援／前進のみ）。敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
+English | [日本語](README.ja.md)
 
-討伐条件は出現タイミングで変わります。**進行中の TODO が無いとき**に出た敵は、勇者のスキル攻撃（`PostToolUse`）5回、またはターン終了（`Stop`）で討伐します。**進行中（`in_progress`）の TODO があるとき**に出た敵はその項目に紐づき、攻撃では倒せず、TODO 項目が1つ `completed` になった瞬間、またはターン終了（`Stop`）で討伐します。`Stop` は TODO status の整理漏れが残っても戦闘を次ターンへ持ち越さない最終クリーンアップです。HP は演出専用です。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` などで検知。Codex は hook がツールの成否を出さないため反撃は出ません）。
+[![npm](https://img.shields.io/npm/v/rpgdev)](https://www.npmjs.com/package/rpgdev)
+![license](https://img.shields.io/npm/l/rpgdev)
+![node](https://img.shields.io/node/v/rpgdev)
+![platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 
-TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエストとして画面上部に一覧表示され、紐づくエンカウントの討伐トリガーになります。モンスターは湧かしません。
+RPGDev is a small macOS desktop overlay that converts the **hook events** your AI coding agent emits — Codex CLI and Claude Code — into a classic JRPG-style scene. Every tool call becomes a battle action, your TODO list becomes a quest log, and elemental spirits join you as allies while you work. It's a passive, ambient "your terminal is an adventure" companion: you don't play it, you just code and watch the adventure unfold.
 
-**冒険ステージ**は TODO の進捗に合わせて草原（field）→ 洞窟（dungeon）→ 城（castle）と奥へ進みます。TODO 一覧を3区画に分け、達成していくほど背景と BGM が切り替わります（TODO が無いセッションは草原のまま）。
+## Demo
 
-**戦闘の駆け引き（v0.5.0）**：
+<!-- Maintainer: drop a screenshot or GIF of the desktop overlay here, e.g. docs/screenshot.png, and reference it below. -->
+<!-- ![RPGDev overlay](docs/screenshot.png) -->
 
-- 在席している精霊（仲間）は、勇者のスキル攻撃のあとに**全員がランダムな順で追撃**します。
-- 勇者と全精霊が攻撃し切って演出キューが空くと、**モンスターが8秒おきに反撃**します（対象は勇者か在席精霊からランダム）。被弾エフェクトと被ダメージ効果音（`damage-hit`）が出ます。
-- 各精霊は**被弾を5回受けると退場**します（残ライフはサーバーが管理）。
-- 戦闘から探索へ戻る瞬間は、**タイトル画の全画面トランジション**（「Explore the Dungeon」等のテキストが右上→中央→左下へ流れる）で覆い、勇者の配置が一瞬で変わる違和感を消します。
-- クエスト一覧は**親（最初に入力した）セッション専用**で、サブエージェントや別プロセス（別の `codex`/`claude` 実行）の入力では書き換わりません。
-- `SubagentStart` / `SubagentStop` を使うと、サブエージェントの参戦／離脱で精霊が増援／帰還します（`examples/` のサンプル設定に含まれています）。
+_A small window sits on your desktop and reacts in real time as you work._
 
-設計の詳細・実機検証の根拠は [docs/design-todo-rpg.md](docs/design-todo-rpg.md) を参照。
+## Features
+
+- **Random encounters** — Monsters aren't tied to TODO items. They appear as a random encounter on every tool use (`PreToolUse`, ~20% chance), at most one at a time. Sprite and HP are picked from a stage-specific catalog (field: Slime / Goblin / Orc / Ogre, dungeon and castle have their own rosters).
+- **TODO-driven quests** — Your TODO list (Claude `TodoWrite` / Codex `update_plan`) is shown as an on-screen quest log. Completing a TODO can be the trigger that defeats a linked encounter.
+- **Elemental spirit allies** — Up to four spirits join the fight (Ignis / Terra / Sylph / Aqua = fire / earth / wind / water), follow up after the hero's skill attacks, and retire after taking enough hits. `SubagentStart` / `SubagentStop` bring allies in and out.
+- **Counter-attacks on failure** — When a tool fails, the enemy strikes back (Claude detects this via `PostToolUseFailure` / `PermissionDenied`; Codex hooks don't report tool success/failure, so no counter there).
+- **Adventure stages with BGM** — As your TODOs progress, the scene advances field → dungeon → castle, swapping background art and one of seven original JRPG-style BGM tracks.
+- **Works with both Codex and Claude Code** — One set of hooks, one server, two providers.
+
+## How defeat works
+
+The win condition is fixed the moment a monster appears, based on whether a TODO was in progress:
+
+- **No `in_progress` TODO at spawn** → defeat with **5 hero skill attacks** (`PostToolUse`) or by ending the turn (`Stop`).
+- **An `in_progress` TODO at spawn** → the encounter is *linked*; attacks can't kill it. It falls when one TODO becomes `completed`, or on turn end (`Stop`).
+
+HP is purely for show.
+
+## Requirements
+
+- macOS (the overlay is a native Swift window)
+- Node.js 20+
+- Swift compiler / Xcode Command Line Tools (the desktop window is compiled on-demand with `swiftc`)
 
 ## Install
 
@@ -27,106 +48,77 @@ TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエスト�
 npm install -g rpgdev
 ```
 
-Requirements:
-
-- macOS
-- Node.js 20+
-- Swift compiler / Xcode Command Line Tools
-
-## Start
+## Quick start
 
 ```bash
 rpgdev
 ```
 
-macOS のデスクトップ右上に小さい RPGDev ウィンドウが開きます。状態やログは、実行したプロジェクトの `.rpgdev/` に保存されます。
+A small RPGDev window opens on your macOS desktop. Runtime state and logs are written per-project under `.rpgdev/`.
 
-Web 版だけを開きたい場合:
-
-```bash
-rpgdev-server --open
-```
-
-表示: `http://127.0.0.1:37373/`
-
-## Hooks
-
-Hook からは `rpgdev-hook` を呼びます。
+To open just the web view instead of the native window:
 
 ```bash
-rpgdev-hook codex UserPromptSubmit
-rpgdev-hook claude PostToolUse
+rpgdev-server --open    # http://127.0.0.1:37373/
 ```
 
-サンプル設定:
+## Hooks setup
 
-- Codex: `examples/codex-hooks.json`
-- Claude Code: `examples/claude-settings.local.json`
+RPGDev is fed by hook events. Wire up the example configs:
 
-Codex では `examples/codex-hooks.json` の内容をプロジェクトの `.codex/hooks.json` に置きます。Claude Code では `examples/claude-settings.local.json` の内容をプロジェクトの `.claude/settings.local.json` に置きます。
+- **Claude Code** — copy [`examples/claude-settings.local.json`](examples/claude-settings.local.json) → `.claude/settings.local.json`
+- **Codex** — copy [`examples/codex-hooks.json`](examples/codex-hooks.json) → `.codex/hooks.json`
 
-Codex / Claude Code 側で project-local hooks の trust / review が必要な場合があります。
+> **Note on call style:** the two providers invoke the hook differently. Claude passes the provider and event name as an `args` array (`"command": "rpgdev-hook", "args": ["claude", "PostToolUse"]`), while Codex writes them inline in the `command` string (`"command": "rpgdev-hook codex PostToolUse"`). The example configs already use the correct form for each.
 
-## Hook Flow
+Your agent may ask you to trust / review project-local hooks before they run.
 
-- `UserPromptSubmit`: 冒険開始、ウィンドウを開く、フィールドへ
-- `PreToolUse`: 20% でモンスターのエンカウント出現判定、戦闘中なら 20% で精霊の増援判定、出なければ前進（**攻撃はしない＝勇者の通常攻撃は廃止**。攻撃は `PostToolUse` のスキル攻撃だけ）
-- `PostToolUse`:
-  - `TodoWrite` / `update_plan` → クエスト一覧を更新（`pending`＝未着手, `in_progress`＝進行中, `completed`＝達成）。各項目を冒険ステージ（field/dungeon/castle）に割り当て。新たに `completed` になった項目があれば、紐づくエンカウントを討伐
-  - それ以外のツール → スキル攻撃（技名＝ツール名を整形：PascalCase、MCP はサーバ名。例: `Bash`→Bash、`apply_patch`→ApplyPatch、`spawn_agent`→SpawnAgent、`mcp__aiterm__pty_read`→Aiterm。コマンド/パッチ本文は見ないので Codex `apply_patch` でも「***」にならない）。在席している精霊もこの時だけ追撃する
-- `PostToolUseFailure` / `PermissionDenied`（Claude のみ）: 敵が反撃。Codex は hook に成否が出ないため反撃なし
-- `SubagentStart` / `SubagentStop`: 精霊の仲間が参戦 / 帰還（FIFO＝最初に出た仲間から帰る）。モンスター討伐時は、撃破演出を見せ切ってから精霊を1体ずつ順番に帰還させ（属性色エフェクト＋帰還音）、全員帰り切ってから背景を切り替える
-- `Stop`: ターン終了。在席エンカウントを TODO 紐づきの有無に関係なく討伐し、街へ戻る（街＝待機ではクエスト窓は畳む）
+### Hook → action map
 
-モンスターはランダムエンカウント（ツール使用ごと 20%）で出現し、討伐条件は出現時に進行中 TODO があったかで決まります。
-Hook がサーバへ送れない場合は静かに成功扱いせず、stderr と `.rpgdev/hook-errors.log` にエラーを出します。
+| Hook | What happens |
+| --- | --- |
+| `UserPromptSubmit` | Start the adventure, open the window, head to the field |
+| `PreToolUse` | 20% chance to spawn an encounter; in battle, 20% chance an ally joins; otherwise advance (no attack) |
+| `PostToolUse` | `TodoWrite` / `update_plan` update the quest log; any other tool is a hero **skill attack** (move name = the tool name, formatted) — allies follow up here too |
+| `PostToolUseFailure` / `PermissionDenied` *(Claude only)* | The enemy counter-attacks |
+| `SubagentStart` / `SubagentStop` | An ally spirit joins / returns (FIFO — first in, first out) |
+| `Stop` | End of turn: any present encounter is defeated and you return to town |
 
-## Demo
+If the hook CLI can't reach the server it does **not** silently succeed — it logs to stderr and `.rpgdev/hook-errors.log` and exits non-zero.
 
-別ターミナルで `rpgdev` または `rpgdev-server` を起動した状態で:
+## How it works
 
-```bash
-npm run demo
+RPGDev is a strict **one-way pipeline**:
+
+```
+Hook event → reducer → persisted state → SSE broadcast → UI
 ```
 
-このリポジトリを clone している場合は、エンカウント出現・攻撃・討伐・一区切りまでを疑似 Hook イベントで流せます。
+1. **Hook CLI** (`rpgdev-hook <provider> <event>`) reads the hook payload from stdin, ensures the server is up, and POSTs it to `/hook`.
+2. **Server** (`node:http`, zero npm dependencies) runs the reducer, persists the result, and broadcasts over SSE.
+3. **Reducer** (`server/adventure-state.mjs`) is a pure function, `reduceHookEvent(prevState, hookEvent) → { state, effects }`, with no I/O. **It is the single source of truth** — the only unit-tested module, and the heart of the app. The UI never computes game logic; it just reacts to the broadcast `effects`.
+4. **UI** — a Swift `WKWebView` desktop window (`public/overlay.js`), plus a secondary full web view at `/` (`public/app.js`). Both subscribe to `/events` via `EventSource`.
 
-## BGM And Assets
-
-- 待機背景: `public/assets/town.png`
-- 探索背景: `public/assets/field.png`, `public/assets/dungeon.png`, `public/assets/castle.png`
-- 戦闘→探索トランジションのタイトル一枚絵: `public/assets/title.png`
-- 勇者: `public/assets/sprites/hero.png`, `hero-relax.png`, `hero-battle.png`
-- モンスター（草原）: `public/assets/sprites/slime.png`, `goblin.png`, `orc.png`, `ogre.png`
-  （洞窟）: `skeleton.png`, `ghoul.png`, `witch.png`, `grim-reaper.png`, `succubus.png`
-  （城）: `dullahan.png`, `dragon.png`, `demon-lord.png`, `dark-mage.png`, `wolf-beastwoman.png`, `dark-knight.png`
-- 仲間精霊: `public/assets/sprites/ally-fire.png`, `ally-earth.png`, `ally-wind.png`, `ally-water-facing-slit.png`
-  （残ライフ3以下では `ally-fire-damaged.png`, `ally-earth-damaged.png`, `ally-water-damaged.png`, `ally-wind-damaged.png` に差し替え）
-  （水精霊の別案として `ally-water.png`, `ally-water-facing.png` も同梱）
-- BGM: `public/audio/field.wav`, `adventure.wav`, `battle.wav`, `dungeon-adventure.wav`, `dungeon-battle.wav`, `castle-adventure.wav`, `castle-battle.wav`
-- 効果音: `public/audio/monster-appear.wav`, `public/audio/monster-defeat.wav`, `hero-normal-attack.wav`, `hero-skill-attack.wav`, `hero-finisher-attack.wav`, `ally-fire-attack.wav`, `ally-earth-attack.wav`, `ally-wind-attack.wav`, `ally-water-attack.wav`, `ally-return.wav`（精霊が撃破後に1体ずつ帰還する音）, `damage-hit.wav`（勇者/精霊がモンスターの反撃を受けた時の被ダメージ音）
-- フォント: `public/fonts/cinzel.woff2`（全画面トランジションのタイトル文字。自己ホスト・OFL）
-
-BGM は既存曲のメロディを使わないオリジナルのクラシック JRPG 調シーケンスで、冒険ステージ（草原 / 洞窟 / 城）×
-探索・戦闘の7トラックを `scripts/render-bgm.mjs` から生成します（洞窟は不穏で低速、城は荘厳な行進調）。
-攻撃効果音は `scripts/render-sfx.mjs` から生成します。`monster-appear.wav` / `monster-defeat.wav` は render-bgm/render-sfx 管轄外の別アセットで、`npm run render:bgm` では再生成されません。
-
-デスクトップウィンドウは WKWebView なので、CSS/画像/JS を更新した後に既存ウィンドウへ反映されない時は
-ウィンドウを開き直してください。
+The reducer is also responsible for **pacing**: spawn cooldowns and minimum on-screen lifetimes keep the scene calm even when many agents flood it with events, so monsters never flicker in and out.
 
 ## Development
 
 ```bash
-npm test
-npm run render:bgm        # BGM(7トラック)を再生成
-npm run render:sfx        # 攻撃/帰還の効果音を再生成
-npm run build:desktop     # Swift ウィンドウのコンパイル
-npm run trace             # 演出トレース解析（.rpgdev/ のログから二連続/欠落/取りこぼしを検出）
+npm test                 # run the node:test suite (the reducer's tests)
+npm start                # build + launch the macOS desktop window
+npm run server           # HTTP server only (no window)
+npm run web              # server + open the full web view
+npm run build:desktop    # compile the Swift window only
+npm run demo             # replay a synthetic hook sequence against a running server
+npm run trace            # analyze effect traces from .rpgdev/ logs
+npm run render:bgm       # regenerate the 7 BGM tracks
+npm run render:sfx       # regenerate attack / return SFX
 ```
 
-`.rpgdev/` には現在の状態（`state.json`）に加え、演出の診断ログ（`events.ndjson`＝reducer の emit、`playback.ndjson`＝
-ウィンドウが実際に再生/取りこぼした演出。各レコードに由来 Hook が付く）が残ります。`npm run trace` で突き合わせて解析できます。
+There is **no build/bundle step and no TypeScript** — the whole project is plain ESM with **zero runtime npm dependencies** (stdlib only). BGM and SFX are deterministically generated WAVs; edit the generators, then re-run `render:bgm` / `render:sfx` rather than editing the audio directly.
+
+The full design rationale and real-world hook verification notes live in [docs/design-todo-rpg.md](docs/design-todo-rpg.md) — read it before touching the reducer.
 
 ## License
 
-MIT
+[MIT](LICENSE)

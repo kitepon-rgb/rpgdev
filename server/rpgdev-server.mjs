@@ -388,10 +388,22 @@ async function readJsonBody(request) {
 
 async function loadState() {
   try {
-    state = JSON.parse(await readFile(STATE_PATH, "utf8"));
+    const persisted = JSON.parse(await readFile(STATE_PATH, "utf8"));
+    // dev 用レイアウトプレビュー（/control/layout-spirits|layout-monster）が保存された状態は
+    // 起動時に復元しない。さもないと偽の戦闘＋ロックされた owner（quest 更新不能）として
+    // 蘇り、再起動でいきなりプレビューの敵から始まってしまう。クリーンに開始する。
+    state = isLayoutPreviewState(persisted) ? createInitialState() : persisted;
   } catch {
     state = createInitialState();
   }
+}
+
+// 永続化された状態が dev レイアウトプレビュー由来か。owner sentinel（"layout-..."）または
+// layoutPreview フラグで判定（layoutPreview は実 Hook で false 化されるので owner も見る）。
+function isLayoutPreviewState(persisted) {
+  if (!persisted || typeof persisted !== "object") return false;
+  if (persisted.layoutPreview === true) return true;
+  return typeof persisted.ownerSession === "string" && persisted.ownerSession.startsWith("layout-");
 }
 
 async function saveState() {

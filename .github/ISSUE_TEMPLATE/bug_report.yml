@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a problem with rpgdev (the macOS Codex / Claude Code hook overlay)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug for **rpgdev**!
+
+        rpgdev is a macOS-only tool that turns Codex CLI / Claude Code hook events into a small
+        RPG-style desktop overlay window (`Hook CLI → node:http server → reducer → SSE → overlay`).
+
+        Before filing, please:
+        - Confirm you are on **macOS** with **Node 20+** (rpgdev runs nowhere else).
+        - Check the [existing issues](https://github.com/kitepon-rgb/rpgdev/issues) to avoid duplicates.
+        - If you can, reproduce with the desktop window (`npm start` / `rpgdev`) rather than the secondary web view.
+        - Grab anything useful from `.rpgdev/hook-errors.log` and `.rpgdev/server-errors.log` (see the Logs field below).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug — what went wrong in the overlay, server, hook CLI, or BGM/SFX.
+      placeholder: e.g. After running `rpgdev` the desktop window opens but stays on the title screen and never reacts to tool use.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps that trigger the bug.
+      placeholder: |
+        1. Copy `examples/claude-settings.local.json` to `.claude/settings.local.json`
+        2. Run `rpgdev` to launch the desktop window
+        3. Send a prompt in Claude Code that uses a tool
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+      placeholder: e.g. A monster encounter should appear on tool use and react to a PostToolUse skill attack.
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      description: Which agent's hooks were feeding rpgdev when the bug happened?
+      options:
+        - Codex CLI
+        - Claude Code
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Output of `sw_vers -productVersion` (e.g. 14.5).
+      placeholder: e.g. 14.5
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: Output of `node --version` (rpgdev requires Node 20+).
+      placeholder: e.g. v20.11.1
+    validations:
+      required: true
+  - type: input
+    id: rpgdev-version
+    attributes:
+      label: rpgdev version
+      description: The installed version — from `npm view rpgdev version`, your `package.json`, or `npm ls -g rpgdev`.
+      placeholder: e.g. 0.5.9
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste relevant lines from `.rpgdev/hook-errors.log` (Hook CLI failures) and `.rpgdev/server-errors.log` (server failures).
+        These live under `<your-project>/.rpgdev/`. This will be automatically formatted as a code block, so no backticks needed.
+      render: shell
+    validations:
+      required: false
