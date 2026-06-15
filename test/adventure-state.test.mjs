@@ -107,13 +107,15 @@ test("with no TODO, UserPromptSubmit shows the user input as a single in_progres
   assert.equal(r.state.adventureStage, "field");
 });
 
-test("quest stages split TODOs across field, dungeon, and castle with smaller tail stages", () => {
+test("quest stages split TODOs across field, dungeon, and castle, weighting the remainder toward later stages (castle thickest)", () => {
   const cases = [
     { count: 1, stages: ["field"] },
     { count: 2, stages: ["field", "dungeon"] },
     { count: 3, stages: ["field", "dungeon", "castle"] },
-    { count: 4, stages: ["field", "field", "dungeon", "castle"] },
-    { count: 5, stages: ["field", "field", "dungeon", "dungeon", "castle"] }
+    { count: 4, stages: ["field", "dungeon", "castle", "castle"] },
+    { count: 5, stages: ["field", "dungeon", "dungeon", "castle", "castle"] },
+    { count: 7, stages: ["field", "field", "dungeon", "dungeon", "castle", "castle", "castle"] },
+    { count: 8, stages: ["field", "field", "dungeon", "dungeon", "dungeon", "castle", "castle", "castle"] }
   ];
 
   for (const { count, stages } of cases) {
@@ -138,7 +140,7 @@ test("adventureStage follows the first unfinished TODO stage", () => {
       { content: "task 5", status: "pending" }
     ])
   );
-  assert.deepEqual(state.quest.map((q) => q.stage), ["field", "field", "dungeon", "dungeon", "castle"]);
+  assert.deepEqual(state.quest.map((q) => q.stage), ["field", "dungeon", "dungeon", "castle", "castle"]);
   assert.equal(state.adventureStage, "dungeon");
 });
 
@@ -148,7 +150,7 @@ test("Codex update_plan uses the same quest stage split as TodoWrite", () => {
     status: index < 4 ? "completed" : "in_progress"
   }));
   const { state } = reduceHookEvent(createInitialState(), updatePlan(plan));
-  assert.deepEqual(state.quest.map((q) => q.stage), ["field", "field", "dungeon", "dungeon", "castle"]);
+  assert.deepEqual(state.quest.map((q) => q.stage), ["field", "dungeon", "dungeon", "castle", "castle"]);
   assert.equal(state.adventureStage, "castle");
 });
 

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -49,7 +49,7 @@
 
             <canvas class="fx" id="fxCanvas" width="1280" height="720"></canvas>
             <div class="start-gate" id="startGate">
-              <button class="start-button" id="startButton" type="button">冒険開始</button>
+              <button class="start-button" id="startButton" type="button">Start Adventure</button>
             </div>
           </div>
         </section>
@@ -58,7 +58,7 @@
           <section class="panel headline-panel">
             <div class="phase-row">
               <span class="phase-mark" id="phaseMark"></span>
-              <span id="phaseLabel">待機</span>
+              <span id="phaseLabel">Town</span>
             </div>
             <div class="track-row">
               <span id="trackLabel">BGM: silence</span>
@@ -67,7 +67,7 @@
 
           <section class="panel">
             <div class="meter-header">
-              <span>冒険</span>
+              <span>Progress</span>
               <strong id="progressValue">0%</strong>
             </div>
             <div class="meter">
@@ -76,7 +76,7 @@
           </section>
 
           <section class="panel monster-panel" id="monsterPanel">
-            <p class="panel-label">遭遇</p>
+            <p class="panel-label">Encounter</p>
             <h2 id="monsterName">No Error</h2>
             <p class="monster-title" id="monsterTitle">Field is clear</p>
             <div class="meter danger">

@@ -673,12 +673,11 @@ function questStageCounts(total) {
   if (stageCount === 0) return [];
 
   const base = Math.floor(total / stageCount);
-  let remainder = total % stageCount;
-  return Array.from({ length: stageCount }, () => {
-    const count = base + (remainder > 0 ? 1 : 0);
-    remainder -= 1;
-    return count;
-  });
+  const remainder = total % stageCount;
+  // 端数は「後ろのステージ（castle→dungeon の順）」を厚く配る。
+  // ＝端数で base のまま据え置く（厚くしない）のは field→dungeon の順で、castle を最後に減らす。
+  // 例: 4→[1,1,2](F,D,CC) / 5→[1,2,2](F,DD,CC) / 7→[2,2,3] / 8→[2,3,3]。
+  return Array.from({ length: stageCount }, (_, i) => base + (i >= stageCount - remainder ? 1 : 0));
 }
 
 function trackForState(state) {

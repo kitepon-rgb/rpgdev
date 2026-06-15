@@ -260,7 +260,7 @@ body[data-phase="complete"] .hero {
   top: 47%;
   width: min(82vw, 520px);
   height: min(62vh, 383px);
-  z-index: 4;
+  z-index: 3; /* 勇者(5)・全精霊より背面。水精霊(Aqua z-index:4)を「敵より前・勇者より後ろ」に置くため 4→3 に下げた */
   opacity: 0;
   transform: translate(-50%, -50%) scale(0.76);
   transform-origin: center center;
@@ -1618,7 +1618,9 @@ body[data-phase="battle"] .allies {
   right: clamp(-44px, -9vw, -34px);
   bottom: clamp(-78px, -18vh, -54px);
   left: auto;
-  z-index: 5;
+  /* 精霊コンテナを stacking context にしない＝各精霊の z-index を .stage 文脈で評価し、
+     水精霊(Aqua)だけを勇者(.hero z-index:5)の背面へ回せるようにする。 */
+  z-index: auto;
   display: block;
   width: min(88vw, 620px);
   height: clamp(250px, 37.8vw, 303px); /* 精霊 1.5 倍に合わせて拡張 */
@@ -1648,6 +1650,7 @@ body[data-phase="battle"] .ally img {
 body[data-phase="battle"] .ally-fire {
   /* 画面の一番右に固定（slot 依存の calc だと中央寄りになるため明示的に右端へ） */
   position: fixed;
+  z-index: 6; /* 勇者(5)より手前。.allies の stacking context を外したので個別指定が必要 */
   right: clamp(-40px, -3vw, -12px);
   left: auto;
   bottom: clamp(-70px, -4vh, -36px);
@@ -1664,6 +1667,7 @@ body[data-phase="battle"] .ally-earth {
   /* 画面の水平中央に固定。margin:auto は `.ally + .ally` の margin-left:0 に負けるため、
      幅の半分だけ左にずらして中央寄せする（transform はフロート演出が使うので不可）。 */
   position: fixed;
+  z-index: 6; /* 勇者(5)より手前。中央下で勇者と重なるが前面に保つ */
   left: calc(50% - clamp(154px, 23.25vw, 186px));
   right: auto;
   bottom: clamp(-44px, -5vh, -30px);
@@ -1702,7 +1706,7 @@ body[data-phase="battle"] .ally-water {
   left: clamp(-12px, 1vw, 6px);
   right: auto;
   bottom: auto;
-  z-index: 8;
+  z-index: 4; /* 勇者(.hero z-index:5)の背面、かつモンスター(z-index:3)より前面（要望：水の精霊より勇者を前・モンスターより水を前） */
   width: clamp(295px, 49.82vw, 418px);
   min-width: clamp(295px, 49.82vw, 418px);
   transform-origin: 58% 42%;

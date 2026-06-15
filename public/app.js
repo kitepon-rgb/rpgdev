@@ -21,10 +21,10 @@ const canvas = document.querySelector("#fxCanvas");
 const ctx = canvas.getContext("2d");
 
 const phaseText = {
-  idle: "待機",
-  field: "探索",
-  battle: "戦闘",
-  complete: "一区切り"
+  idle: "Town",
+  field: "Explore",
+  battle: "Battle",
+  complete: "Clear"
 };
 
 const stageBackgrounds = {
@@ -109,15 +109,15 @@ function renderState(state) {
   winValue.textContent = defeated;
 
   if (target) {
-    monsterName.textContent = target.dying ? `${target.name}（瀕死）` : target.name;
+    monsterName.textContent = target.dying ? `${target.name} (Dying)` : target.name;
     monsterTitle.textContent = target.label || "";
-    monsterHp.textContent = target.dying ? "瀕死" : `${target.hp} / ${target.maxHp}`;
+    monsterHp.textContent = target.dying ? "Dying" : `${target.hp} / ${target.maxHp}`;
     monsterHpFill.style.width = `${Math.max(0, Math.round((target.hp / target.maxHp) * 100))}%`;
     monsterQueue.textContent = `${remaining}`;
   } else {
-    monsterName.textContent = remaining ? "探索中" : "No Monster";
+    monsterName.textContent = remaining ? "Exploring" : "No Monster";
     monsterTitle.textContent =
-      state.phase === "complete" ? "Quest clear" : remaining ? `待機 ${remaining}` : "Field is clear";
+      state.phase === "complete" ? "Quest clear" : remaining ? `Standby ${remaining}` : "Field is clear";
     monsterHp.textContent = "0 / 0";
     monsterHpFill.style.width = "0%";
     monsterQueue.textContent = `${remaining}`;

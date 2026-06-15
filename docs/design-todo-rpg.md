@@ -86,8 +86,8 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 クエスト（TODO）の進捗に応じて自然に奥へ進む演出で、TODO が無いセッションでは常に `field`。
 
 - **TODO をステージに割り当てる**（`assignQuestStages` / `questStageCounts`）：
-  TODO 一覧を元の順序のまま field→dungeon→castle の3区画へ均等割りする。割り切れない端数は**前のステージ（field 側）を厚く**配る
-  （例：1件=[field]、2件=[field,dungeon]、3件=[field,dungeon,castle]、4件=[field,field,dungeon,castle]、5件=[field,field,dungeon,dungeon,castle]）。
+  TODO 一覧を元の順序のまま field→dungeon→castle の3区画へ均等割りする。割り切れない端数は**後ろのステージ（castle 側）を厚く**配る（端数で base のまま据え置く＝減らすのは field→dungeon の順、castle を最後に減らす）
+  （例：1件=[field]、2件=[field,dungeon]、3件=[field,dungeon,castle]、4件=[field,dungeon,castle,castle]、5件=[field,dungeon,dungeon,castle,castle]、7件=[field,field,dungeon,dungeon,castle,castle,castle]）。
   各クエスト項目は `stage` フィールドを持つ（`{ label, status, stage }`）。
 - **現在地＝最初の未完了 TODO のステージ**（`currentAdventureStage`）：completed を消化していくほど奥（dungeon→castle）へ進む。
   全完了なら最後の項目のステージ。TODO 不在（合成クエスト含む）や未知の値は `field` にフォールバック。
@@ -364,7 +364,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
     なることがあり、街に戻ったのに未完了 TODO が残ると違和感が出るため、街の待機（idle/complete）ではクエスト窓ごと畳む。
   - **ヘッダーは1行**：「RPGDev ◆ <フェーズ>」。RPGDev は金グラデのゲームタイトル（フェーズ名と同サイズ、菱形セパレータ）。ヘッダー高 60px。
   - **戦闘配置**：勇者は左下（戦闘時 +10%）、モンスター中央（-20%）、精霊は属性ごとに固定（水=左上, 風=右上, 火=右端・下げ気味, 地=中央下）。モンスター名は1.7倍。
-    勇者は常にモンスターより前面に描く（`.hero` z-index=5 > `.monster` z-index=4。同値だと DOM 後勝ちで勇者が敵の裏に回るため。v0.3.1）。
+    重なり順（背面→前面）は `.monster`(z-index:3) < 水精霊 `.ally-water`(4) < `.hero`(5) < 火/地 `.ally-fire`/`.ally-earth`(6) < 風 `.ally-wind`(8)。勇者は敵と水精霊の前面、火/地/風は勇者の前面（v0.3.1 で hero>monster を導入、v0.5.8 で水精霊を「敵より前・勇者より後ろ」に調整＝`.allies` の stacking context を外して各精霊を `.stage` 文脈で個別評価し、monster を 4→3 に下げて水精霊との隙間を作った）。
   - 仲間精霊スプライトを追加：火/地/風/水。`Aqua`（水）は `ally-water-facing-slit.png`。
   - `public/app.js`（補助 Web ビュー）：state/effect の一部に追従（冒険ステージの背景切替・進捗HUD・effect ごとのパーティクル演出）。精霊スプライトは描画しない（overlay.js 専用。`ally_summon`/`ally_return` は汎用バーストのみ）。
   - **BGM：7トラックを `scripts/render-bgm.mjs` から生成**（`field` / `adventure` / `battle` / `dungeon-adventure` / `dungeon-battle` / `castle-adventure` / `castle-battle`）。

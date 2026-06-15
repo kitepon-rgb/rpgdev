@@ -22,9 +22,9 @@ const stage = document.querySelector(".stage");
 const ctx = canvas.getContext("2d");
 
 const phaseText = {
-  idle: "待機",
-  field: "探索",
-  battle: "戦闘",
+  idle: "Town",
+  field: "Explore",
+  battle: "Battle",
   complete: "Clear"
 };
 
@@ -452,7 +452,7 @@ function renderRoster(quest, phase) {
   title.className = "roster-title";
   // TODO（TodoWrite/update_plan）由来は「連続」、TODO 不在時のユーザー入力(synthetic)は「単発」。
   const isSynthetic = items.some((it) => it.synthetic);
-  title.textContent = isSynthetic ? "クエスト（単発）" : "クエスト（連続）";
+  title.textContent = isSynthetic ? "Quest (one-off)" : "Quest (ongoing)";
   const count = document.createElement("span");
   count.className = "roster-count";
   count.textContent = `${doneCount} / ${total}`;

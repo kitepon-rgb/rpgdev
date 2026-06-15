@@ -81,7 +81,7 @@ TODO（TodoWrite / update_plan）は state.quest（label+status+stage のスナ�
 来たら本物の TODO に置き換える（synthetic は表示専用で linkedTodo には数えない）。
 
 **冒険ステージ（field → dungeon → castle）**：phase とは別に「場所」を表す `adventureStage` を持つ。
-TODO 一覧を元の順序のまま3区画へ均等割りし（端数は field 側を厚く）、各項目に `stage` を付与する。
+TODO 一覧を元の順序のまま3区画へ均等割りし（端数は castle 側を厚く＝端数で減らすのは field→dungeon の順）、各項目に `stage` を付与する。
 現在地は最初の未完了 TODO のステージで、completed が進むほど奥（dungeon→castle）へ進む。
 背景画像（field/dungeon/castle.png）と BGM トラックがステージで切り替わる。TODO 不在は常に field。
 ステージは背景/BGMと出現カタログ（敵の名簿）に影響するが、討伐条件やエンカウント確率には影響しない。詳細は docs §2.1。
@@ -216,7 +216,7 @@ state / effect に配線済み。overlay には精霊スプライト、斬撃、
 クリア等の即時演出はキューを占有しない。撃破時はキュー内の攻撃を捨てず、トドメに至った攻撃を順に
 流してから会心の一撃（`finisher`＝斬撃。技名テキストは出さず視覚演出のみ）→撃破＋消滅を流す
 （旧実装は撃破時に攻撃を破棄しており通常攻撃が欠落して見えた）。撃破中はワールド演出を約1.8秒保留して撃破を見せる）。
-勇者は常にモンスターより前面（`.hero` z-index > `.monster`）。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体。
+重なり順は `.monster`(z-index:3) < 水精霊 Aqua `.ally-water`(4) < 勇者 `.hero`(5) < 火/地(6) < 風(8)＝勇者は敵と水精霊の前面・火/地/風は勇者の前面（v0.5.8。`.allies` の stacking context を外し各精霊を `.stage` 文脈で個別評価）。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体。
 docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite payload、TODO無しセッション方針）は全て検証・決定済み。
 
 ## アーキテクチャ
