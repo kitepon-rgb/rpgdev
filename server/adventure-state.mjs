@@ -349,7 +349,7 @@ function onPreToolUse(state, event, effects) {
     step(state, event, effects);
     return;
   }
-  // モンスター在：精霊召喚（10%）だけ。召喚しなくても勇者は攻撃しない（PreToolUse は攻撃を出さない）。
+  // モンスター在：精霊召喚（20%＝BATTLE_SUMMON_CHANCE）だけ。召喚しなくても勇者は攻撃しない（PreToolUse は攻撃を出さない）。
   maybeSummonReinforcement(state, event, effects);
 }
 

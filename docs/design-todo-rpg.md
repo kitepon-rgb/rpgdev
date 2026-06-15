@@ -120,7 +120,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 
 ### 攻撃＝ツールフック（1 Hook = 1 アクション）[決定]
 - **1つの Hook では「出現 / 召喚 / 攻撃 / 前進」のいずれか1つだけ**を実行する（出現→攻撃→召喚を同一 Hook で連鎖させない＝演出上の違和感を排除）。
-- **PreToolUse**：敵不在なら 20% で出現（出たらそれだけ／出なければ前進）。敵在席なら 10% で精霊増援（召喚したらそれだけ）／召喚しなくても**勇者は攻撃しない（通常攻撃は廃止。§12）**。攻撃は PostToolUse のスキル攻撃だけ。
+- **PreToolUse**：敵不在なら 20% で出現（出たらそれだけ／出なければ前進）。敵在席なら 20% で精霊増援（召喚したらそれだけ）／召喚しなくても**勇者は攻撃しない（通常攻撃は廃止。§12）**。攻撃は PostToolUse のスキル攻撃だけ。
 - **PostToolUse → スキル攻撃。技名＝tool_name 基準**（`SKILL_DAMAGE`, 演出）。`skillName()` が tool_name を整形する：通常ツールは PascalCase（アンダースコア除去＋各語頭大文字。`apply_patch`→ApplyPatch, `spawn_agent`→SpawnAgent, `Bash`→Bash）、MCP はサーバ名（動作の1つ手前の区画を PascalCase・末尾 "mcp" 除去。`mcp__aiterm__pty_read`→Aiterm, `mcp__codex_apps__x_hermes_mcp__generate_image`→XHermes）。**コマンド/パッチ本文は一切見ない**（Codex の `apply_patch` は command が "*** Begin Patch…" だが技名は「ApplyPatch」になり「***」にならない）。出現・増援の判定はしない（Pre のみ）。
 - 攻撃も増援召喚も、敵（エンカウント）が居なければ起きない（敵不在 Hook は前進のみ）。トドメになった攻撃は、その帰結として撃破＋精霊退場を伴う（同一アクションの結果であり別アクションではない）。
 - 技名＝ツール名はプロバイダで品揃えが違う（後述）。未知ツールは生のツール名をそのまま技名に出す
@@ -132,7 +132,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 - **Codex は失敗を payload に出さない**ので検知不能＝反撃しない（§5/§7）。
 
 ### 精霊（仲間 allies）[実装済み]
-- 戦闘中、**ツール使用ごと（PreToolUse）に 10% で1体だけ増援**（`BATTLE_SUMMON_CHANCE`）。さらに **SubagentStart でも1体参戦**。
+- 戦闘中、**ツール使用ごと（PreToolUse）に 20% で1体だけ増援**（`BATTLE_SUMMON_CHANCE`=0.2）。さらに **SubagentStart でも1体参戦**。
 - 常に1体ずつ追加し、**属性の重複は避ける**（火 `Ignis` / 地 `Terra` / 風 `Sylph` / 水 `Aqua`）。**上限4体**。
   `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 - 在席中の精霊は勇者スキル攻撃に続けて現在の敵に**追撃する**（演出。`kind:"ally"`, `allyElement` 付き。討伐の5撃にはカウントしない）。
@@ -158,7 +158,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 |---|---|---|
 | SessionStart | 待機 | 拠点起動・状態ロード・BGM=town（quest/monsters/allies をクリア） |
 | UserPromptSubmit | 待機→探検 | クエスト受注、フィールドへ、BGM=field、ターン開始 |
-| PreToolUse | 探検/戦闘 | 20% エンカウント出現判定＋戦闘中なら 10% 精霊増援判定＋前進（**攻撃はしない**。§12） |
+| PreToolUse | 探検/戦闘 | 20% エンカウント出現判定＋戦闘中なら 20% 精霊増援判定＋前進（**攻撃はしない**。§12） |
 | PermissionRequest | 保留 | 足止め「!」、判断待ちの硬直 |
 | PostToolUse | ★中核 | スキル攻撃＋クエスト一覧更新＋成否分岐（下記） |
 | PreCompact | 演出 | 「記憶が霞む／霧」長期戦の区切り |
@@ -334,10 +334,10 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - PreToolUse=攻撃しない（通常攻撃廃止。§12）/ PostToolUse=スキル攻撃（技名＝tool_name を `skillName()` で整形＝PascalCase / MCP はサーバ名。コマンドは見ない）。出現・増援の判定は PreToolUse のみ。
   - **1 Hook = 1 アクション**：1つの Hook では出現/召喚/攻撃/前進のいずれか1つだけ（同一 Hook で連鎖しない）。
   - **TODO 未発生時はユーザー入力を1つの合成クエスト(`synthetic`, in_progress, stage:"field")として表示**し、TodoWrite で本物に置換。synthetic は表示専用で linkedTodo に数えない。
-  - 精霊：戦闘中の PreToolUse ごとに **10%** で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
+  - 精霊：戦闘中の PreToolUse ごとに **20%**（`BATTLE_SUMMON_CHANCE`=0.2）で1体増援＋SubagentStart で1体参戦。属性重複回避（火/地/風/水）・上限4体。
     在席中は **PostToolUse（スキル攻撃）の時だけ**現在の敵に追撃（`attack` kind:"ally"・`allyElement` 付き、討伐の5撃には数えない）。
     モンスター討伐ごとに精霊は全員消滅。SubagentStop で1体帰還（**FIFO＝最初に出た精霊から**）、在席ゼロでの Stop は無反応。
-- **テスト：47/47 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
+- **テスト：60/60 pass。** `test/adventure-state.test.mjs`（失敗検知の偽陽性修正・ランダムエンカウント出現・5撃討伐・
   ターン終了討伐・linkedTodo の completed/Stop 討伐・provider parity・冒険ステージ割り当て/追従・ステージ別 BGM・技名は tool_name 基準（PascalCase/MCP→サーバ名・"***"回避）・
   精霊 増援/参戦/重複回避/上限4/PostToolUse 限定追撃/討伐で消滅/FIFO 離脱 等）。
 - **フロントエンド：新 state/effect に配線済み。**
@@ -366,7 +366,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
   - **戦闘配置**：勇者は左下（戦闘時 +10%）、モンスター中央（-20%）、精霊は属性ごとに固定（水=左上, 風=右上, 火=右端・下げ気味, 地=中央下）。モンスター名は1.7倍。
     勇者は常にモンスターより前面に描く（`.hero` z-index=5 > `.monster` z-index=4。同値だと DOM 後勝ちで勇者が敵の裏に回るため。v0.3.1）。
   - 仲間精霊スプライトを追加：火/地/風/水。`Aqua`（水）は `ally-water-facing-slit.png`。
-  - `public/app.js`（Web ビュー）：新 state/effect に追従（精霊・冒険ステージの背景切替を含む）。
+  - `public/app.js`（補助 Web ビュー）：state/effect の一部に追従（冒険ステージの背景切替・進捗HUD・effect ごとのパーティクル演出）。精霊スプライトは描画しない（overlay.js 専用。`ally_summon`/`ally_return` は汎用バーストのみ）。
   - **BGM：7トラックを `scripts/render-bgm.mjs` から生成**（`field` / `adventure` / `battle` / `dungeon-adventure` / `dungeon-battle` / `castle-adventure` / `castle-battle`）。
     ステージごとに BPM・調・編成を変えてある（dungeon=不穏・低速、castle=荘厳・行進調）。生成器は決定的（乱数なし）。
     攻撃 SFX は `npm run render:sfx`（`scripts/render-sfx.mjs`）で生成する。
@@ -411,7 +411,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
    - サーバ：`POST /trace` → `appendPlayback`（`server/rpgdev-server.mjs`）。
    - フロント：`overlay.js` の `trace()`（`fetch keepalive`、失敗は `console.error`、握りつぶさない）。
      計測点＝`effects()`/`pumpFx()`/`clearStaleCombatQueueForDefeat()`（取りこぼしを reason 付きで）、
-     `applyWorldVisuals()`（世界遷移を由来 Hook 付きで）。`finisher` はフロント合成（`synthetic:true`）で、
+     `applyWorld()` 内の `traceWorldTransition()`（phase/stage/track の遷移を由来 Hook 付きで）。`finisher` はフロント合成（`synthetic:true`）で、
      由来は撃破を起こした Hook を引き継ぐ。
    - **Web ビュー（`app.js`）は計測しない**：診断対象は本体 UI の overlay。Web は補助ビューのため対象外。
 
@@ -419,8 +419,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - 2ログを `origin.seq` で突き合わせ、Hook ごとの emit/play/drop/hold/world を時系列表示。
 - **異常検出**：①実際の再生順（クライアント時刻 t）で**同じ攻撃タグが連続**＝「二連続」を列挙
   （ユーザー報告の症状を直接検出）。②emit したのに play も drop も記録が無い＝**欠落**（窓が閉じていた
-  可能性も含め明示）。③取りこぼしを reason 別に集計（`defeat-queued`/`max-queued`/`defeat-in-progress`/
-  `defeat-received`/`defeat-play`/`appear-hold`）。
+  可能性も含め明示）。③取りこぼし(drop)を reason 別に集計（`defeat-queued`/`max-queued`/`defeat-in-progress`/
+  `defeat-received`/`defeat-play`）。出現演出と被って保留した分は `appear-hold`（kind=hold）として drop 集計には含めず、Hook ごとのタイムラインに別途表示する。
 - オプション：`--all`（全件）/ `--seq N`（周辺詳細）/ `--anomalies`（異常まとめと再生順のみ）。
 
 > この章は「演出の乱れを後から解析するための計装」であり、ゲーム挙動（討伐条件・確率・1 Hook 1
@@ -530,15 +530,15 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ### 13.7 SubagentStart/SubagentStop の配線 [設定]
 - reducer は元々 `SubagentStart→summonAlly` / `SubagentStop→returnAlly`（FIFO）対応済みだが、**フックが未配線**だった（`.claude/settings.local.json` / `.codex/hooks.json` に無い）。両方に追加。
-- 実測（2026-06-07・events.ndjson）：ワークフロー実行中、メイン待機の時間帯に親セッションの PreToolUse/PostToolUse が多数記録＝**サブエージェントのツール使用は親フックを発火する**。一方 SubagentStart/Stop は未配線ゆえ 0 件だった（だから戦闘中 10% 増援以外で精霊が出なかった）。これを配線した（Task は公式に親で発火。**Workflow も親 session_id で SubagentStart/Stop を発火するのを実測確認＝2026-06-07・§15**）。
+- 実測（2026-06-07・events.ndjson）：ワークフロー実行中、メイン待機の時間帯に親セッションの PreToolUse/PostToolUse が多数記録＝**サブエージェントのツール使用は親フックを発火する**。一方 SubagentStart/Stop は未配線ゆえ 0 件だった（だから戦闘中の増援＝当時 10%・現 20%（`BATTLE_SUMMON_CHANCE`）以外で精霊が出なかった）。これを配線した（Task は公式に親で発火。**Workflow も親 session_id で SubagentStart/Stop を発火するのを実測確認＝2026-06-07・§15**）。
 
-> テスト：reducer **47/47 pass**（要件6・精霊ライフ/CounterHit/退場/旧 state 互換・ステージ別モンスターのテスト含む）。
+> テスト：reducer **60/60 pass**（要件6・精霊ライフ/CounterHit/退場/旧 state 互換・ステージ別モンスター・召喚20%/HP 回帰のテスト含む）。
 
 ---
 
 ## 14. v0.5.2：演出ペーシング再定義（登場4秒→初撃／攻撃・召喚を一律1秒キュー化／反撃8秒／精霊damaged≤3）[実装済み 2026-06-07]
 
-すべて `public/overlay.js`（デスクトップ窓フロント）の単一キュー側。reducer は不変＝テストは 47/47 のまま（フロント定数のためテスト非依存）。
+すべて `public/overlay.js`（デスクトップ窓フロント）の単一キュー側。reducer は不変＝テストは 60/60 のまま（フロント定数のためテスト非依存）。
 
 - **キュー再生は「モンスター登場の4秒後」起点**：`APPEAR_ATTACK_DELAY_MS` を 1500→**4000** に。サーバーの
   `MIN_MONSTER_LIFETIME_MS=4000`（討伐可能になる最短）と一致＝登場4秒後の初撃が、ちょうど討伐可能になる瞬間と揃う。
@@ -581,4 +581,4 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 **実測確認（2026-06-07）**：Workflow を1回（19エージェント）流したところ events.ndjson の SubagentStart/Stop がちょうど +19/+19 増え、いずれも**親（オーナー）の session_id で発火**（区別子は `agent_id`/`agent_type`）。＝**ワークフロー稼働分もオーナーのロックに正しく反映される**（docs §13.7 の「発火見込み」を実証）。残る不確実性は SubagentStop の取りこぼしのみだが、ターン終了（オーナーStop）が必ず解放する安全弁で恒久ロックは起きない。
 
-**テスト**：`test/adventure-state.test.mjs` に5本（synthetic オーナーからの奪取／TODOロック／サブエージェントロック＋解除/全TODO完了での解除／オーナー限定 Stop）。reducer **51/51 pass**。
+**テスト**：`test/adventure-state.test.mjs` に5本（synthetic オーナーからの奪取／TODOロック／サブエージェントロック＋解除/全TODO完了での解除／オーナー限定 Stop）。reducer **60/60 pass**。

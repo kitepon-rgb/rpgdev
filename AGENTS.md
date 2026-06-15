@@ -32,8 +32,10 @@ npm run server                        # HTTP サーバのみ起動（ウィン�
 npm run web                           # サーバ起動 + ブラウザでフル Web ビューを開く
 npm start                             # ビルド + macOS デスクトップウィンドウを起動
 npm run build:desktop                 # Swift ウィンドウのコンパイルのみ（起動しない）
-npm run render:bgm                    # public/audio/*.wav を再生成
+npm run render:bgm                    # BGM 7トラックを再生成（public/audio の BGM wav）
+npm run render:sfx                    # 攻撃/帰還/被弾の効果音(SFX)を再生成
 npm run demo                          # 起動中のサーバに対して擬似 Hook シーケンスを流す
+npm run trace                         # 演出トレースを解析（二連続/欠落/取りこぼしの検出。docs §10）
 ```
 
 `npm run demo` は事前にサーバが起動している必要がある（`rpgdev` / `npm run server`）。
@@ -42,7 +44,7 @@ npm run demo                          # 起動中のサーバに対して擬似 
 
 詳細は [docs/releasing.md](docs/releasing.md)。要点だけ：
 
-- **rpgdev は npm 公開済み**（2026-06-05 に v0.1.0 初公開）。**2回目以降の更新は granular automation トークン（bypass 2FA）で publish できる**＝バージョンを上げて `npm publish --access public` だけ。OTP 不要。
+- **rpgdev は npm 公開済み**（2026-06-05 に v0.1.0 初公開）。**2回目以降の更新は classic Automation トークン＋パッケージ側 `mfa=automation`（Publishing access = Require 2FA or automation tokens）で publish できる**＝バージョンを上げて `npm publish --access public` だけ。OTP 不要（**granular トークンや 2FA 無効化では通らない**＝2026-06-07 訂正。`npm whoami` が通れば classic トークンが入っている。詳細は docs/releasing.md）。
 - Claude に publish させるには `.claude/settings.local.json` の `permissions.allow` に `Bash(npm publish:*)` が必要（gitignore 対象なので無ければ足す）。`cd && npm publish` の複合だと許可パターンに当たらないので、`npm publish <repo path> --access public` の形で叩く。
 - **罠（もう再発しないが知っておく）**：npm の granular トークンは「まだ存在しないパッケージ」を作れない。**新規パッケージの初回 publish だけは対話 `npm login` + OTP が必須**（granular だと PUT 404、whoami 401）。既存パッケージの更新では起きない。トークンを何度替えても初回作成は通らないので、新規 publish で 404 が出たら token を疑う前に「初回は OTP」を思い出すこと。
 
@@ -79,10 +81,11 @@ TODO 一覧を元の順序のまま3区画へ均等割りし（端数は field �
 **1つの Hook では1アクションだけ**（出現／召喚／攻撃／前進のいずれか1つ）。出現→攻撃→召喚を
 同一 Hook で連鎖させない。攻撃・増援召喚は敵が居なければ起きない。
 
-精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 10% で1体だけ増援し、
+精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 20% で1体だけ増援し（`BATTLE_SUMMON_CHANCE=0.2`）、
 `SubagentStart` でも1体参戦する。常に1体ずつで属性の重複を避け（火 Ignis / 地 Terra /
-風 Sylph / 水 Aqua）、上限4体。**PostToolUse（スキル攻撃）の時だけ**現在の敵に追撃する
-（演出のみで討伐の5撃にはカウントしない。effect に `allyElement` が付き、属性別エフェクトを出す）。
+風 Sylph / 水 Aqua）、上限4体。**精霊の追撃は reducer では出さない（脱Hook）。フロント（overlay.js
+`enqueueSpiritFollowup`）が勇者スキル攻撃を再生した時点で在席精霊ぶんの追撃をキューへ生成する**
+（属性別エフェクト＋効果音。演出のみで討伐の5撃にはカウントしない。詳細は docs §12）。
 モンスターを倒すたびに精霊は全員消滅し、`SubagentStop` で1体ずつ FIFO（最初に出た精霊から）帰還する。
 `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 
@@ -216,13 +219,14 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 
 1. **Hook CLI** ([scripts/rpg-hook.mjs](scripts/rpg-hook.mjs)、`rpgdev-hook <provider> <event>` として公開)
    は Hook ペイロードを JSON として stdin から読み、サーバの起動を確認し、
-   `{provider, event, raw, at}` を `/hook` に POST する。`UserPromptSubmit` の時は
+   `{id, provider, event, raw, at}` を `/hook` に POST する（`id`＝Hook 個体識別子。docs §10）。`UserPromptSubmit` の時は
    デスクトップウィンドウも起動する。
 
 2. **サーバ** ([server/rpgdev-server.mjs](server/rpgdev-server.mjs)) は依存ゼロの
    `node:http` サーバ。`/hook` で reducer を実行し、永続化してブロードキャストする。
-   静的フロントエンドの配信に加え、`/state`、`/events`（SSE）、`/health`、
-   `/control/reset`、`/control/demo` を公開する。
+   静的フロントエンドの配信に加え、`/hook`、`/state`、`/events`（SSE）、`/health`、`/trace`、
+   `/control/reset`、`/control/demo`、`/control/counter-hit`、`/control/layout-spirits`、
+   `/control/layout-monster` を公開する。
 
 3. **Reducer / 状態機械** ([server/adventure-state.mjs](server/adventure-state.mjs))
    がアプリの心臓部であり、**唯一のユニットテスト対象モジュール**。純粋関数:
@@ -240,20 +244,24 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
    - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` なら攻撃5回または
      ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
      なった時またはターン終了(Stop)で討伐（in_progress TODO が消えると linkedTodo は解除）。
-   - 攻撃/増援判定：PreToolUse は通常攻撃に加えて 20% エンカウント出現判定と、戦闘中は
-     10% 精霊増援判定を行う（1ツール呼び出し1回）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
-     PascalCase / MCP はサーバ名。コマンド/パッチ本文は見ない＝apply_patch の「***」を回避）のみで
-     出現・増援判定はせず、在席精霊の追撃はこの PostToolUse 時のみ。
+   - 攻撃/増援判定：**PreToolUse は攻撃しない（勇者の通常攻撃は廃止）**。PreToolUse は 20% エンカウント出現判定、
+     戦闘中は 20% 精霊増援判定（`BATTLE_SUMMON_CHANCE=0.2`）、出なければ前進（1ツール呼び出し1アクション）。
+     PostToolUse はスキル攻撃（技名＝tool_name 基準＝PascalCase / MCP はサーバ名。コマンド/パッチ本文は
+     見ない＝apply_patch の「***」を回避）のみで出現・増援判定はしない。精霊の追撃は reducer では出さず、
+     フロント（overlay.js）がスキル攻撃の再生時に生成する（docs §12）。
      `SubagentStart` でも精霊1体参戦、`SubagentStop` で FIFO 帰還（最初に出た精霊から）。
    ここの挙動を変えたら [test/adventure-state.test.mjs](test/adventure-state.test.mjs) を更新すること。
 
 4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs) + [desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift))。
    `desktop.mjs` は Swift ソースを `swiftc` でオンデマンドにコンパイルし（ソースの mtime が
    バイナリより新しい時のみ再ビルド）、`.rpgdev/RPGDev.app` を生成して `/overlay.html` を
-   指して `open` する。Swift アプリはボーダーレスな `WKWebView`（`LSUIElement`/アクセサリ
-   アプリ）で、`window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
-   ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで `monster-appear` /
-   `monster-defeat` と攻撃SFXを `AVAudioPlayer` でワンショット再生）。ウィンドウの位置・サイズは終了/移動/
+   指して `open` する。Swift アプリはタイトルバー付き・4:3固定・リサイズ可能なフローティング
+   ウィンドウ（`.titled` styleMask＋`.floating` level、`LSUIElement`/アクセサリアプリ。内部解像度
+   1024x768 を全体ズームで等倍スケール）に載せた背景透過（`drawsBackground=false`）の `WKWebView` で、
+   `window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
+   ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで 11 種のワンショット SFX
+   （`monster-appear` / `monster-defeat` / 勇者攻撃3種 / 精霊4属性攻撃 / `ally-return` / `damage-hit`）を
+   `AVAudioPlayer` で再生）。ウィンドウの位置・サイズは終了/移動/
    リサイズ時に `UserDefaults` に保存し、次回起動で復元する（ディスプレイ構成が変わったら既定位置に
    リセット。`isRestorable=false` で macOS 自動復元と競合させず自前管理）。
 
@@ -268,8 +276,9 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 ## 状態・永続化・設定
 
 - 実行時の状態はすべて **プロジェクト単位** で `<PROJECT_DIR>/.rpgdev/` 配下に書かれる:
-  `state.json`（現在の状態、起動時に読み込む）、`events.ndjson`（追記専用イベントログ）、
-  `*-errors.log`。`.rpgdev/` は gitignore 済み。
+  `state.json`（現在の状態、起動時に読み込む）、`events.ndjson`（reducer の emit ログ。各 effect は
+  由来 Hook の `origin` 付き）、`playback.ndjson`（overlay が実際に再生/取りこぼした演出のトレース。
+  `POST /trace` 由来。演出の乱れ解析用＝docs §10）、`*-errors.log`。`.rpgdev/` は gitignore 済み。
 - `PROJECT_DIR` は既定で `process.cwd()`。`RPGDEV_PROJECT_DIR` 環境変数経由で起動した
   子プロセスに伝播されるので、3 つのエントリポイントすべてが読み書き先で一致する。
 - 環境変数: `RPGDEV_PORT`（既定 37373）、`RPGDEV_HOST`（既定 127.0.0.1）、

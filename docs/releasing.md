@@ -58,8 +58,10 @@
 
 ## メモ
 
-- パッケージサイズは約 32MB（2026-06-06 時点の `npm pack --dry-run` で 32.2MB）。
-  `public/audio/*.wav` と `public/assets/*.png` が主因。精霊スプライトや再生成 BGM を追加した時は
-  `npm pack --dry-run` で同梱サイズを確認する。軽量化するなら別バージョンで。
+- パッケージサイズは約 89MB（2026-06-15・v0.5.6 時点の `npm pack --dry-run` で 89.3MB／76ファイル）。
+  `public/audio/*.wav`（dungeon/castle BGM を含む7トラック）と `public/assets/*.png`（ステージ別モンスター）が主因。
+  精霊スプライトや再生成 BGM を追加した時は `npm pack --dry-run` で同梱サイズを確認する。軽量化するなら別バージョンで。
+- `public/assets/sprites/` の画像生成デバッグ/作業ファイルは同 dir の `.gitignore` 許可リスト（採用スプライトだけ `!` で通す）で
+  git・npm 双方から除外している。**新しいスプライトを採用したら `.gitignore` に `!name.png` 行を足す**（足さないと同梱されない）。
 - `docs/` と `CLAUDE.md` は `package.json` の `files` に無いので npm には同梱されない（dev 用なので正しい）。
 - GitHub のタグと揃えるなら `git tag vX.Y.Z && git push origin vX.Y.Z`。

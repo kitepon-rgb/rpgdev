@@ -32,7 +32,8 @@ npm run server                        # HTTP サーバのみ起動（ウィン�
 npm run web                           # サーバ起動 + ブラウザでフル Web ビューを開く
 npm start                             # ビルド + macOS デスクトップウィンドウを起動
 npm run build:desktop                 # Swift ウィンドウのコンパイルのみ（起動しない）
-npm run render:bgm                    # public/audio/*.wav を再生成
+npm run render:bgm                    # BGM 7トラックを再生成（public/audio の BGM wav）
+npm run render:sfx                    # 攻撃/帰還/被弾の効果音(SFX)を再生成
 npm run demo                          # 起動中のサーバに対して擬似 Hook シーケンスを流す
 npm run trace                         # 演出トレースを解析（二連続/欠落/取りこぼしの検出。docs §10）
 ```
@@ -45,7 +46,7 @@ npm run trace                         # 演出トレースを解析（二連続/
 
 詳細は [docs/releasing.md](docs/releasing.md)。要点だけ：
 
-- **rpgdev は npm 公開済み**（2026-06-05 に v0.1.0 初公開）。**2回目以降の更新は granular automation トークン（bypass 2FA）で publish できる**＝バージョンを上げて `npm publish --access public` だけ。OTP 不要。
+- **rpgdev は npm 公開済み**（2026-06-05 に v0.1.0 初公開）。**2回目以降の更新は classic Automation トークン＋パッケージ側 `mfa=automation`（Publishing access = Require 2FA or automation tokens）で publish できる**＝バージョンを上げて `npm publish --access public` だけ。OTP 不要（**granular トークンや 2FA 無効化では通らない**＝2026-06-07 訂正。`npm whoami` が通れば classic トークンが入っている。詳細は docs/releasing.md）。
 - Claude に publish させるには `.claude/settings.local.json` の `permissions.allow` に `Bash(npm publish:*)` が必要（gitignore 対象なので無ければ足す）。`cd && npm publish` の複合だと許可パターンに当たらないので、`npm publish <repo path> --access public` の形で叩く。
 - **罠（もう再発しないが知っておく）**：npm の granular トークンは「まだ存在しないパッケージ」を作れない。**新規パッケージの初回 publish だけは対話 `npm login` + OTP が必須**（granular だと PUT 404、whoami 401）。既存パッケージの更新では起きない。トークンを何度替えても初回作成は通らないので、新規 publish で 404 が出たら token を疑う前に「初回は OTP」を思い出すこと。
 
@@ -83,12 +84,12 @@ TODO（TodoWrite / update_plan）は state.quest（label+status+stage のスナ�
 TODO 一覧を元の順序のまま3区画へ均等割りし（端数は field 側を厚く）、各項目に `stage` を付与する。
 現在地は最初の未完了 TODO のステージで、completed が進むほど奥（dungeon→castle）へ進む。
 背景画像（field/dungeon/castle.png）と BGM トラックがステージで切り替わる。TODO 不在は常に field。
-ステージは演出専用で、討伐条件やエンカウント確率には影響しない。詳細は docs §2.1。
+ステージは背景/BGMと出現カタログ（敵の名簿）に影響するが、討伐条件やエンカウント確率には影響しない。詳細は docs §2.1。
 
 **1つの Hook では1アクションだけ**（出現／召喚／攻撃／前進のいずれか1つ）。出現→攻撃→召喚を
 同一 Hook で連鎖させない。攻撃・増援召喚は敵が居なければ起きない。
 
-精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 10% で1体だけ増援し、
+精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 20% で1体だけ増援し（`BATTLE_SUMMON_CHANCE=0.2`）、
 `SubagentStart` でも1体参戦する。常に1体ずつで属性の重複を避け（火 Ignis / 地 Terra /
 風 Sylph / 水 Aqua）、上限4体。**精霊の追撃は reducer では出さない（脱Hook。多エージェントで多重化するため）。
 フロント（overlay.js `enqueueSpiritFollowup`）が「勇者スキル攻撃を再生した時点」で在席精霊ぶんの追撃を
@@ -176,7 +177,7 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 
 現時点の採用状態：
 - `Aqua` は `public/assets/sprites/ally-water-facing-slit.png`。元 `ally-water-facing.png` の alpha を適用済み。
-- 戦闘表示の `Aqua` は `public/overlay.css` の `.ally-water` で他より 1割大きめに表示する。
+- 戦闘表示の精霊4体は `public/overlay.css`（`body[data-phase="battle"]` の `.ally-fire`/`.ally-earth`/`.ally-wind`/`.ally-water`）で各自固有の表示サイズを持つ（最大幅：火 469px / 地 372px / 風 435px / 水 418px）。`.ally-water`（Aqua）は共通基準に対する一律1割拡大ではなく固有値で、実際は火・風より小さい。
 - `Sylph` は `public/assets/sprites/ally-wind.png`。上記の風 Sylph 採用プロンプトで再生成した retro/pixel 版。
 - `Sylph` damaged は `public/assets/sprites/ally-wind-damaged.png`。2026-06-15 に候補 C/v39 相当を採用。通常版 `ally-wind.png`
   との位置差は頭中心 `+1.0px/+0.5px`、右足先中心 `-1.0px/+0.5px` で、同一 CSS 位置/倍率で表示できる。
@@ -225,17 +226,19 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 
 1. **Hook CLI** ([scripts/rpg-hook.mjs](scripts/rpg-hook.mjs)、`rpgdev-hook <provider> <event>` として公開)
    は Hook ペイロードを JSON として stdin から読み、サーバの起動を確認し、
-   `{provider, event, raw, at}` を `/hook` に POST する。`UserPromptSubmit` の時は
+   `{id, provider, event, raw, at}` を `/hook` に POST する（`id`＝Hook 個体識別子＝トレースの由来キー。docs §10）。`UserPromptSubmit` の時は
    デスクトップウィンドウも起動する。
 
 2. **サーバ** ([server/rpgdev-server.mjs](server/rpgdev-server.mjs)) は依存ゼロの
    `node:http` サーバ。`/hook` で reducer を実行し、永続化してブロードキャストする。
-   静的フロントエンドの配信に加え、`/state`、`/events`（SSE）、`/health`、
-   `/control/reset`、`/control/demo` を公開する。
+   静的フロントエンドの配信に加え、`/hook`、`/state`、`/events`（SSE）、`/health`、`/trace`、
+   `/control/reset`、`/control/demo`、`/control/counter-hit`、`/control/layout-spirits`、
+   `/control/layout-monster` を公開する。
 
 3. **Reducer / 状態機械** ([server/adventure-state.mjs](server/adventure-state.mjs))
    がアプリの心臓部であり、**唯一のユニットテスト対象モジュール**。純粋関数:
-   `reduceHookEvent(prevState, hookEvent) → { state, effects, normalized }`。I/O なし。
+   `reduceHookEvent(prevState, hookEvent, now) → { state, effects, normalized }`（`now` は
+   サーバー注入のペーシング基準時刻＝`handleHook` が渡す。docs §12）。I/O なし。
    - `normalizeHookEvent` は Codex/Claude の多様なペイロード形状
      （`hook_event_name`、`tool_input.command` など）を 1 つの正規化イベントに平坦化する。
    - `detectFailure` は Claude の失敗イベント名と構造化された失敗/exit-code フィールドだけを見る。
@@ -250,7 +253,7 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
      なった時のみ討伐（in_progress TODO が消えると linkedTodo は解除）。
    - 攻撃/増援判定：**PreToolUse は攻撃しない（勇者の通常攻撃は廃止）**。PreToolUse は 20% エンカウント出現判定、
-     戦闘中は 10% 精霊増援判定、出なければ前進（1ツール呼び出し1アクション）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
+     戦闘中は 20% 精霊増援判定（`BATTLE_SUMMON_CHANCE=0.2`）、出なければ前進（1ツール呼び出し1アクション）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
      PascalCase / MCP はサーバ名。コマンド/パッチ本文は見ない＝apply_patch の「***」を回避）のみで
      出現・増援判定はしない。**攻撃も討伐ヒットも PostToolUse スキル攻撃だけ**。精霊の追撃はフロントが
      スキル攻撃の再生時に生成する（reducer では出さない＝docs §12）。
@@ -260,10 +263,14 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs) + [desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift))。
    `desktop.mjs` は Swift ソースを `swiftc` でオンデマンドにコンパイルし（ソースの mtime が
    バイナリより新しい時のみ再ビルド）、`.rpgdev/RPGDev.app` を生成して `/overlay.html` を
-   指して `open` する。Swift アプリはボーダーレスな `WKWebView`（`LSUIElement`/アクセサリ
-   アプリ）で、`window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
-   ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで `monster-appear` /
-   `monster-defeat` を `AVAudioPlayer` でワンショット再生）。ウィンドウの位置・サイズは終了/移動/
+   指して `open` する。Swift アプリはタイトルバー付き・4:3固定・リサイズ可能なフローティング
+   ウィンドウ（`.titled` styleMask＋`.floating` level、`LSUIElement`/アクセサリアプリ。内部解像度
+   1024x768 を全体ズームで等倍スケール）に載せた背景透過（`drawsBackground=false`）の `WKWebView` で、
+   `window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
+   ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで 11 種のワンショット SFX
+   （`monster-appear` / `monster-defeat` / 勇者 `hero-normal-attack`・`hero-skill-attack`・`hero-finisher-attack` /
+   精霊 `ally-fire-attack`・`ally-earth-attack`・`ally-wind-attack`・`ally-water-attack` / `ally-return` / `damage-hit`）を
+   `AVAudioPlayer` で再生）。ウィンドウの位置・サイズは終了/移動/
    リサイズ時に `UserDefaults` に保存し、次回起動で復元する（ディスプレイ構成が変わったら既定位置に
    リセット。`isRestorable=false` で macOS 自動復元と競合させず自前管理）。
 
@@ -304,8 +311,9 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
   [scripts/render-bgm.mjs](scripts/render-bgm.mjs) で生成される（既存曲を使わないオリジナルの
   クラシック JRPG 調シーケンスを WAV に合成。決定的で乱数なし）。ジェネレータを編集してから
   `npm run render:bgm` を実行すること。BGM の WAV を直接編集しない。
-  - 例外：`public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm 管轄外の
-    効果音アセット（ジェネレータでは生成しない別ファイル）。`npm run render:bgm` では再生成されない。
+  - 例外：`public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm / render-sfx 管轄外の
+    効果音アセット（どちらのジェネレータでも生成しない別ファイル）。`npm run render:bgm` / `npm run render:sfx`
+    のどちらでも再生成されない。
 
 ## Hook の組み込み（ツール利用者向け）
 

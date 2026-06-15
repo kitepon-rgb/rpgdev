@@ -2,7 +2,7 @@
 
 Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトップウィンドウの演出に変換する macOS アプリです。
 
-**モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は Slime / Goblin / Orc / Ogre からランダムに選ばれます。ツールを使うたびに勇者がスキル攻撃します（`PostToolUse`＝技名がツール名（整形：PascalCase、MCP はサーバ名）のスキル攻撃。`PreToolUse` は攻撃せず、エンカウント出現／精霊増援／前進のみ）。敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
+**モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は冒険ステージ別の敵カタログ（草原は Slime / Goblin / Orc / Ogre、洞窟は Skeleton / Ghoul / Witch / Grim Reaper / Succubus、城は Dullahan / Dragon / Demon Lord ほか）から、その時いるステージに応じてランダムに選ばれます。ツールを使うたびに勇者がスキル攻撃します（`PostToolUse`＝技名がツール名（整形：PascalCase、MCP はサーバ名）のスキル攻撃。`PreToolUse` は攻撃せず、エンカウント出現／精霊増援／前進のみ）。敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
 
 討伐条件は出現タイミングで変わります。**進行中の TODO が無いとき**に出た敵は、勇者のスキル攻撃（`PostToolUse`）5回、またはターン終了（`Stop`）で討伐します。**進行中（`in_progress`）の TODO があるとき**に出た敵はその項目に紐づき、攻撃では倒せず、TODO 項目が1つ `completed` になった瞬間、またはターン終了（`Stop`）で討伐します。`Stop` は TODO status の整理漏れが残っても戦闘を次ターンへ持ち越さない最終クリーンアップです。HP は演出専用です。ツールが失敗すると敵が反撃します（Claude は `PostToolUseFailure` などで検知。Codex は hook がツールの成否を出さないため反撃は出ません）。
 
@@ -70,7 +70,7 @@ Codex / Claude Code 側で project-local hooks の trust / review が必要な�
 ## Hook Flow
 
 - `UserPromptSubmit`: 冒険開始、ウィンドウを開く、フィールドへ
-- `PreToolUse`: 20% でモンスターのエンカウント出現判定、戦闘中なら 10% で精霊の増援判定、出なければ前進（**攻撃はしない＝勇者の通常攻撃は廃止**。攻撃は `PostToolUse` のスキル攻撃だけ）
+- `PreToolUse`: 20% でモンスターのエンカウント出現判定、戦闘中なら 20% で精霊の増援判定、出なければ前進（**攻撃はしない＝勇者の通常攻撃は廃止**。攻撃は `PostToolUse` のスキル攻撃だけ）
 - `PostToolUse`:
   - `TodoWrite` / `update_plan` → クエスト一覧を更新（`pending`＝未着手, `in_progress`＝進行中, `completed`＝達成）。各項目を冒険ステージ（field/dungeon/castle）に割り当て。新たに `completed` になった項目があれば、紐づくエンカウントを討伐
   - それ以外のツール → スキル攻撃（技名＝ツール名を整形：PascalCase、MCP はサーバ名。例: `Bash`→Bash、`apply_patch`→ApplyPatch、`spawn_agent`→SpawnAgent、`mcp__aiterm__pty_read`→Aiterm。コマンド/パッチ本文は見ないので Codex `apply_patch` でも「***」にならない）。在席している精霊もこの時だけ追撃する
@@ -97,7 +97,9 @@ npm run demo
 - 探索背景: `public/assets/field.png`, `public/assets/dungeon.png`, `public/assets/castle.png`
 - 戦闘→探索トランジションのタイトル一枚絵: `public/assets/title.png`
 - 勇者: `public/assets/sprites/hero.png`, `hero-relax.png`, `hero-battle.png`
-- モンスター: `public/assets/sprites/slime.png`, `goblin.png`, `orc.png`, `ogre.png`
+- モンスター（草原）: `public/assets/sprites/slime.png`, `goblin.png`, `orc.png`, `ogre.png`
+  （洞窟）: `skeleton.png`, `ghoul.png`, `witch.png`, `grim-reaper.png`, `succubus.png`
+  （城）: `dullahan.png`, `dragon.png`, `demon-lord.png`, `dark-mage.png`, `wolf-beastwoman.png`, `dark-knight.png`
 - 仲間精霊: `public/assets/sprites/ally-fire.png`, `ally-earth.png`, `ally-wind.png`, `ally-water-facing-slit.png`
   （残ライフ3以下では `ally-fire-damaged.png`, `ally-earth-damaged.png`, `ally-water-damaged.png`, `ally-wind-damaged.png` に差し替え）
   （水精霊の別案として `ally-water.png`, `ally-water-facing.png` も同梱）

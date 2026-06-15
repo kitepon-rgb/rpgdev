@@ -1,0 +1,3 @@
+# One-off image-tooling helper used while authoring wind-spirit sprites.
+# Kept on disk locally but excluded from git and the published npm package.
+wind-petal-marker-server.mjs

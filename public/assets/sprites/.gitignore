@@ -1,0 +1,37 @@
+# Image-generation working/debug artifacts accumulate in this directory
+# (candidates, *-checker, *-grid-compare, masks, crops, zoom-compares, etc).
+# Keep them on disk locally, but exclude everything from git AND the published
+# npm package EXCEPT the adopted game sprites listed below.
+#
+# Adopting a NEW sprite? Add a matching `!name.png` line here, otherwise it will
+# be ignored. This is intentional: inclusion is opt-in so debug output never
+# ships in the package.
+*
+!.gitignore
+!ally-earth.png
+!ally-earth-damaged.png
+!ally-fire.png
+!ally-fire-damaged.png
+!ally-water.png
+!ally-water-facing.png
+!ally-water-facing-slit.png
+!ally-wind.png
+!ally-wind-damaged.png
+!dark-knight.png
+!dark-mage.png
+!demon-lord.png
+!dragon.png
+!dullahan.png
+!ghoul.png
+!goblin.png
+!grim-reaper.png
+!hero.png
+!hero-battle.png
+!hero-relax.png
+!ogre.png
+!orc.png
+!skeleton.png
+!slime.png
+!succubus.png
+!witch.png
+!wolf-beastwoman.png
