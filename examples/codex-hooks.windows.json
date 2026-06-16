@@ -1,0 +1,78 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd /c rpgdev-hook codex UserPromptSubmit",
+            "timeout": 5,
+            "statusMessage": "Opening the adventure window"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd /c rpgdev-hook codex PreToolUse",
+            "timeout": 3,
+            "statusMessage": "The adventure advances"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd /c rpgdev-hook codex PostToolUse",
+            "timeout": 3,
+            "statusMessage": "Updating the battle"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd /c rpgdev-hook codex Stop",
+            "timeout": 3,
+            "statusMessage": "Recording the adventure"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd /c rpgdev-hook codex SubagentStart",
+            "timeout": 3,
+            "statusMessage": "An ally joins"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd /c rpgdev-hook codex SubagentStop",
+            "timeout": 3,
+            "statusMessage": "An ally departs"
+          }
+        ]
+      }
+    ]
+  }
+}

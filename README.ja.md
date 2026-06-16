@@ -2,7 +2,7 @@
 
 # RPGDev Hook Adventure
 
-Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトップウィンドウの演出に変換する macOS アプリです。
+Codex / Claude Code の Hook イベントを、小さい RPG 風デスクトップウィンドウの演出に変換するアプリです（macOS / Windows / WSL2 対応）。
 
 **モンスターはランダムエンカウントで出現します。** ツールを使うたび（`PreToolUse`）に 20% の確率で1体だけ敵が現れ、戦闘になります。スプライトと HP は冒険ステージ別の敵カタログ（草原は Slime / Goblin / Orc / Ogre、洞窟は Skeleton / Ghoul / Witch / Grim Reaper / Succubus、城は Dullahan / Dragon / Demon Lord ほか）から、その時いるステージに応じてランダムに選ばれます。ツールを使うたびに勇者がスキル攻撃します（`PostToolUse`＝技名がツール名（整形：PascalCase、MCP はサーバ名）のスキル攻撃。`PreToolUse` は攻撃せず、エンカウント出現／精霊増援／前進のみ）。敵を倒すと探索に戻ります。待機中は街、作業中はフィールドを探検、エンカウントの敵が画面にいる間だけ戦闘になります。
 
@@ -31,9 +31,11 @@ npm install -g rpgdev
 
 Requirements:
 
-- macOS
-- Node.js 20+
-- Swift compiler / Xcode Command Line Tools
+- Node.js 20+（全プラットフォーム共通）
+- **macOS** — Swift compiler / Xcode Command Line Tools（窓は `swiftc` で必要時コンパイル）
+- **Windows** — WebView2 ランタイム（Windows 11 標準）＋ .NET Framework 4.x の `csc.exe`（窓は C# WinForms+WebView2 を必要時コンパイル）。WebView2 SDK DLL は同梱済み（追加 DL 不要）。詳細は [docs/windows-wsl.md](docs/windows-wsl.md)
+- **WSL2** — `.wslconfig` に `localhostForwarding=true`。窓は Windows ホスト側でビルド/表示。詳細は [docs/windows-wsl.md](docs/windows-wsl.md)
+- **素の Linux** — デスクトップ窓は未対応。ブラウザ表示（`npm run web`）を使用
 
 ## Start
 
@@ -41,7 +43,7 @@ Requirements:
 rpgdev
 ```
 
-macOS のデスクトップ右上に小さい RPGDev ウィンドウが開きます。状態やログは、実行したプロジェクトの `.rpgdev/` に保存されます。
+デスクトップ右上に小さい RPGDev ウィンドウが開きます（macOS / Windows。WSL2 では Windows ホスト側に表示）。状態やログは、実行したプロジェクトの `.rpgdev/` に保存されます。Windows/WSL2 のセットアップは [docs/windows-wsl.md](docs/windows-wsl.md) を参照。
 
 Web 版だけを開きたい場合:
 
@@ -113,8 +115,8 @@ BGM は既存曲のメロディを使わないオリジナルのクラシック 
 探索・戦闘の7トラックを `scripts/render-bgm.mjs` から生成します（洞窟は不穏で低速、城は荘厳な行進調）。
 攻撃効果音は `scripts/render-sfx.mjs` から生成します。`monster-appear.wav` / `monster-defeat.wav` は render-bgm/render-sfx 管轄外の別アセットで、`npm run render:bgm` では再生成されません。
 
-デスクトップウィンドウは WKWebView なので、CSS/画像/JS を更新した後に既存ウィンドウへ反映されない時は
-ウィンドウを開き直してください。
+デスクトップウィンドウは WebView（macOS は WKWebView、Windows/WSL2 は WebView2）なので、CSS/画像/JS を
+更新した後に既存ウィンドウへ反映されない時はウィンドウを開き直してください。
 
 ## Development
 
@@ -122,7 +124,7 @@ BGM は既存曲のメロディを使わないオリジナルのクラシック 
 npm test
 npm run render:bgm        # BGM(7トラック)を再生成
 npm run render:sfx        # 攻撃/帰還の効果音を再生成
-npm run build:desktop     # Swift ウィンドウのコンパイル
+npm run build:desktop     # デスクトップ窓のコンパイル（macOS=Swift / Windows・WSL2=C#）
 npm run trace             # 演出トレース解析（.rpgdev/ のログから二連続/欠落/取りこぼしを検出）
 ```
 

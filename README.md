@@ -1,15 +1,15 @@
 # RPGDev
 
-> Turn your Codex CLI / Claude Code hook events into a tiny RPG playing out on your macOS desktop.
+> Turn your Codex CLI / Claude Code hook events into a tiny RPG playing out on your desktop (macOS, Windows, WSL2).
 
 English | [日本語](README.ja.md)
 
 [![npm](https://img.shields.io/npm/v/rpgdev)](https://www.npmjs.com/package/rpgdev)
 ![license](https://img.shields.io/npm/l/rpgdev)
 ![node](https://img.shields.io/node/v/rpgdev)
-![platform](https://img.shields.io/badge/platform-macOS-lightgrey)
+![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20WSL2-lightgrey)
 
-RPGDev is a small macOS desktop overlay that converts the **hook events** your AI coding agent emits — Codex CLI and Claude Code — into a classic JRPG-style scene. Every tool call becomes a battle action, your TODO list becomes a quest log, and elemental spirits join you as allies while you work. It's a passive, ambient "your terminal is an adventure" companion: you don't play it, you just code and watch the adventure unfold.
+RPGDev is a small desktop overlay (macOS, Windows, and WSL2) that converts the **hook events** your AI coding agent emits — Codex CLI and Claude Code — into a classic JRPG-style scene. Every tool call becomes a battle action, your TODO list becomes a quest log, and elemental spirits join you as allies while you work. It's a passive, ambient "your terminal is an adventure" companion: you don't play it, you just code and watch the adventure unfold.
 
 ## Demo
 
@@ -38,9 +38,11 @@ HP is purely for show.
 
 ## Requirements
 
-- macOS (the overlay is a native Swift window)
-- Node.js 20+
-- Swift compiler / Xcode Command Line Tools (the desktop window is compiled on-demand with `swiftc`)
+- Node.js 20+ (all platforms)
+- **macOS** — Swift compiler / Xcode Command Line Tools (the window is compiled on-demand with `swiftc`)
+- **Windows** — WebView2 Runtime (preinstalled on Windows 11) + .NET Framework 4.x `csc.exe` (the window is a C# WinForms + WebView2 host, compiled on-demand). The WebView2 SDK DLLs are bundled, so no extra download. See [docs/windows-wsl.md](docs/windows-wsl.md).
+- **WSL2** — `.wslconfig` with `localhostForwarding=true`; the window is built and shown on the Windows host. See [docs/windows-wsl.md](docs/windows-wsl.md).
+- **bare Linux** — no desktop window yet; use the browser view (`npm run web`).
 
 ## Install
 
@@ -54,7 +56,7 @@ npm install -g rpgdev
 rpgdev
 ```
 
-A small RPGDev window opens on your macOS desktop. Runtime state and logs are written per-project under `.rpgdev/`.
+A small RPGDev window opens on your desktop (macOS / Windows; on WSL2 it appears on the Windows host). Runtime state and logs are written per-project under `.rpgdev/`. Windows/WSL2 setup details: [docs/windows-wsl.md](docs/windows-wsl.md).
 
 To open just the web view instead of the native window:
 
@@ -97,7 +99,7 @@ Hook event → reducer → persisted state → SSE broadcast → UI
 1. **Hook CLI** (`rpgdev-hook <provider> <event>`) reads the hook payload from stdin, ensures the server is up, and POSTs it to `/hook`.
 2. **Server** (`node:http`, zero npm dependencies) runs the reducer, persists the result, and broadcasts over SSE.
 3. **Reducer** (`server/adventure-state.mjs`) is a pure function, `reduceHookEvent(prevState, hookEvent) → { state, effects }`, with no I/O. **It is the single source of truth** — the only unit-tested module, and the heart of the app. The UI never computes game logic; it just reacts to the broadcast `effects`.
-4. **UI** — a Swift `WKWebView` desktop window (`public/overlay.js`), plus a secondary full web view at `/` (`public/app.js`). Both subscribe to `/events` via `EventSource`.
+4. **UI** — a desktop window hosting the overlay (`public/overlay.js`): a Swift `WKWebView` on macOS, a C# WinForms + WebView2 host on Windows / WSL2 (`scripts/desktop.mjs` dispatches per platform). Plus a secondary full web view at `/` (`public/app.js`). Both subscribe to `/events` via `EventSource`.
 
 The reducer is also responsible for **pacing**: spawn cooldowns and minimum on-screen lifetimes keep the scene calm even when many agents flood it with events, so monsters never flicker in and out.
 
@@ -105,10 +107,10 @@ The reducer is also responsible for **pacing**: spawn cooldowns and minimum on-s
 
 ```bash
 npm test                 # run the node:test suite (the reducer's tests)
-npm start                # build + launch the macOS desktop window
+npm start                # build + launch the desktop window (per platform)
 npm run server           # HTTP server only (no window)
 npm run web              # server + open the full web view
-npm run build:desktop    # compile the Swift window only
+npm run build:desktop    # compile the desktop window only (Swift on macOS, C# on Windows/WSL2)
 npm run demo             # replay a synthetic hook sequence against a running server
 npm run trace            # analyze effect traces from .rpgdev/ logs
 npm run render:bgm       # regenerate the 7 BGM tracks

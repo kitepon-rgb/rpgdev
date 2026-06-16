@@ -4,13 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 概要
 
-RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風 macOS デスクトップ
+RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風デスクトップ
 ウィンドウの演出に変換するツール。モンスターはツール使用ごとに一定確率で出現する
 **ランダムエンカウント**で、ツール利用が攻撃になる。撃破条件は出現時に紐づいた TODO の
 有無で変わる（攻撃5回／ターン終了で討伐、または紐づき TODO の完了で討伐）。TODO は
 クエスト一覧として表示しつつ、紐づきエンカウントの討伐トリガーにもなる。
-macOS 専用、Node 20+、全体が ESM
+macOS / Windows（WSL2 含む）対応、Node 20+、全体が ESM
 (`"type": "module"`)。JS のビルド/バンドル工程はなく、TypeScript も使っていない。
+デスクトップ窓だけがプラットフォーム依存（macOS=Swift+WKWebView / Windows=C# WinForms+WebView2 /
+WSL2=Windows ホスト側に interop で同窓を起動 / 素の Linux は窓なし＝`npm run web`）。詳細は
+[docs/windows-wsl.md](docs/windows-wsl.md)。
 
 ## RPGDev 固有の検証ルール
 
@@ -260,24 +263,32 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      `SubagentStart` でも精霊1体参戦、`SubagentStop` で FIFO 帰還（最初に出た精霊から）。
    ここの挙動を変えたら [test/adventure-state.test.mjs](test/adventure-state.test.mjs) を更新すること。
 
-4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs) + [desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift))。
-   `desktop.mjs` は Swift ソースを `swiftc` でオンデマンドにコンパイルし（ソースの mtime が
-   バイナリより新しい時のみ再ビルド）、`.rpgdev/RPGDev.app` を生成して `/overlay.html` を
-   指して `open` する。Swift アプリはタイトルバー付き・4:3固定・リサイズ可能なフローティング
-   ウィンドウ（`.titled` styleMask＋`.floating` level、`LSUIElement`/アクセサリアプリ。内部解像度
-   1024x768 を全体ズームで等倍スケール）に載せた背景透過（`drawsBackground=false`）の `WKWebView` で、
-   `window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
-   ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで 11 種のワンショット SFX
-   （`monster-appear` / `monster-defeat` / 勇者 `hero-normal-attack`・`hero-skill-attack`・`hero-finisher-attack` /
-   精霊 `ally-fire-attack`・`ally-earth-attack`・`ally-wind-attack`・`ally-water-attack` / `ally-return` / `damage-hit`）を
-   `AVAudioPlayer` で再生）。ウィンドウの位置・サイズは終了/移動/
-   リサイズ時に `UserDefaults` に保存し、次回起動で復元する（ディスプレイ構成が変わったら既定位置に
-   リセット。`isRestorable=false` で macOS 自動復元と競合させず自前管理）。
+4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs))。`desktop.mjs` は
+   [scripts/desktop-platform.mjs](scripts/desktop-platform.mjs) の `detectPlatform()` で
+   darwin / win32 / wsl / linux に分岐する。**唯一のプラットフォーム依存部**で、reducer/server/フロント等は
+   全 OS 共通。
+   - **macOS**（[desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift)）。Swift を `swiftc` でオンデマンド
+     コンパイルし（mtime 判定）、`.rpgdev/RPGDev.app` を生成して `open` する。タイトルバー付き・4:3固定・
+     リサイズ可能なフローティング窓（`.titled`＋`.floating`、`LSUIElement`、内部 1024x768 を全体ズーム）に
+     載せた背景透過（`drawsBackground=false`）の `WKWebView`。`window.webkit.messageHandlers.rpgdev` の
+     JS↔Swift ブリッジで音声をネイティブ再生（7 BGM ループ＋11 SFX を `AVAudioPlayer`）。位置/サイズは
+     `UserDefaults` に保存し復元（ディスプレイ構成変更でリセット、`isRestorable=false`）。
+   - **Windows / WSL2**（[desktop/RPGDevWindow.cs](desktop/RPGDevWindow.cs)）。C# WinForms+WebView2 を
+     在来 `csc.exe`（.NET Framework 4.x）でオンデマンドコンパイル（swiftc 方式と同型・npm 依存ゼロ）。
+     **ネイティブ音声ブリッジは無い**＝overlay の `<audio>`/WebAudio が鳴らす（BGM は同じ WAV、SFX は合成版）。
+     リサイズ品質は Window-to-Visual hosting（ちらつき防止）＋ ZoomFactor 再ラスタライズ＋整数倍 letterbox
+     （ドット絵維持。`BoundsMode=UseRawPixels`/`RasterizationScale=1`）。最前面/タスクバー非表示/4:3/位置永続化
+     （`.rpgdev/desktop-window-win.json`）/単一インスタンス（C# named Mutex）。win32 は `.rpgdev/RPGDevWin/RPGDev.exe`、
+     wsl は interop で Windows 側 `%LOCALAPPDATA%\rpgdev\<hash>` にビルドし localhost 転送で窓を起動。
+     WebView2 SDK DLL は `desktop/webview2/` に同梱（無ければ明確エラー）。詳細は
+     [docs/windows-wsl.md](docs/windows-wsl.md)。
+   - **素の Linux**：窓なし。`npm run web`（ブラウザ表示）へ明確に誘導。
 
 5. **2 つのフロントエンド、1 つのサーバ:**
    - `/` → [public/index.html](public/index.html) + [public/app.js](public/app.js) — フル Web ビュー。
-   - `/overlay.html` → [public/overlay.js](public/overlay.js) — Swift WebView 内で読み込む
-     コンパクトなウィンドウ UI。ネイティブブリッジが無い時はページ内 WebAudio に
+   - `/overlay.html` → [public/overlay.js](public/overlay.js) — デスクトップ窓の WebView
+     （macOS=WKWebView / Windows・WSL2=WebView2）内で読み込むコンパクトなウィンドウ UI。
+     ネイティブブリッジが無い時（Windows/WSL2 や素のブラウザ）はページ内 WebAudio に
      フォールバックする。
    どちらも `/events` を `EventSource` で購読し、`effects` 配列に反応するだけで、
    ゲームロジック自体は計算しない —— サーバが唯一の信頼できる情報源。

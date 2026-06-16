@@ -582,3 +582,25 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 **実測確認（2026-06-07）**：Workflow を1回（19エージェント）流したところ events.ndjson の SubagentStart/Stop がちょうど +19/+19 増え、いずれも**親（オーナー）の session_id で発火**（区別子は `agent_id`/`agent_type`）。＝**ワークフロー稼働分もオーナーのロックに正しく反映される**（docs §13.7 の「発火見込み」を実証）。残る不確実性は SubagentStop の取りこぼしのみだが、ターン終了（オーナーStop）が必ず解放する安全弁で恒久ロックは起きない。
 
 **テスト**：`test/adventure-state.test.mjs` に5本（synthetic オーナーからの奪取／TODOロック／サブエージェントロック＋解除/全TODO完了での解除／オーナー限定 Stop）。reducer **60/60 pass**。
+
+## 16. v0.6：Windows / WSL2 対応（デスクトップ窓のクロスプラットフォーム化）[実装 2026-06-16・実機未検証]
+
+**動機**：唯一の macOS 依存はデスクトップ窓だけ（reducer/server/Hook CLI/BGM・SFX 生成/フロントは全 OS 共通。`server` の `openWindow()` は元から win32/linux 分岐あり）。`package.json` の `"os": ["darwin"]` だけが他 OS の install を塞いでいた。ゴールは Windows ネイティブと WSL2（内部の Claude/Codex から窓は Windows ホストへ）を**1リリース**で入れること。
+
+**決定**：
+- **窓の分岐**：`scripts/desktop.mjs` を `scripts/desktop-platform.mjs` の `detectPlatform()`（darwin/win32/wsl/linux）で分岐。darwin 経路は**バイト等価で温存**（非回帰）。素の Linux は窓なし＝`npm run web` へ明確誘導（沈黙フォールバック禁止）。
+- **Windows 窓 = C# WinForms + WebView2**（[desktop/RPGDevWindow.cs](../desktop/RPGDevWindow.cs)）を在来 `csc.exe`（.NET Framework 4.x、`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`）で**必要時コンパイル**＝swiftc 方式と同型。npm 依存ゼロ・重量ランタイム非同梱。参照 DLL は `desktop/webview2/` に同梱の `Microsoft.Web.WebView2.Core.dll`＋native `WebView2Loader.dll`（x64）の2つだけ（HWND から直接 Controller を作るので WinForms ラッパ DLL は不要）。WebView2 Evergreen ランタイムは Win11 標準。
+- **音声ブリッジは廃止**（Windows/WSL2）。BGM は overlay の `<audio loop src="/audio/*.wav">` がネイティブと同一 WAV を再生＝劣化なし。SFX は WebAudio 合成（rendered WAV とは別物だが機能完備）。autoplay は `--autoplay-policy=no-user-gesture-required` で許可。
+- **リサイズ品質の2系統**：(A) ちらつき＝Window-to-Visual hosting（env `COREWEBVIEW2_FORCED_HOSTING_MODE`）で子 HWND 由来の破綻/DPI を回避。(B) ドット絵＝ZoomFactor 再ラスタライズ（`BoundsMode=UseRawPixels`/`RasterizationScale=1`）＋既存 `image-rendering:pixelated`＋整数倍 letterbox。**層拡大は禁止**（二重ボケ回避）。高解像度ソース（1254–1536px）を ~0.4倍縮小表示しているため窓拡縮でも鮮明（~2.3倍超で初めて拡大ボケ）。
+- **dedup**：mkdir ロック（全 OS 共通）＋ C# 側 named Mutex（多重窓を防ぎ既存窓を前面化）。macOS の `pgrep`/`osascript` は darwin 専用のまま。
+- **WSL2 = 完全自動**：サーバは WSL2、窓は Windows ホスト。`desktop.mjs` が interop で `%LOCALAPPDATA%\rpgdev\<hash>` に `RPGDevWindow.cs`＋DLL をコピーし Windows の `csc.exe`（`/mnt/c/...`）でコンパイル、`wslpath` でパス変換、`localhost:37373`（`.wslconfig localhostForwarding=true`）へ向けて exe を起動。窓側ランタイムは Windows ローカルキャッシュに置く（`\\wsl$` 共有での exe 実行/WebView2 キャッシュの不安定さを回避）。
+- **位置永続化**：Windows は `.rpgdev/desktop-window-win.json`（WSL は上記キャッシュの `window.json`）。画面署名キーで構成変更時リセット＝Swift の `UserDefaults` ロジックと同等。
+- **package.json** `"os"` を `["darwin","win32","linux"]` に開放（WSL2=linux の install を通す）。
+
+**棚上げ（v1 OUT）**：素の Linux 窓（WSLg/GTK）/枠なし per-pixel-alpha 透過（v1 は枠付き・黒 letterbox）/full Visual hosting（入力自前転送。Window-to-Visual で不足時のみ昇格）/Windows での rendered-WAV SFX/Windows ネイティブ音声ブリッジ（恒久的に作らない）。
+
+**WebView2 SDK DLL は同梱済み**（`desktop/webview2/` に Core.dll〔管理 AnyCPU・net462〕＋ WebView2Loader.dll〔x64〕、`Microsoft.Web.WebView2` v1.0.4022.49 由来）。Microsoft 公式が「両 DLL をアプリに同梱して出荷」を明示しており再配布は正規。pull/`npm install` だけで揃う（手動 DL 不要）。
+
+**残オープン課題**：`csc.exe` 不在環境の扱い/WSL の path 変換・UNC・interop の実機挙動/WebView2 ランタイム版依存のリサイズ回帰/arm64（現状 x64 のみ同梱）。
+
+**検証境界（正直に）**：reducer は本変更で不変＝既存テストが回帰ガード。`scripts/desktop-platform.mjs` の `detectPlatform()` は純粋関数で `test/desktop-platform.test.mjs`（8本）で単体テスト。darwin 経路は実機 mac で `build:desktop`／`start`（既存窓フォーカス）の非回帰を確認済み。**Windows/WSL2 の窓・コンパイル・透過・DPI・interop は実機でのみ検証可能＝「テスト済み」とは記さない**。チェックリストは [docs/windows-wsl.md](windows-wsl.md)。

@@ -1,7 +1,7 @@
 {
   "name": "rpgdev",
   "version": "0.5.10",
-  "description": "A small macOS RPG overlay for Codex and Claude Code hook events.",
+  "description": "A small RPG overlay for Codex and Claude Code hook events (macOS, Windows, WSL2).",
   "license": "MIT",
   "author": "kitepon-rgb (https://github.com/kitepon-rgb)",
   "type": "module",
@@ -38,7 +38,9 @@
     "hooks",
     "rpg",
     "overlay",
-    "macos"
+    "macos",
+    "windows",
+    "wsl"
   ],
   "homepage": "https://github.com/kitepon-rgb/rpgdev#readme",
   "bugs": {
@@ -55,6 +57,8 @@
     "node": ">=20"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "win32",
+    "linux"
   ]
 }
