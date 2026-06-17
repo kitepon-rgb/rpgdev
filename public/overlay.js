@@ -1041,7 +1041,7 @@ function cardCanvasCenter(card) {
 }
 
 function allyReturnSound(element) {
-  if (postNativeAudio({ sfx: "ally-return" })) return;
+  if (playSfx("ally-return")) return;
   // ネイティブブリッジが無い時の合成音：光に還る上昇音。
   const base = allyElementNotes(element, false);
   sting([...base, base[base.length - 1] + 12]);
@@ -1168,7 +1168,7 @@ function heroCanvasCenter() {
 
 // 被ダメージ効果音（要件3）。ネイティブブリッジがあれば damage-hit.wav、無ければ合成音にフォールバック。
 function damageSound() {
-  if (postNativeAudio({ sfx: "damage-hit" })) return;
+  if (playSfx("damage-hit")) return;
   if (!audio.enabled) {
     sting([40, 35]);
     return;
@@ -1319,7 +1319,7 @@ function allyAttackSound(element, stagger = false) {
 }
 
 function attackSound(spec, stagger = false) {
-  if (spec.sfx && postNativeAudio({ sfx: spec.sfx })) return;
+  if (spec.sfx && playSfx(spec.sfx)) return;
 
   const notes = stagger && spec.staggerNotes ? spec.staggerNotes : spec.notes;
   if (Array.isArray(notes) && notes.length) sting(notes);
@@ -1467,7 +1467,7 @@ function monsterDefeatImpact() {
 }
 
 function monsterAppearSound() {
-  if (postNativeAudio({ sfx: "monster-appear" })) return;
+  if (playSfx("monster-appear")) return;
   sting([26, 31, 36]);
   if (!audio.enabled || !audio.ctx) return;
   const time = audio.ctx.currentTime;
@@ -1477,7 +1477,7 @@ function monsterAppearSound() {
 }
 
 function monsterDefeatSound() {
-  if (postNativeAudio({ sfx: "monster-defeat" })) return;
+  if (playSfx("monster-defeat")) return;
   sting([31, 28, 24]);
   if (!audio.enabled || !audio.ctx) return;
   const time = audio.ctx.currentTime;
@@ -1901,6 +1901,31 @@ function postNativeAudio(message) {
 
 function hasNativeAudioBridge() {
   return Boolean(window.webkit?.messageHandlers?.rpgdev);
+}
+
+// SFX を鳴らす。macOS はネイティブ(AVAudioPlayer)、非ネイティブ(Windows/WSL2/ブラウザ)は BGM と同じ
+// <audio> 経路で /audio/<name>.wav を鳴らす。WebAudio(AudioContext) は autoplay ポリシーで suspended に
+// なり無音のため、SFX も実証済みの <audio> 経路にする（攻撃/出現/撃破などが鳴らなかった不具合の修正）。
+// 戻り値 true=処理済み（呼び出し側は WebAudio 合成へフォールバックしない）。audio 無効時のみ false。
+const sfxPlayers = {};
+function playSfxFile(name) {
+  let player = sfxPlayers[name];
+  if (!player) {
+    player = new Audio(`/audio/${name}.wav`);
+    player.preload = "auto";
+    sfxPlayers[name] = player;
+  }
+  try {
+    player.currentTime = 0;
+    player.volume = 0.8;
+    player.play().catch(() => {});
+  } catch (_) {}
+}
+function playSfx(name) {
+  if (!name || !audio.enabled) return false;
+  if (postNativeAudio({ sfx: name })) return true; // macOS ネイティブ
+  playSfxFile(name);
+  return true;
 }
 
 function ensureTrackPlayers() {
