@@ -66,12 +66,29 @@ rpgdev-server --open    # http://127.0.0.1:37373/
 
 ## Hooks setup
 
-RPGDev is fed by hook events. Wire up the example configs:
+RPGDev is fed by hook events, so your coding agent needs a few hook entries pointing at `rpgdev-hook`.
 
-- **Claude Code** — copy [`examples/claude-settings.local.json`](examples/claude-settings.local.json) → `.claude/settings.local.json`
-- **Codex** — copy [`examples/codex-hooks.json`](examples/codex-hooks.json) → `.codex/hooks.json`
+**Easiest — let your AI agent do it.** You already have one open; just ask:
 
-> **Note on call style:** the two providers invoke the hook differently. Claude passes the provider and event name as an `args` array (`"command": "rpgdev-hook", "args": ["claude", "PostToolUse"]`), while Codex writes them inline in the `command` string (`"command": "rpgdev-hook codex PostToolUse"`). The example configs already use the correct form for each.
+> Set up RPGDev hooks for me (follow `node_modules/rpgdev/docs/install-hooks.md`).
+
+It runs `rpgdev setup` to get the exact config for your machine and merges it into your settings
+**without touching anything else**. RPGDev never edits your files itself — your agent does, in front of
+you. Recipe: [docs/install-hooks.md](docs/install-hooks.md).
+
+**By hand.** Run `rpgdev setup` (add `--codex` or `--all` for Codex, `--user` for the home-level
+config) and copy the printed JSON into `.claude/settings.local.json` (or `.codex/hooks.json`):
+
+```bash
+rpgdev setup            # prints the Claude Code config + where to put it
+rpgdev setup --all      # both Claude Code and Codex
+```
+
+The printed config runs the hook via an absolute path to node + the installed hook script, so it works
+on macOS, Windows, and WSL2 alike (no `PATH` / `.cmd`-shim surprises).
+
+> **Reference configs:** [`examples/`](examples/) holds static snapshots for manual copying (they
+> assume a global install). Prefer `rpgdev setup`, which writes the more robust absolute-path form.
 
 Your agent may ask you to trust / review project-local hooks before they run.
 

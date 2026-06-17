@@ -1,2 +1,2 @@
 #!/usr/bin/env node
-import "../scripts/desktop.mjs";
+import "../scripts/cli.mjs";

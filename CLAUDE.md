@@ -328,7 +328,15 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 
 ## Hook の組み込み（ツール利用者向け）
 
-設定例は [examples/](examples/) にある: `claude-settings.local.json` →
-`.claude/settings.local.json`、`codex-hooks.json` → `.codex/hooks.json`。呼び出しスタイルの
-違いに注意: Claude は provider/event を `args` 配列で渡し、Codex は `command` 文字列に
-インラインで書く（`rpgdev-hook codex PreToolUse`）。
+**推奨は `rpgdev setup`**：実パス入りの正しい設定（node 絶対パス exec 形式）＋安全マージ手順を表示するだけのコマンド。
+利用者のエージェントが [docs/install-hooks.md](docs/install-hooks.md) の安全規則に従って既存設定へマージする
+（rpgdev 自身は設定ファイルを書かない＝既存設定を壊さない）。純関数 `scripts/hook-config.mjs`（`buildHookConfig`／
+`EVENT_SETS`）が“正解”の単一の源で、`test/hook-config.test.mjs` がガード。`bin/rpgdev`→`scripts/cli.mjs` が
+`setup` だけ分岐（他は `desktop.mjs` で従来同一）。
+
+手動コピー用の設定例も [examples/](examples/) にある: `claude-settings.local.json` →
+`.claude/settings.local.json`、`codex-hooks.json` → `.codex/hooks.json`（グローバル導入前提）。呼び出しスタイルの
+違いに注意: `rpgdev setup` の Claude 出力は exec 形式（`command`=node 実体, `args`=[script, provider, event]）、Codex は
+インライン文字列。手動見本の Claude はシェル形式（`args` 無し単一文字列＝Windows でもシェル経由でシム解決）。
+**Windows ネイティブの Claude は exec 形式＋bare `rpgdev-hook` だとシェル非経由で `.cmd` シムが解決されず発火しない**ため、
+`rpgdev setup` の node 絶対パス形式を使う（詳細は docs/install-hooks.md / docs/windows-wsl.md）。フックは新セッションで反映。

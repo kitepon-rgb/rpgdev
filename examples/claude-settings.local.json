@@ -1,12 +1,12 @@
 {
+  "_comment": "Manual-copy reference (requires a global `npm i -g rpgdev` so `rpgdev-hook` is on PATH). Prefer `rpgdev setup`, which writes a more robust absolute-path config that needs no global install. See docs/install-hooks.md. This file uses the shell form (single command string, no args) so Windows resolves the rpgdev-hook.cmd shim via the shell.",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "UserPromptSubmit"],
+            "command": "rpgdev-hook claude UserPromptSubmit",
             "timeout": 5,
             "statusMessage": "冒険の小窓を開いています"
           }
@@ -19,8 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "PreToolUse"],
+            "command": "rpgdev-hook claude PreToolUse",
             "timeout": 3,
             "statusMessage": "小窓の冒険が進んでいます"
           }
@@ -33,8 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "PostToolUse"],
+            "command": "rpgdev-hook claude PostToolUse",
             "timeout": 3,
             "statusMessage": "戦況を更新しています"
           }
@@ -47,8 +45,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "PostToolUseFailure"],
+            "command": "rpgdev-hook claude PostToolUseFailure",
             "timeout": 3,
             "statusMessage": "モンスターが出現しています"
           }
@@ -61,8 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "PermissionDenied"],
+            "command": "rpgdev-hook claude PermissionDenied",
             "timeout": 3,
             "statusMessage": "障害を記録しています"
           }
@@ -74,8 +70,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "Stop"],
+            "command": "rpgdev-hook claude Stop",
             "timeout": 3,
             "statusMessage": "冒険を記録しています"
           }
@@ -88,8 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "StopFailure"],
+            "command": "rpgdev-hook claude StopFailure",
             "timeout": 3,
             "statusMessage": "冒険の危機を記録しています"
           }
@@ -101,8 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "SubagentStart"],
+            "command": "rpgdev-hook claude SubagentStart",
             "timeout": 3,
             "statusMessage": "仲間が駆けつけています"
           }
@@ -114,8 +107,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rpgdev-hook",
-            "args": ["claude", "SubagentStop"],
+            "command": "rpgdev-hook claude SubagentStop",
             "timeout": 3,
             "statusMessage": "仲間が去っていきます"
           }

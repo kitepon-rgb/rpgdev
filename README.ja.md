@@ -55,21 +55,32 @@ rpgdev-server --open
 
 ## Hooks
 
-Hook からは `rpgdev-hook` を呼びます。
+RPGDev は Hook イベントで動くので、お使いの AI エージェントに `rpgdev-hook` を呼ぶ設定を入れます。
+
+**一番かんたん — AI エージェントに任せる。** すでに開いているエージェントにこう頼むだけ:
+
+> RPGDev のフックを設定して（`node_modules/rpgdev/docs/install-hooks.md` に従って）。
+
+エージェントが `rpgdev setup` を実行して、この端末向けの正しい設定を取得し、**既存設定を壊さずに**マージします。
+RPGDev 自身は設定ファイルを書き換えません——適用はあなたのエージェントが目の前で行います。手順書:
+[docs/install-hooks.md](docs/install-hooks.md)。
+
+**手動でやる場合。** `rpgdev setup`（Codex は `--codex` / 両対応は `--all`、ホーム配下は `--user`）を実行し、
+表示された JSON を `.claude/settings.local.json`（または `.codex/hooks.json`）にコピーします:
 
 ```bash
-rpgdev-hook codex UserPromptSubmit
-rpgdev-hook claude PostToolUse
+rpgdev setup            # Claude Code 用の設定と置き場所を表示
+rpgdev setup --all      # Claude Code と Codex の両方
 ```
 
-サンプル設定:
+表示される設定は node 実体＋同梱フックスクリプトの絶対パスで呼ぶ形なので、macOS / Windows / WSL2 のどれでも動きます
+（PATH や `.cmd` シムの罠なし）。
 
-- Codex: `examples/codex-hooks.json`
-- Claude Code: `examples/claude-settings.local.json`
+> **サンプル設定:** [`examples/`](examples/) に手動コピー用の静的サンプルがあります（グローバル導入が前提）。
+> より堅牢な絶対パス形式を書く `rpgdev setup` の利用を推奨します。
 
-Codex では `examples/codex-hooks.json` の内容をプロジェクトの `.codex/hooks.json` に置きます。Claude Code では `examples/claude-settings.local.json` の内容をプロジェクトの `.claude/settings.local.json` に置きます。
-
-Codex / Claude Code 側で project-local hooks の trust / review が必要な場合があります。
+Codex / Claude Code 側で project-local hooks の trust / review が必要な場合があります。新しく足したフックは
+**新しいセッションで反映**されます（実行中セッションは再起動が必要なことがあります）。
 
 ## Hook Flow
 

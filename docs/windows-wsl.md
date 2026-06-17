@@ -100,17 +100,27 @@ the macOS `UserDefaults` logic).
 
 ### Hook setup (Windows native)
 
-Put the config at `%USERPROFILE%\.claude\settings.local.json` (Claude Code) or your
-Codex hooks file.
+The setup flow is the same on every platform: ask your AI agent to set it up (it runs
+`rpgdev setup` and merges the result), or run `rpgdev setup` yourself and copy the printed
+config. See [install-hooks.md](install-hooks.md). The target is
+`<project>\.claude\settings.local.json` or `%USERPROFILE%\.claude\settings.local.json`
+(Claude Code), or your Codex hooks file.
 
-- **Claude Code** — the existing `examples/claude-settings.local.json` works as-is.
-  It uses `"command": "rpgdev-hook"` + `"args"`, and Windows resolves the
-  `rpgdev-hook.cmd` PATH shim that npm installs.
-- **Codex** — Codex uses a single inline `command` string. Use
-  `examples/codex-hooks.windows.json`, which wraps it as
-  `cmd /c rpgdev-hook codex <Event>` so the `.cmd` shim resolves reliably. (The plain
-  `rpgdev-hook codex <Event>` form may also work depending on how Codex spawns it —
-  verify on your box.)
+**Why `rpgdev setup` matters specifically on Windows:** the generated Claude config is exec
+form (`"command": "<node.exe>", "args": ["<…>\\rpg-hook.mjs", "claude", "<Event>"]`). Claude
+Code spawns exec-form hooks **without a shell**, so a bare `"command": "rpgdev-hook"` does
+*not* resolve the `rpgdev-hook.cmd` PATH shim — the hook silently never fires. The
+absolute-path-to-node form sidesteps that entirely (no `PATH`, no `.cmd` shim). Run
+`rpgdev setup` in the environment the agent runs in (native Windows here) so the captured
+paths are the Windows ones.
+
+- **Codex (native Windows)** — uses the same absolute-node inline form. If Codex on your
+  machine doesn't spawn it, re-run with `rpgdev setup --codex --codex-cmd-wrap` to wrap it as
+  `cmd /c …` (real-device verification still welcome).
+
+> The static `examples\*.json` remain for manual copying but assume a global install. The
+> `examples\claude-settings.local.json` shell form (single `command` string, no `args`) lets the
+> shell resolve the `.cmd` shim — that's the manual-copy fallback, not the exec form above.
 
 ## WSL2 (developer in Linux, window on the Windows host)
 

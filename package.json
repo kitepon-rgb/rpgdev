@@ -1,6 +1,6 @@
 {
   "name": "rpgdev",
-  "version": "0.5.10",
+  "version": "0.6.0",
   "description": "A small RPG overlay for Codex and Claude Code hook events (macOS, Windows, WSL2).",
   "license": "MIT",
   "author": "kitepon-rgb (https://github.com/kitepon-rgb)",
@@ -18,6 +18,7 @@
     "render:bgm": "node scripts/render-bgm.mjs",
     "render:sfx": "node scripts/render-sfx.mjs",
     "demo": "node scripts/demo.mjs",
+    "setup": "node scripts/rpg-setup.mjs",
     "trace": "node scripts/rpg-trace.mjs",
     "test": "node --test"
   },

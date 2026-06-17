@@ -1,4 +1,5 @@
 {
+  "_comment": "Manual-copy reference for Codex on native Windows (requires a global `npm i -g rpgdev`). Wraps the hook as `cmd /c rpgdev-hook codex <Event>` so the .cmd shim resolves. Prefer `rpgdev setup --codex`, which writes an absolute-path config that needs no global install. See docs/install-hooks.md.",
   "hooks": {
     "UserPromptSubmit": [
       {

@@ -1,4 +1,5 @@
 {
+  "_comment": "Manual-copy reference for Codex (requires a global `npm i -g rpgdev`). Prefer `rpgdev setup --codex`, which writes an absolute-path config that needs no global install. On native Windows, if the plain form doesn't spawn, use codex-hooks.windows.json (cmd /c) or `rpgdev setup --codex --codex-cmd-wrap`. See docs/install-hooks.md.",
   "hooks": {
     "UserPromptSubmit": [
       {

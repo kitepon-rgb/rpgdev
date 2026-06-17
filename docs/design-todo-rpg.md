@@ -604,3 +604,33 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 **残オープン課題**：`csc.exe` 不在環境の扱い/WSL の path 変換・UNC・interop の実機挙動/WebView2 ランタイム版依存のリサイズ回帰/arm64（現状 x64 のみ同梱）。
 
 **検証境界（正直に）**：reducer は本変更で不変＝既存テストが回帰ガード。`scripts/desktop-platform.mjs` の `detectPlatform()` は純粋関数で `test/desktop-platform.test.mjs`（8本）で単体テスト。darwin 経路は実機 mac で `build:desktop`／`start`（既存窓フォーカス）の非回帰を確認済み。**Windows/WSL2 の窓・コンパイル・透過・DPI・interop は実機でのみ検証可能＝「テスト済み」とは記さない**。チェックリストは [docs/windows-wsl.md](windows-wsl.md)。
+
+## 17. フック導入：`rpgdev setup`＋エージェント適用（Mac/Windows/WSL2 共通）[実装 2026-06-17]
+
+**動機**：npm 導入ユーザーにフック設定の仕組みが無く、手動コピーの `examples/claude-settings.local.json` は
+**Windows ネイティブの Claude で実は発火しない**。Claude は exec 形式（`command`+`args`）の hook を**シェル非経由**で
+起動するため、`"command":"rpgdev-hook"` では `rpgdev-hook.cmd` の PATH シムが解決されない（旧 docs の「そのまま動く」は誤り）。
+
+**決定**：
+- **rpgdev はフック設定ファイルを書かない／編集しない／エージェントを起動しない。** `rpgdev setup` は**正しい設定を表示するだけ**。
+  実際のマージは利用者のエージェントが `docs/install-hooks.md` の安全規則（`.hooks` のみ／既存は追記保持／`_rpgdev` 印で冪等／
+  壊れ JSON は中断／バックアップ）に従って実施。＝こちら起因で既存設定が壊れる経路が原理的に無い。
+- **生成形式は node 絶対パス統一**：`command=process.execPath`、`args=[<pkg>/scripts/rpg-hook.mjs, provider, event]`（Codex は
+  インライン文字列で両パス二重引用）。PATH・グローバル導入・`.cmd` シムに非依存＝Windows の罠を根治。`setup` を**エージェントが
+  動く環境で実行**するので絶対パスは後でフックが走る環境と一致（win32→`C:\…`、WSL→`/home`,`/mnt`）。
+- **`_rpgdev:"rpgdev"` 印**（両スキーマが無視）でエージェントが再実行時に重複追加を避け、パスだけ更新できる。
+- **イベント集合は既存検証済みを再現**（純関数 `scripts/hook-config.mjs` の `EVENT_SETS`：Claude=9＝失敗系含む／Codex=6＝失敗系なし）。
+- **コマンド表面**：`bin/rpgdev`→`scripts/cli.mjs` で `argv[2]==="setup"` のみ分岐（他は `desktop.mjs` を import＝従来完全同一）。`npm run setup` も追加。
+- **見本/説明書も修正**：`examples/claude-settings.local.json` を**シェル形式**（`args` 無し単一文字列）へ＝手動コピーでも Windows の
+  シェル経由でシム解決（グローバル導入前提）。README は「AI に依頼＋`rpgdev setup`」を主経路に、docs/windows-wsl.md の誤記を訂正。
+
+**テスト/検証**：純関数 `buildHookConfig` を `test/hook-config.test.mjs`（7本：Claude9/Codex6/cmd-wrap/空白パス/純粋性/未知provider）でガード。
+`rpgdev setup --all` の出力と `bin/rpgdev` ディスパッチ（setup/help/従来）を実機確認。生成された claude コマンド
+（`"C:\Program Files\nodejs\node.exe" "…\rpg-hook.mjs" claude PreToolUse`、stdin ペイロード）を直接起動して
+**hookSeq 12→14・provider=claude・モンスター出現・phase=battle・WebView2 窓が戦闘描画**まで実機実証（2026-06-17, Win11）。
+**実測の重要知見**：Claude Code は**実行中セッションに後から書いた `.claude/settings.local.json` のフックをホットリロードしない**
+（起動時ロードのみ＝新規/再起動セッションで反映）。よってドキュメント/`rpgdev setup` 出力は「新セッションで反映・実行中は再起動」と記す
+（claude-code-guide の「ライブ反映」主張は本環境では再現せず）。
+
+**残オープン課題**：Codex の win32 起動が node 絶対パス（シム非依存）で動くかは実機未確定＝`--codex-cmd-wrap`（`cmd /c` 被せ）を逃げ道に用意。
+`process.execPath` を焼き込むため node バージョン切替時は `setup` 再実行→エージェント再適用で更新（PATH 依存より堅牢として容認）。
