@@ -634,3 +634,11 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 **残オープン課題**：Codex の win32 起動が node 絶対パス（シム非依存）で動くかは実機未確定＝`--codex-cmd-wrap`（`cmd /c` 被せ）を逃げ道に用意。
 `process.execPath` を焼き込むため node バージョン切替時は `setup` 再実行→エージェント再適用で更新（PATH 依存より堅牢として容認）。
+
+**v0.6.1 修正（書き込み先パスのバグ）**：v0.6.0 の `rpgdev setup --user` と docs は Claude のユーザー全体フックを
+`~/.claude/settings.local.json` へ案内していたが、**Claude Code はユーザー全体では `settings.json` のみ読む**
+（`settings.local.json` はプロジェクト専用＝ユーザー全体版は存在せず無視。claude-code-guide＋公式 settings 階層で確認）。
+そのため `--user` で入れてもフックが一切発火しない。修正：パス決定を純関数 `hookTargetPath(provider, scope, {home,project})`
+（`scripts/hook-config.mjs`）へ切り出し、claude×user→`~/.claude/settings.json`、claude×project→`.claude/settings.local.json`、
+codex→`<base>/.codex/hooks.json` を返す。`test/hook-config.test.mjs` に3ケース追加。`rpgdev setup` 出力・docs/install-hooks.md・
+README(en/ja)・AGENTS/CLAUDE も「user は settings.json」へ統一。フックはスコープ間でマージ（両方走る）ので既存フックは追記で保持する。

@@ -35,12 +35,19 @@ rpgdev setup --claude --user     # Claude Code, home-level (~)
 rpgdev setup --json --claude     # raw JSON only
 ```
 
-The output tells you the **target file path** and the **JSON to merge**.
+The output tells you the **exact target file path** and the **JSON to merge**. Write to that
+path verbatim — the file differs by scope (this trips people up):
 
-- Claude Code → `<scope>/.claude/settings.local.json`
-- Codex → `<scope>/.codex/hooks.json`
+| Scope | Claude Code | Codex |
+| --- | --- | --- |
+| this project (default) | `<project>/.claude/settings.local.json` | `<project>/.codex/hooks.json` |
+| user-global (`--user`) | `~/.claude/settings.json` | `~/.codex/hooks.json` |
 
-(`<scope>` is the project directory by default, or the user's home directory with `--user`.)
+**Important:** for user-global Claude hooks the file is `~/.claude/settings.json` — **NOT**
+`~/.claude/settings.local.json`. `settings.local.json` only exists at the project level; a
+user-level `settings.local.json` is never read by Claude Code, so hooks placed there are silently
+ignored. (Users typically already have hooks/permissions in `~/.claude/settings.json`, so merge
+carefully per Step 3.)
 
 ## Step 3 — merge it safely (these rules are mandatory)
 

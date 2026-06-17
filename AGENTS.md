@@ -315,3 +315,6 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 インライン文字列。手動見本の Claude はシェル形式（`args` 無し単一文字列＝Windows でもシェル経由でシム解決）。
 **Windows ネイティブの Claude は exec 形式＋bare `rpgdev-hook` だとシェル非経由で `.cmd` シムが解決されず発火しない**ため、
 `rpgdev setup` の node 絶対パス形式を使う（詳細は docs/install-hooks.md / docs/windows-wsl.md）。フックは新セッションで反映。
+書き込み先はスコープで変わる：プロジェクトは `.claude/settings.local.json`、ユーザー全体（`--user`）の Claude は
+`~/.claude/settings.json`（**ユーザー全体の `settings.local.json` は Claude Code に読まれない**＝v0.6.0 のバグ。v0.6.1 で修正）。
+パスは `scripts/hook-config.mjs` の `hookTargetPath` が正典（`test/hook-config.test.mjs` がガード）。

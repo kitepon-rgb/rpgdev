@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildHookConfig, EVENT_SETS, RPGDEV_MARKER } from "../scripts/hook-config.mjs";
+import { join } from "node:path";
+import { buildHookConfig, EVENT_SETS, RPGDEV_MARKER, hookTargetPath } from "../scripts/hook-config.mjs";
 
 const NODE = "/usr/local/bin/node";
 const SCRIPT = "/pkg/rpgdev/scripts/rpg-hook.mjs";
@@ -79,4 +80,21 @@ test("unknown provider throws", () => {
 test("EVENT_SETS exposes the validated event names", () => {
   assert.equal(EVENT_SETS.claude.length, 9);
   assert.equal(EVENT_SETS.codex.length, 6);
+});
+
+const BASES = { home: "/home/me", project: "/proj" };
+
+test("hookTargetPath: claude USER -> ~/.claude/settings.json (NOT settings.local.json)", () => {
+  const p = hookTargetPath("claude", "user", BASES);
+  assert.equal(p, join("/home/me", ".claude", "settings.json"));
+  assert.ok(!p.endsWith("settings.local.json"), "user-level Claude hooks must not target settings.local.json");
+});
+
+test("hookTargetPath: claude PROJECT -> <project>/.claude/settings.local.json", () => {
+  assert.equal(hookTargetPath("claude", "project", BASES), join("/proj", ".claude", "settings.local.json"));
+});
+
+test("hookTargetPath: codex -> .codex/hooks.json under the scope base", () => {
+  assert.equal(hookTargetPath("codex", "user", BASES), join("/home/me", ".codex", "hooks.json"));
+  assert.equal(hookTargetPath("codex", "project", BASES), join("/proj", ".codex", "hooks.json"));
 });

@@ -65,8 +65,10 @@ RPGDev は Hook イベントで動くので、お使いの AI エージェント
 RPGDev 自身は設定ファイルを書き換えません——適用はあなたのエージェントが目の前で行います。手順書:
 [docs/install-hooks.md](docs/install-hooks.md)。
 
-**手動でやる場合。** `rpgdev setup`（Codex は `--codex` / 両対応は `--all`、ホーム配下は `--user`）を実行し、
-表示された JSON を `.claude/settings.local.json`（または `.codex/hooks.json`）にコピーします:
+**手動でやる場合。** `rpgdev setup`（Codex は `--codex` / 両対応は `--all`、パソコン全体は `--user`）を実行し、
+表示された JSON を**表示されたパスにそのまま**コピーします。書き込み先はスコープで変わります：プロジェクト用は
+`.claude/settings.local.json`、パソコン全体（`--user`）の Claude は `~/.claude/settings.json`（ユーザー全体の
+`settings.local.json` は Claude Code に読まれません）。正しいパスは `rpgdev setup` が表示します:
 
 ```bash
 rpgdev setup            # Claude Code 用の設定と置き場所を表示

@@ -2,6 +2,7 @@
 // `rpgdev setup` がこれを使って「正しいフック設定」を組み立てる。設定ファイルへの
 // 適用（マージ・書込）は rpgdev では行わず、利用者のエージェントが docs/install-hooks.md の
 // 安全規則に従って実施する。ここはその“正解”を生成する唯一のテスト対象。
+import { join } from "node:path";
 
 // Claude/Codex 両スキーマが無視する安定マーカー。エージェントが「既に入っている rpgdev フック」を
 // 同定して重複追加を避ける／パスだけ更新するための目印。
@@ -80,4 +81,20 @@ export function buildHookConfig(provider, nodeBin, hookScriptAbs, opts = {}) {
     hooks[event] = [wrapper];
   }
   return { hooks };
+}
+
+// 設定を書き込む正しいファイルパスを返す（純関数）。
+// 重要: Claude Code の `settings.local.json` は「プロジェクト専用」で、ユーザー全体には
+// `~/.claude/settings.local.json` は存在せず読まれない（公式の設定階層）。よって:
+//   - claude × user    → <home>/.claude/settings.json        （全プロジェクトに効くユーザー全体）
+//   - claude × project → <project>/.claude/settings.local.json（このプロジェクト限定・gitignore 向き）
+//   - codex            → <base>/.codex/hooks.json
+export function hookTargetPath(provider, scope, { home, project }) {
+  const base = scope === "user" ? home : project;
+  if (provider === "claude") {
+    return scope === "user"
+      ? join(base, ".claude", "settings.json")
+      : join(base, ".claude", "settings.local.json");
+  }
+  return join(base, ".codex", "hooks.json");
 }

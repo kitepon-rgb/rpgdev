@@ -76,8 +76,11 @@ It runs `rpgdev setup` to get the exact config for your machine and merges it in
 **without touching anything else**. RPGDev never edits your files itself — your agent does, in front of
 you. Recipe: [docs/install-hooks.md](docs/install-hooks.md).
 
-**By hand.** Run `rpgdev setup` (add `--codex` or `--all` for Codex, `--user` for the home-level
-config) and copy the printed JSON into `.claude/settings.local.json` (or `.codex/hooks.json`):
+**By hand.** Run `rpgdev setup` (add `--codex` or `--all` for Codex, `--user` for the machine-wide
+config) and copy the printed JSON into the **exact file it prints**. The target differs by scope:
+project hooks go in `.claude/settings.local.json`, but machine-wide (`--user`) Claude hooks go in
+`~/.claude/settings.json` (a user-level `settings.local.json` is not read by Claude Code). `rpgdev
+setup` prints the right path for you.
 
 ```bash
 rpgdev setup            # prints the Claude Code config + where to put it

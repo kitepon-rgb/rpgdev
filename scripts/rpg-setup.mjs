@@ -6,7 +6,7 @@ import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { detectPlatform } from "./desktop-platform.mjs";
-import { buildHookConfig } from "./hook-config.mjs";
+import { buildHookConfig, hookTargetPath } from "./hook-config.mjs";
 
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const HOOK_SCRIPT = join(PACKAGE_ROOT, "scripts", "rpg-hook.mjs");
@@ -32,11 +32,12 @@ if (providers.length === 0) providers.push("claude"); // 既定は Claude
 const scope = has("--user") ? "user" : "project";
 const jsonOnly = has("--json");
 const codexCmdWrap = has("--codex-cmd-wrap");
-const baseDir = scope === "user" ? homedir() : resolve(process.env.RPGDEV_PROJECT_DIR || process.cwd());
+const home = homedir();
+const project = resolve(process.env.RPGDEV_PROJECT_DIR || process.cwd());
 
 const blocks = providers.map((provider) => ({
   provider,
-  target: targetPath(provider),
+  target: hookTargetPath(provider, scope, { home, project }),
   config: buildHookConfig(provider, NODE_BIN, HOOK_SCRIPT, { codexCmdWrap, platform })
 }));
 
@@ -45,12 +46,6 @@ if (jsonOnly) {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 } else {
   printForAgent(blocks);
-}
-
-function targetPath(provider) {
-  return provider === "claude"
-    ? join(baseDir, ".claude", "settings.local.json")
-    : join(baseDir, ".codex", "hooks.json");
 }
 
 function printForAgent(items) {
@@ -69,6 +64,8 @@ function printForAgent(items) {
   }
 
   out.push("Safe-merge rules (do not skip):");
+  out.push("- Write to EXACTLY the file path shown above for each provider. (User-global Claude hooks go in");
+  out.push("  ~/.claude/settings.json — NOT settings.local.json, which is project-only and ignored at user level.)");
   out.push("- Add only under \".hooks\". Never change permissions / env / model / mcpServers or any other key.");
   out.push("- For each event, KEEP existing hooks and APPEND the rpgdev entry. If an entry with");
   out.push("  \"_rpgdev\": \"rpgdev\" already exists for that event, update its path instead of duplicating.");
