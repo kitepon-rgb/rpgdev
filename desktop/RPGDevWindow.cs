@@ -9,8 +9,10 @@
 //  - ネイティブ音声ブリッジは作らない。BGM/SFX は overlay 側の <audio>/WebAudio が鳴らす。
 //    BGM 自動再生のため AdditionalBrowserArguments に --autoplay-policy=no-user-gesture-required。
 //  - リサイズ品質: (A) Window-to-Visual hosting（env COREWEBVIEW2_FORCED_HOSTING_MODE）で
-//    子 HWND 由来のちらつき/DPI 問題を回避。(B) ドット絵は ZoomFactor 再ラスタライズ＋
-//    BoundsMode=UseRawPixels / RasterizationScale=1 で「層拡大」を避け、整数倍 letterbox で配置。
+//    子 HWND 由来のちらつき/DPI 問題を回避。(B) 中身は ZoomFactor 再ラスタライズ＋
+//    BoundsMode=UseRawPixels / RasterizationScale=1 で「層拡大」を避けつつ、4:3 を保って窓に
+//    連続スケール（macOS の全体ズーム相当）。余白のみ letterbox。ドット絵は CSS の
+//    image-rendering:pixelated と高解像度素材で鮮明さを維持。
 //
 // 引数: argv[0]=URL, argv[1]=WebView2 userDataFolder, argv[2]=窓状態 JSON のパス, argv[3]=単一インスタンスキー。
 //
@@ -180,8 +182,11 @@ namespace RPGDev
             LayoutWebView();
         }
 
-        // クライアント領域に 1024x768 の「整数倍」を中央配置し、余白は letterbox。
-        // ZoomFactor=k と Bounds=k*design でページが生ピクセル等倍に再ラスタライズされる。
+        // クライアント領域に 4:3（1024x768 基準）を維持してフィットさせ、余白のみ letterbox。
+        // スケール k は「整数倍」ではなく連続値＝窓に追従して滑らかに拡大縮小する（macOS の全体ズーム相当）。
+        // ZoomFactor=k と Bounds=k*design なら CSS ビューポートは常に 1024x768（レイアウト不変）、
+        // ラスタライズ倍率だけ k 倍。素材は高解像度のため連続縮小でも鮮明、sprite は CSS の
+        // image-rendering:pixelated で nearest 拡大されエッジが保たれる。
         private void LayoutWebView()
         {
             if (!_ready || _controller == null)
@@ -189,9 +194,17 @@ namespace RPGDev
                 return;
             }
             Rectangle c = ClientRectangle;
-            int k = Math.Max(1, Math.Min(c.Width / DesignWidth, c.Height / DesignHeight));
-            int w = k * DesignWidth;
-            int h = k * DesignHeight;
+            if (c.Width <= 0 || c.Height <= 0)
+            {
+                return;
+            }
+            double k = Math.Min((double)c.Width / DesignWidth, (double)c.Height / DesignHeight);
+            if (k <= 0.0)
+            {
+                k = 1.0;
+            }
+            int w = (int)Math.Round(DesignWidth * k);
+            int h = (int)Math.Round(DesignHeight * k);
             int x = (c.Width - w) / 2;
             int y = (c.Height - h) / 2;
             _controller.Bounds = new Rectangle(x, y, w, h);
@@ -199,8 +212,8 @@ namespace RPGDev
         }
 
         // --- リサイズ中の 4:3 維持（Swift の windowWillResize 相当） ---
-        // WM_SIZING で掴んだ辺に応じてクライアントを 4:3 にスナップする。整数倍 letterbox は
-        // LayoutWebView 側が吸収するので、ここは「窓の縦横比を 4:3 に保つ」だけ。
+        // WM_SIZING で掴んだ辺に応じてクライアントを 4:3 にスナップする。中身の連続スケールと
+        // letterbox は LayoutWebView 側が担うので、ここは「窓の縦横比を 4:3 に保つ」だけ。
         // 注意: エッジ別の固定辺計算は実機で要確認。
         private const int WM_SIZING = 0x0214;
         private const int WMSZ_LEFT = 1;

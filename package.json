@@ -1,6 +1,6 @@
 {
   "name": "rpgdev",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "A small RPG overlay for Codex and Claude Code hook events (macOS, Windows, WSL2).",
   "license": "MIT",
   "author": "kitepon-rgb (https://github.com/kitepon-rgb)",
