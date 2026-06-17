@@ -393,6 +393,10 @@ function applyWorld(effect) {
   if (!audio.enabled && !audio.userMuted) {
     audio.enabled = true;
     audioButton.classList.add("is-on");
+    // ネイティブ音声ブリッジが無い環境(Windows/ブラウザ)では、自動有効化時に SFX 用 WebAudio コンテキストも用意する。
+    // applyWorld は button クリック(ensureEffectAudio 済み)を経由しないため、これが無いと audio.ctx が null のまま＝
+    // 攻撃などの WebAudio SFX が鳴らない（攻撃スペックは notes を持たず sting=自己修復経路を通らないため）。BGM は <audio> なので鳴る。
+    if (!hasNativeAudioBridge()) ensureEffectAudio();
   }
   setTrack(currentTrack);
   // どの Hook でフェーズ／ステージ（フィールド前進・街帰還）／BGM が変わったかを記録する。
@@ -1909,7 +1913,11 @@ function ensureTrackPlayers() {
 }
 
 function ensureEffectAudio() {
-  if (audio.ctx) return;
+  if (audio.ctx) {
+    // 既存コンテキストが suspended（自動再生ポリシー等で停止）なら再開する＝SFX が無音にならない保険。
+    if (audio.ctx.state === "suspended") audio.ctx.resume();
+    return;
+  }
   audio.ctx = new AudioContext();
   audio.gain = audio.ctx.createGain();
   audio.compressor = audio.ctx.createDynamicsCompressor();
