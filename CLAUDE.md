@@ -70,6 +70,11 @@ dungeon/castle は各ステージ専用モンスター。castle の Dragon/Demon
 （Stop だけは寿命無視で強制討伐）。これで「倒して即湧き→即死」の点滅が起きない。ペーシングの基準時刻は
 **サーバーが `reduceHookEvent` に注入**する（`event.at`＝エージェント側の時計は使わない）。`handleHook` は `event.id` で冪等化する。
 
+**dungeon/castle 限定の強制エンカウント（30秒保証）**：後半の細かい TODO で 20% を引けず最後まで敵が出ないことがあるため、
+dungeon/castle では突入(`stageEnteredAt`)・直近出現・直近討伐のうち最新から **30秒（`FORCED_ENCOUNTER_MS`）**経っても敵が居なければ、
+次の PreToolUse で 20% 判定をバイパスして**確実に出現**させる（`forcedEncounterDue`）。field は対象外。クールダウン(4s)/最小間隔(2s)は
+30秒 >> なので強制時も満たされる。`stageEnteredAt` はステージ変化時とターン開始時に更新、拠点リセットで 0。
+
 各エンカウントは出現時の状況で `linkedTodo` フラグを持ち、討伐条件が変わる：
 - `linkedTodo=false`（出現時に in_progress の TODO 無し）：hero の攻撃 5回、または
   ターン終了（Stop）で討伐。

@@ -57,6 +57,9 @@ npm run trace                         # 演出トレースを解析（二連続/
 フェーズになるのは「エンカウントのモンスターが画面に居る時」だけで、TODO があるだけでは
 戦闘にならない。出現カタログは冒険ステージ別で、field は既存4体、dungeon/castle は各ステージ専用モンスターから
 ランダムに選ぶ。castle の Dragon / Demon Lord は TODO が4個以上あり、最後の TODO が現在地の時だけ抽選に入る。
+**dungeon/castle 限定の強制エンカウント**：突入・直近出現・直近討伐のうち最新から 30秒（`FORCED_ENCOUNTER_MS`）経っても
+敵が居なければ、次の PreToolUse で 20% 判定をバイパスして確実に出現させる（`forcedEncounterDue`。後半の細かい TODO で
+敵が出ないまま終わるのを防ぐ）。field は対象外。基準時刻 `stageEnteredAt` はステージ変化時・ターン開始時に更新、拠点で 0。
 
 各エンカウントは出現時の状況で `linkedTodo` フラグを持ち、討伐条件が変わる：
 - `linkedTodo=false`（出現時に in_progress の TODO 無し）：hero の攻撃 5回、または

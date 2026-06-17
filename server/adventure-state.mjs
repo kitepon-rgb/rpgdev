@@ -44,6 +44,9 @@ const ALLY_MAX_LIFE = 5; // 各精霊の被弾耐久（モンスターの反撃�
 const SPAWN_COOLDOWN_MS = 4000; // 討伐後、次の出現までのクールダウン
 const MIN_SPAWN_INTERVAL_MS = 2000; // 連続出現の最小間隔
 const MIN_MONSTER_LIFETIME_MS = 4000; // 出現から最低この時間は討伐しない（即死防止）。フロント APPEAR_ATTACK_DELAY_MS(4s) 以上に保つ。
+// dungeon/castle 限定：突入(or 直近遭遇)からこの時間が経っても敵が居なければ、20%判定をバイパスして確実に出現させる。
+// 後半の細かい TODO で 20% を引けず、最後まで敵が出ないことがあるための保険（field は対象外）。
+const FORCED_ENCOUNTER_MS = 30000; // 30秒
 
 // ゲーム確率の判定に使う乱数。テストから差し替え可能（id 生成の Math.random とは分離）。
 let chance = Math.random;
@@ -77,6 +80,8 @@ export function createInitialState() {
     monsters: [], // 出現中のエンカウント（同時に最大1体）
     lastSpawnAt: 0, // 直近の出現時刻（サーバー now）。出現クールダウン/最小間隔の判定に使う
     lastDefeatAt: 0, // 直近の討伐時刻（サーバー now）。出現クールダウンの判定に使う
+    stageEnteredAt: 0, // 現 adventureStage に突入した時刻（サーバー now）。dungeon/castle の強制エンカウント計測の基準
+
     defeated: [],
     quest: [], // 最新 TodoWrite スナップショット（元の順序・status 付き）= クエスト一覧の表示用
     ownerSession: null, // クエスト/ターンのオーナー（要件6→動的化）。TODO で奪取・ターン終了で解放。
@@ -190,7 +195,11 @@ export function reduceHookEvent(previousState, hookEvent, now) {
   if (state.active) {
     state.phase = hasEngaged(state) ? "battle" : "field";
   }
-  state.adventureStage = currentAdventureStage(state);
+  const nextStage = currentAdventureStage(state);
+  if (nextStage !== state.adventureStage) {
+    state.stageEnteredAt = event.now; // ステージ突入時刻を更新（dungeon/castle 30秒強制エンカウントの基準）
+  }
+  state.adventureStage = nextStage;
   state.currentTrack = trackForState(state);
   state.log = state.log.slice(-MAX_LOG);
   // 単一の出口で「この Hook が生んだ全 effect」へ由来 Hook を刻む。
@@ -241,9 +250,20 @@ function reconcileQuest(state, event, effects) {
   }
 }
 
+// dungeon/castle で、突入(stageEnteredAt)・直近出現(lastSpawnAt)・直近討伐(lastDefeatAt) のうち最新から
+// FORCED_ENCOUNTER_MS 経過したか。true なら maybeSpawnEncounter が 20%判定をバイパスして確実に出現させる。
+// field は対象外。基準時刻が無い(0)＝判定不能なら安全側で false（強制しない）。クールダウン/最小間隔は
+// 呼び出し側で先にチェック済みで、30秒 >> 4秒/2秒なので強制時も常に満たされる。
+function forcedEncounterDue(state, stage, now) {
+  if (stage !== "dungeon" && stage !== "castle") return false;
+  const base = Math.max(state.stageEnteredAt || 0, state.lastSpawnAt || 0, state.lastDefeatAt || 0);
+  if (!base) return false;
+  return now - base >= FORCED_ENCOUNTER_MS;
+}
+
 // ツール使用毎に ENCOUNTER_SPAWN_CHANCE でモンスターが出現。同時に2体は出さない（表示は1体）。
 // 出現時に進行中の TODO があれば linkedTodo=true（攻撃では倒れず TODO 完了/ターン終了で討伐）。
-// 無ければ 5撃/ターン終了で討伐。
+// 無ければ 5撃/ターン終了で討伐。dungeon/castle は突入30秒で強制出現（forcedEncounterDue）。
 function maybeSpawnEncounter(state, event, effects) {
   if (state.monsters.length > 0) return null; // 同時に2体出現はしない
   // 出現ペーシング（唯一の頭が律速）：討伐クールダウン＋連続出現の最小間隔。
@@ -253,9 +273,11 @@ function maybeSpawnEncounter(state, event, effects) {
   const sinceSpawn = state.lastSpawnAt ? event.now - state.lastSpawnAt : Infinity;
   if (!(sinceDefeat >= SPAWN_COOLDOWN_MS)) return null;
   if (!(sinceSpawn >= MIN_SPAWN_INTERVAL_MS)) return null;
-  if (chance() >= ENCOUNTER_SPAWN_CHANCE) return null;
-  const linkedTodo = hasRealTodoInProgress(state); // 合成クエスト(ユーザー入力)は紐づけ対象にしない
   const stage = currentAdventureStage(state);
+  // dungeon/castle は突入(or 直近遭遇)から FORCED_ENCOUNTER_MS 経過すると、20%判定をバイパスして確実に出現させる。
+  const forced = forcedEncounterDue(state, stage, event.now);
+  if (!forced && chance() >= ENCOUNTER_SPAWN_CHANCE) return null;
+  const linkedTodo = hasRealTodoInProgress(state); // 合成クエスト(ユーザー入力)は紐づけ対象にしない
   const catalog = monsterCatalogForState(state, stage);
   const template = catalog[Math.floor(chance() * catalog.length)];
   // TODO 不在で遭遇したモンスター(linkedTodo=false)は表示ライフを 20 に統一（演出専用。討伐は 5撃/ターン終了のまま）。
@@ -415,6 +437,7 @@ function townReset(state, event, effects) {
   state.subagentCounts = {}; // 稼働サブエージェントカウンタもリセット
   state.lastSpawnAt = 0; // 新セッションは出現ペーシングもリセット
   state.lastDefeatAt = 0;
+  state.stageEnteredAt = 0; // idle（拠点）は強制エンカウント対象外
   pushLog(state, "session_start", "拠点に到着", event);
   effects.push({ type: "session_start", track: "field" });
 }
@@ -434,6 +457,8 @@ function beginTurn(state, event, effects) {
   // 新ターンは出現クールダウンを引きずらない（前ターンの討伐で最初のエンカウントを律速しない）。
   state.lastSpawnAt = 0;
   state.lastDefeatAt = 0;
+  state.stageEnteredAt = event.now; // 新ターン開始＝現ステージに突入し直した扱い（30秒強制エンカウントの基準）
+
   // TODO がまだ無い間は、ユーザー入力を1つのクエストとして表示する（synthetic）。
   // TodoWrite/update_plan が来たら reconcileQuest が本物の TODO で置き換える。
   // synthetic は表示専用で、エンカウントの linkedTodo（討伐条件）には数えない。

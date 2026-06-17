@@ -270,6 +270,70 @@ test("castle encounters can include dragon and demon-lord only on the final cast
   assert.equal(demonLord.state.monsters[0].counterEffect, "magic");
 });
 
+const DUNGEON_TODOS = [
+  { content: "task 1", status: "completed" },
+  { content: "task 2", status: "completed" },
+  { content: "task 3", status: "in_progress" },
+  { content: "task 4", status: "pending" },
+  { content: "task 5", status: "pending" }
+];
+const CASTLE_TODOS = [
+  { content: "task 1", status: "completed" },
+  { content: "task 2", status: "completed" },
+  { content: "task 3", status: "in_progress" }
+];
+
+test("dungeon forces an encounter 30s after entering even with no spawn roll (threshold)", () => {
+  // 既定の chance=0.99 では 20% 判定は通らない（通常は出現しない）。
+  const r = reduceHookEvent(createInitialState(), todoWrite(DUNGEON_TODOS));
+  assert.equal(r.state.adventureStage, "dungeon");
+  const entered = r.state.stageEnteredAt;
+
+  // 30秒未満：強制されない＝出現しない。
+  const under = reduceHookEvent(r.state, pre(), entered + 29_999);
+  assert.equal(under.state.monsters.length, 0, "突入30秒未満は強制しない");
+
+  // 30秒到達：20%判定をバイパスして確実に出現。
+  const over = reduceHookEvent(r.state, pre(), entered + 30_000);
+  assert.equal(over.state.monsters.length, 1, "突入30秒で強制エンカウント");
+  assert.equal(over.state.monsters[0].stage, "dungeon");
+});
+
+test("castle also forces an encounter 30s after entering", () => {
+  const r = reduceHookEvent(createInitialState(), todoWrite(CASTLE_TODOS));
+  assert.equal(r.state.adventureStage, "castle");
+  const entered = r.state.stageEnteredAt;
+  const over = reduceHookEvent(r.state, pre(), entered + 30_000);
+  assert.equal(over.state.monsters.length, 1, "castle も突入30秒で強制エンカウント");
+  assert.equal(over.state.monsters[0].stage, "castle");
+});
+
+test("field never forces an encounter, even long after entering", () => {
+  const r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  assert.equal(r.state.adventureStage, "field");
+  const entered = r.state.stageEnteredAt;
+  // field は対象外＝60秒経っても 20%判定だけ（chance=0.99 で出ない）。
+  const later = reduceHookEvent(r.state, pre(), entered + 60_000);
+  assert.equal(later.state.monsters.length, 0, "field は強制エンカウント対象外");
+});
+
+test("the 30s forced-encounter timer resets after a defeat (no monster lingers >30s)", () => {
+  // dungeon で強制出現 → 討伐 → さらに30秒で再度強制出現する（後半でも敵が出続ける）。
+  const r = reduceHookEvent(createInitialState(), todoWrite(DUNGEON_TODOS));
+  const entered = r.state.stageEnteredAt;
+  const spawn1 = reduceHookEvent(r.state, pre(), entered + 30_000); // 強制出現
+  assert.equal(spawn1.state.monsters.length, 1);
+  // ターン終了で討伐（wild は Stop で討伐）。lastDefeatAt が基準になる。
+  const cleared = reduceHookEvent(spawn1.state, { provider: "claude", event: "Stop", raw: {} }, entered + 31_000);
+  assert.equal(cleared.state.monsters.length, 0);
+  // 討伐から30秒後、新ターンで再度 dungeon に入り（同ステージ）強制出現する。
+  let next = reduceHookEvent(cleared.state, { provider: "claude", event: "UserPromptSubmit", raw: {} }, entered + 32_000);
+  next = reduceHookEvent(next.state, todoWrite(DUNGEON_TODOS), entered + 33_000);
+  const entered2 = next.state.stageEnteredAt;
+  const spawn2 = reduceHookEvent(next.state, pre(), entered2 + 30_000);
+  assert.equal(spawn2.state.monsters.length, 1, "討伐後も30秒で再度強制エンカウント");
+});
+
 test("a real TodoWrite replaces the synthetic user-input quest", () => {
   let r = reduceHookEvent(createInitialState(), {
     provider: "claude",

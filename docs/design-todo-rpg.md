@@ -43,6 +43,10 @@ TODO は戦闘の源ではなく「クエストの一覧表示」＋「紐づく
 **モンスター＝ランダムエンカウント。** エラーでも TODO 項目でもない。
 
 - モンスターはツール使用ごと（PreToolUse）に **20% の確率で出現する「エンカウント」**。同時に出るのは最大1体（2体同時は無い）。
+  - **dungeon/castle 限定の強制エンカウント（30秒保証）**：突入(`stageEnteredAt`)・直近出現・直近討伐のうち最新から
+    **30秒（`FORCED_ENCOUNTER_MS`）**経っても敵が居なければ、次の PreToolUse で 20% 判定をバイパスして確実に出現させる
+    （`forcedEncounterDue`）。後半の細かい TODO が連続して 20% を引けず、最後まで敵が出ないまま終わるのを防ぐ。field は対象外。
+    クールダウン(4s)/最小間隔(2s) は 30秒 >> なので強制時も満たされる。`stageEnteredAt` はステージ変化時・ターン開始時に更新、拠点で 0。
 - スプライト/HP/反撃種別はステージ別 `MONSTER_CATALOGS` からランダムに選ぶ。field は Slime/Goblin/Orc/Ogre、
   dungeon/castle は各ステージ専用モンスター。Dragon / Demon Lord は TODO が4個以上あり、最後の TODO が現在地の時だけ抽選に入る。
   HP は演出専用で殺傷力なし。
