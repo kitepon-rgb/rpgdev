@@ -137,6 +137,12 @@ own `.rpgdev/`.
 - **Audio.** No native bridge on Windows. BGM and SFX both play through the overlay's
   `<audio>` elements (the unified `<audio>` path as of v0.6.5; macOS uses `AVAudioPlayer`).
   Autoplay via `--autoplay-policy=no-user-gesture-required`; if blocked, click `♪` once.
+  The hub serves `/audio/*.wav` with **HTTP Range support** (`serveStatic` →
+  `Content-Length` + `Accept-Ranges` + `206`; range parsing in `server/http-range.mjs`).
+  This is required, not optional: WebView2/Chromium `<audio>` loads media via range
+  requests, and serving the files chunked without a length made the 7 preloaded BGM
+  elements hold connections so the later-ordered ones (`dungeon-*` / `castle-*`) never
+  loaded and played silent (v0.7.6 fix).
 - **Transparency.** v1 keeps a normal titled window; letterbox bars are black. A
   frameless per-pixel-transparent overlay is deferred.
 

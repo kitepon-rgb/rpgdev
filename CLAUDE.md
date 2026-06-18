@@ -339,6 +339,10 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
   記録し、成功を装わずに非ゼロ終了する。サーバは `.rpgdev/server-errors.log` に記録する。
   編集時もこの挙動を維持し、エラーを握りつぶさないこと。
 - サーバと reducer は **npm 依存ゼロ**。stdlib のみを保つこと。
+- **静的配信は Range 対応を保つ**（`server/rpgdev-server.mjs` の `serveStatic`＋純関数 `server/http-range.mjs`、`test/http-range.test.mjs` がガード）。
+  `/audio/*.wav` を `Content-Length` 無し・チャンク転送で丸ごと流すと、WebView2/Chromium の `<audio>` が
+  「シーク不能ストリーム」と見なし、7本の BGM 要素が同時接続を抱え込んで後発の `dungeon-*`/`castle-*` が
+  読み込まれず無音になる（v0.7.6 で根治）。`Content-Length`＋`Accept-Ranges`＋`206` を返す挙動を壊さない。
 - **二重起動防止**：同一プロジェクト・同一ポートでサーバ／ウィンドウが二重に立たないようにする。
   サーバは listen の `EADDRINUSE` を捕捉し、既存ありとして**後発を `exit 0` で退場**させる（クラッシュ・
   エラーログ汚染をしない）。デスクトップは `desktop.mjs` が既存窓を `focusExistingWindow` で検出したら開かず、

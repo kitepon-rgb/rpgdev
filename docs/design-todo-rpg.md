@@ -658,3 +658,15 @@ README(en/ja)・AGENTS/CLAUDE も「user は settings.json」へ統一。フッ�
 - **ハブ停止 API `POST /control/shutdown`（[server/rpgdev-server.mjs](../server/rpgdev-server.mjs)）**：トレイの「終了」用。`{ok:true, shuttingDown:true}` を返してから `process.exit(0)`（応答を返し切るため 120ms 遅延）。
 - **スタートメニュー登録 `rpgdev setup-shortcut`（[scripts/setup-shortcut.mjs](../scripts/setup-shortcut.mjs)）**：新サブコマンド（`scripts/cli.mjs` が `argv[2]==="setup-shortcut"` で分岐）。`%APPDATA%\Microsoft\Windows\Start Menu\Programs\RPGDev.lnk` を Aqua の顔 .ico 付きで作成し、Target は `rpgdev` 起動（win32=node.exe＋bin/rpgdev、WSL=interop の `wsl.exe -e`）。**管理者不要**（ユーザーの Start Menu に .lnk を置くだけ）・WSL2 からも interop で作成可。.ico はトレイ exe の `--make-ico` モード（PNG-in-ICO を書き出す）で生成。macOS / 素の Linux は skip。
 - **同梱 WebView2 DLL の使用中エラー耐性（`copyDll`）**：実行中の窓が DLL を掴んでいて上書きできない（`EACCES`/`EBUSY`/`EPERM`）かつ既に配置済みなら、コピー失敗を**起動失敗にせず黙って既存を使う**（窓を開き直すたびに起動がクラッシュしないため）。
+
+## 19. v0.7.6：Windows でダンジョン/キャッスルの BGM が無音になる不具合の根治（静的配信の Range 対応）[実装 2026-06-18・Windows/WSL2]
+
+**症状**：Windows（WebView2）で **field の3トラック（field/adventure/battle）は鳴るのに、dungeon/castle の4トラック（dungeon-adventure/dungeon-battle/castle-adventure/castle-battle）だけ無音**。
+
+**切り分け（browser を使わず確定）**：①reducer は正しい曲名を出す（field→dungeon→castle のシミュレートで4トラックを確認）。②フロントも正しく切替えている（実機 `playback.ndjson` に背景の dungeon/castle 切替6回・BGM の dungeon/castle 切替18回が記録済み）。③音源も正常（hub 実体が repo と byte 同一・波形も十分な音量）。残った唯一の差分が**配信方式**だった。
+
+**根因**：`serveStatic` が **`Range` を無視し `Content-Length` も付けずチャンク転送で丸ごと流していた**（実機で 200・`Accept-Ranges` 無し・`Transfer-Encoding: chunked` を確認）。WebView2/Chromium の `<audio>` はメディアを範囲リクエストで読む。長さ不明のチャンク配信は「シーク不能のストリーム」と見なされ、**7本の `<audio preload="auto">` が同時接続を抱え込み、SSE 常時接続＋画像と合わせて同時接続上限を食い尽くす**。結果、HTML で後ろにある dungeon/castle の音源がコネクションを取れず読み込まれない＝**後発トラックだけ無音**（大小無関係＝`adventure`7.4MB は鳴るが `dungeon-adventure`7.1MB は鳴らない、と整合する順番依存）。
+
+**修正**：`serveStatic`（[server/rpgdev-server.mjs](../server/rpgdev-server.mjs)）を標準的なメディア配信へ。範囲リクエストに **206 Partial Content**（`Content-Range`/`Accept-Ranges`/`Content-Length`）、範囲なしは **200＋`Content-Length`＋`Accept-Ranges`**（チャンク転送を解消）、満たせない範囲は **416**。範囲解釈は純関数 [server/http-range.mjs](../server/http-range.mjs) に分離し、[test/http-range.test.mjs](../test/http-range.test.mjs)（9本）でガード（hub-net/hook-config と同じ「純関数を独立モジュール化して単体テスト」の慣習）。
+
+**検証境界（正直に）**：HTTP 層（206/200/416・範囲取得の中身一致・全取得バイト一致）と全テスト（111 pass）で確認済み。WebView2 内部の接続枯渇そのものは browser 不使用方針のため直接観測していないが、「配信が範囲非対応」という客観的欠陥が鳴る/鳴らないを分ける唯一の差分。万一これで鳴らなければフロント側で「アクティブな1曲だけ読み込む」方式（同時接続を1本に絞る）が保険。

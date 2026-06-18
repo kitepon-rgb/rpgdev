@@ -6,6 +6,7 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createInitialState, MONSTER_CATALOGS, reduceHookEvent } from "./adventure-state.mjs";
+import { parseRange } from "./http-range.mjs";
 
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const PROJECT_DIR = resolve(process.env.RPGDEV_PROJECT_DIR || process.cwd());
@@ -113,7 +114,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET") {
-      return serveStatic(url.pathname, response);
+      return serveStatic(url.pathname, response, request);
     }
 
     response.writeHead(405, { "content-type": "application/json; charset=utf-8" });
@@ -376,7 +377,7 @@ function broadcast(event, payload) {
   }
 }
 
-async function serveStatic(pathname, response) {
+async function serveStatic(pathname, response, request) {
   const safePath = pathname === "/" ? "/index.html" : pathname;
   const target = normalize(join(PUBLIC_DIR, safePath));
   if (target !== PUBLIC_DIR && !target.startsWith(`${PUBLIC_DIR}${sep}`)) {
@@ -388,8 +389,35 @@ async function serveStatic(pathname, response) {
   try {
     const info = await stat(target);
     if (!info.isFile()) throw new Error("not a file");
+    const contentType = MIME.get(extname(target)) || "application/octet-stream";
+    // Range 対応。WebView2/Chromium の <audio>/<video> は範囲リクエストで読みに来る。
+    // 範囲を無視して Content-Length も付けずチャンク転送で丸ごと流すと、シーク/ループ不能の
+    // 「ストリーミング」扱いになり、メディア要素がコネクションを抱え込んで後発の要素が読み込めない
+    // （= 7本の BGM のうち後ろの dungeon/castle が無音になる順番依存の不具合）。Content-Length と
+    // Accept-Ranges を必ず返し、Range があれば 206 で部分応答する。
+    const range = parseRange(request?.headers?.range, info.size);
+    if (range === "invalid") {
+      response.writeHead(416, {
+        "content-type": "text/plain; charset=utf-8",
+        "content-range": `bytes */${info.size}`
+      });
+      response.end("Range Not Satisfiable");
+      return;
+    }
+    if (range) {
+      response.writeHead(206, {
+        "content-type": contentType,
+        "accept-ranges": "bytes",
+        "content-range": `bytes ${range.start}-${range.end}/${info.size}`,
+        "content-length": range.end - range.start + 1
+      });
+      createReadStream(target, { start: range.start, end: range.end }).pipe(response);
+      return;
+    }
     response.writeHead(200, {
-      "content-type": MIME.get(extname(target)) || "application/octet-stream"
+      "content-type": contentType,
+      "accept-ranges": "bytes",
+      "content-length": info.size
     });
     createReadStream(target).pipe(response);
   } catch {
