@@ -11,6 +11,29 @@ English | [日本語](README.ja.md)
 
 RPGDev is a small desktop overlay (macOS, Windows, and WSL2) that converts the **hook events** your AI coding agent emits — Codex CLI and Claude Code — into a classic JRPG-style scene. Every tool call becomes a battle action, your TODO list becomes a quest log, and elemental spirits join you as allies while you work. It's a passive, ambient "your terminal is an adventure" companion: you don't play it, you just code and watch the adventure unfold.
 
+## Install — just ask your AI agent
+
+The easiest way is to **tell your AI coding agent to install it.** In Claude Code or Codex, say:
+
+> **Read https://github.com/kitepon-rgb/rpgdev and install RPGDev for me.**
+
+Your agent follows [docs/agent-install.md](docs/agent-install.md): it installs the package, writes the
+hooks into your settings **safely** (backs up, atomic, idempotent — it never clobbers your existing
+config), opens the host firewall on Windows/WSL2, and launches the window. The scripts do the work; the
+agent only asks you for the one admin-only step (the Windows firewall, when you're on WSL2).
+
+Prefer to do it by hand?
+
+```bash
+npm install -g rpgdev
+rpgdev setup --apply        # write the hooks (safe; refuses if it can't do it safely)
+rpgdev setup-firewall       # Windows/WSL2 only — run on the Windows host
+rpgdev setup-shortcut       # Windows/WSL2 only — add a Start Menu entry (Aqua-face icon)
+rpgdev                      # open the window
+```
+
+Run `rpgdev help` for options (`--codex`, `--all`, `--user`, …).
+
 ## Demo
 
 <!-- Maintainer: drop a screenshot or GIF of the desktop overlay here, e.g. docs/screenshot.png, and reference it below. -->
@@ -41,7 +64,7 @@ HP is purely for show.
 - Node.js 20+ (all platforms)
 - **macOS** — Swift compiler / Xcode Command Line Tools (the window is compiled on-demand with `swiftc`)
 - **Windows** — WebView2 Runtime (preinstalled on Windows 11) + .NET Framework 4.x `csc.exe` (the window is a C# WinForms + WebView2 host, compiled on-demand). The WebView2 SDK DLLs are bundled, so no extra download. See [docs/windows-wsl.md](docs/windows-wsl.md).
-- **WSL2** — `.wslconfig` with `localhostForwarding=true`; the window is built and shown on the Windows host. See [docs/windows-wsl.md](docs/windows-wsl.md).
+- **WSL2** — the hub server and the window both run on the Windows host (started via interop); WSL2 connects to a single shared hub. Needs Node + WebView2 on the host and a host firewall allow for WSL→host traffic (applied by `rpgdev setup-firewall` — a standard Defender rule plus a Hyper-V rule; `localhostForwarding` is no longer required). See [docs/windows-wsl.md](docs/windows-wsl.md).
 - **bare Linux** — no desktop window yet; use the browser view (`npm run web`).
 
 ## Install
@@ -57,6 +80,8 @@ rpgdev
 ```
 
 A small RPGDev window opens on your desktop (macOS / Windows; on WSL2 it appears on the Windows host). Runtime state and logs are written per-project under `.rpgdev/`. Windows/WSL2 setup details: [docs/windows-wsl.md](docs/windows-wsl.md).
+
+On **Windows / WSL2** a small **task-tray icon** (the Aqua water-spirit's face) also appears alongside the window — its presence means the hub is running, and it disappears when the hub stops. Right-click it to open the window, return to town, or quit (which stops the hub). Windows hides new tray icons under the overflow (`^`) by default, so look there if you don't see it. Optionally add a Start Menu entry with `rpgdev setup-shortcut`.
 
 To open just the web view instead of the native window:
 

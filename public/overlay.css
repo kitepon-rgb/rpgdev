@@ -161,6 +161,17 @@ body[data-phase="complete"] .shade {
   font-size: 1.15rem;
 }
 
+/* 「街に戻る」ボタン：音 ON/OFF ボタン(bottom:10px,高さ38px)の真上に積む。 */
+#townButton {
+  position: fixed;
+  right: 10px;
+  bottom: 56px;
+  z-index: 20;
+  width: 42px;
+  height: 38px;
+  font-size: 1.15rem;
+}
+
 .stage {
   height: calc(100vh - 60px);
   min-height: 116px;

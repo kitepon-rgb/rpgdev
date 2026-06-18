@@ -81,6 +81,20 @@ const server = createServer(async (request, response) => {
       return json(response, { ok: true, state });
     }
 
+    if (request.method === "POST" && url.pathname === "/control/return-town") {
+      // 手動「街に戻る」：合成 SessionStart を流して townReset（敵/精霊/クエストをクリア・オーナー解放・phase=idle）。
+      // 無反応オーナーで冒険が固まった時の即時復旧（reducer の時間切れ自動解除の手動版）。既存パイプ（保存/ブロードキャスト/トレース）に乗る。
+      const result = await handleHook({ provider: "system", event: "SessionStart", raw: {} });
+      return json(response, result);
+    }
+
+    if (request.method === "POST" && url.pathname === "/control/shutdown") {
+      // ハブをきれいに停止する（タスクトレイ常駐の「終了」用）。レスポンスを返してから exit する。
+      json(response, { ok: true, shuttingDown: true });
+      setTimeout(() => process.exit(0), 120);
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/control/layout-spirits") {
       const result = await showSpiritLayoutPreview();
       return json(response, result);
@@ -118,6 +132,14 @@ server.on("error", async (error) => {
   if (error.code === "EADDRINUSE") {
     console.error(`RPG Dev server: ${HOST}:${DEFAULT_PORT} is already serving; this duplicate instance exits.`);
     process.exit(0);
+  }
+  if (error.code === "EADDRNOTAVAIL") {
+    // 非ループバック IP（例: Windows の WSL アダプタ IP）が現在この機に割り当たっていない。
+    // 沈黙フォールバックせず明確に落とす（呼び出し側が住所を取り直して再起動する）。
+    console.error(
+      `RPG Dev server: cannot bind ${HOST}:${DEFAULT_PORT} (address not available on this host). ` +
+        "The hub binds the WSL-adapter IP on Windows; if WSL isn't up or the IP changed, restart it or set RPGDEV_HOST."
+    );
   }
   try {
     await appendFile(join(DATA_DIR, "server-errors.log"), `${new Date().toISOString()} listen ${error.stack || error}\n`);
@@ -211,7 +233,6 @@ async function showSpiritLayoutPreview() {
     lastDefeatAt: 0,
     quest: [{ label: "精霊4体レイアウト確認", status: "in_progress", stage: "field" }],
     ownerSession: "layout-four-spirits",
-    subagentCounts: { "layout-four-spirits": 4 },
     monsters: [monster],
     allies: [
       { id: `layout-ignis-${now}`, name: "Ignis", sprite: "ally-fire", element: "fire", life: 5, appearedAt: now },
@@ -290,7 +311,6 @@ async function showMonsterLayoutPreview(body = {}) {
     lastDefeatAt: 0,
     quest: [{ label: `${stage} monster layout: ${template.name}`, status: "in_progress", stage }],
     ownerSession: "layout-monster-preview",
-    subagentCounts: {},
     monsters: [monster],
     allies: [],
     lastEvent: {

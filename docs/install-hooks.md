@@ -75,6 +75,11 @@ Read the target file (it may already contain the user's own settings). Then:
   a fresh session). After that, the next tool call makes the RPGDev window react.
 - **Codex** may likewise need the session restarted to pick up new hooks.
 - Start the window if it isn't open: `rpgdev` (macOS / Windows; on WSL2 it appears on the Windows host).
+- **Windows / WSL2:** while the hub runs, a system-tray icon (the Aqua spirit's face) sits in the
+  notification area — its presence means the hub is up, and it disappears when the hub stops. Windows
+  hides new tray icons in the overflow (`^`) by default, so look there. Right-click it to open the
+  window, return to town, or quit (which stops the hub). Optionally add a Start Menu entry:
+  `rpgdev setup-shortcut` (no admin needed; works from WSL2 too).
 - If a hook can't reach the server it logs to `.rpgdev/hook-errors.log` and stderr (it never fails
   silently). An empty `hook-errors.log` after a few tool calls means it's working.
 

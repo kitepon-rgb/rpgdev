@@ -3,21 +3,74 @@
 RPGDev's desktop window started life as a macOS-only Swift + WKWebView host. As of
 v0.6, the same overlay also runs on **Windows** (native) and inside **WSL2** (the
 window appears on the Windows host). Everything except the window — the server, the
-hook CLI, the reducer, BGM/SFX generation, the web front-end — was already
-cross-platform; only the desktop window needed a per-platform host.
+hook CLI, the reducer, BGM/SFX generation, the web front-end — is cross-platform; only
+the desktop window needs a per-platform host, and on Windows/WSL2 the **single shared
+hub** runs on the Windows host (see below).
 
-> **Status / honesty note.** The Windows and WSL2 paths are authored to mirror the
-> macOS host, but they are **not yet verified on a real Windows/WSL2 machine** by the
-> maintainers. The macOS path is unchanged and remains the reference. If anything
-> below fails, it surfaces a clear error (no silent fallback) — please file it.
+> **Status / honesty note.** The single-hub WSL2 path is **verified end-to-end on a real
+> WSL2 box** (Ubuntu 26.04): a Windows-host server (local files, `0.0.0.0`) + a
+> localhost-connected window + WSL2 hooks → the window correctly renders Explore (field),
+> a battle (encounter→defeat), and Clear (town + resting hero). The macOS path is
+> unchanged and remains the reference. Everything surfaces a clear error on failure (no
+> silent fallback) — please file anything that breaks.
+
+## The single Windows hub (one server, one window, one adventure)
+
+If you run RPGDev across **both** a native-Windows project and a WSL2 project (or two of
+either), they do **not** each spin up their own server and window. That used to cause
+three problems: both sides fought over port 37373, two windows appeared, and the WSL2
+window could connect to the wrong server. Instead:
+
+- **One hub.** Exactly one `node` server runs, **on the Windows host**, started from
+  **Windows-local files** and bound to **`0.0.0.0`**. Binding all interfaces lets both the
+  host window (`localhost`) and WSL2 (the host's WSL-adapter IP) reach the same server.
+  The physical NIC stays closed by Windows Defender's default inbound block, so only
+  loopback and the WSL `vEthernet` adapter (one inbound allow rule, below) actually reach
+  it — no token, no real LAN exposure.
+- **One window.** The C# host's single-instance `Mutex` uses a fixed key (`rpgdev-hub`) in
+  the **`Global\` namespace with an Everyone-allow ACL**, so the dedup crosses Windows
+  sessions: a Windows-native launch and a WSL2-interop launch can land in *different*
+  Terminal-Services sessions, and a session-scoped `Local\` mutex would let each think it is
+  first and open its own window (two windows). `Global\`+ACL makes whoever launches second
+  just bring the existing window forward (it falls back to `Local\` only if `Global\` can't
+  be created). The window always connects via **`localhost:37373`** (it is always on the
+  same host as the hub).
+- **One adventure / one state.** The hub's state lives in a single global directory
+  (`%LOCALAPPDATA%\rpgdev\hub`), so all tool use — Windows or WSL2 — drives the same
+  monsters, quests, and stages. Ownership of the quest list is decided by the reducer's
+  existing multi-session arbitration (`ownerSession`).
+- **Order-independent.** Set up Windows first or WSL2 first — both converge on the same
+  reachable hub. Hook configs never bake in an address; each side resolves it at runtime
+  via `scripts/hub-net.mjs`.
+
+`scripts/hub-net.mjs` resolves three *purpose-specific* addresses (mixing them is what
+broke earlier attempts):
+
+| helper | meaning | win32 | wsl | darwin/linux |
+| --- | --- | --- | --- | --- |
+| `hubBindHost` | address the server listens on (`RPGDEV_HOST` env) | `0.0.0.0` | `0.0.0.0` | `127.0.0.1` |
+| `hubReachHost` | where *this process* reaches the hub (hook POST / health) | `127.0.0.1` | gateway (host's WSL-adapter IP) | `127.0.0.1` |
+| `HUB_WINDOW_HOST` | where the **window** connects | `127.0.0.1` | `127.0.0.1` | `127.0.0.1` |
+
+So: the server listens on everything, the window always talks to `localhost`, and only
+WSL2 hooks use the gateway IP. The port-collision / two-windows / wrong-server class of
+bugs is **designed out**, not patched.
+
+> **Run the server from local files, never off the `\\wsl.localhost` share.** When the
+> WSL2 path starts the hub, it **copies `server/` and `public/` into
+> `%LOCALAPPDATA%\rpgdev\hub` and runs that copy** with the host `node.exe`. Running the
+> server script *directly* from the `\\wsl.localhost\<distro>\…` share makes the host
+> WebView2 unable to receive the SSE stream (`/events`) — the window loads static assets
+> but never gets live updates (background stuck, no BGM). Local-file execution (the same
+> shape as a native-Windows server) fixes it. This is verified.
 
 ## Platform matrix
 
 | Platform | Window host | How it is built | Notes |
 | --- | --- | --- | --- |
 | macOS | Swift + WKWebView | `swiftc` on demand → `.rpgdev/RPGDev.app` | unchanged reference path |
-| Windows (native) | C# WinForms + WebView2 | `csc.exe` on demand → `.rpgdev/RPGDevWin/RPGDev.exe` | needs WebView2 runtime + the SDK DLLs below |
-| WSL2 | C# WinForms + WebView2 on the **Windows host** | `csc.exe` via interop → `%LOCALAPPDATA%\rpgdev\<hash>\RPGDev.exe` | server runs in WSL2; window runs on the host |
+| Windows (native) | C# WinForms + WebView2 | `csc.exe` on demand → `%LOCALAPPDATA%\rpgdev\hub\RPGDevWin\RPGDev.exe` | hub binds `0.0.0.0`; window connects `localhost` |
+| WSL2 | C# WinForms + WebView2 on the **Windows host** | `csc.exe` via interop → `%LOCALAPPDATA%\rpgdev\hub\RPGDev.exe` | hub server (local-copied) + window both on the host; WSL2 hooks reach it via the gateway IP |
 | bare Linux | — | — | desktop window not supported; use `npm run web` (browser view) |
 
 The platform is chosen by `scripts/desktop-platform.mjs` (`detectPlatform()`):
@@ -27,167 +80,208 @@ dispatches on it.
 
 ## Requirements (Windows host)
 
-1. **WebView2 Evergreen Runtime.** Preinstalled on Windows 11 and on most Windows 10
-   machines. If missing, install the bootstrapper from Microsoft (search
-   "Download WebView2 Runtime").
+1. **WebView2 Evergreen Runtime.** Preinstalled on Windows 11 and most Windows 10
+   machines. If missing, install the bootstrapper from Microsoft.
 2. **.NET Framework 4.x C# compiler (`csc.exe`).** Ships with Windows at
-   `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`. Install .NET Framework
-   4.8 (or VS Build Tools) if absent.
-3. **Node.js 20+** (for the hook CLI / server, same as every platform).
+   `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`.
+3. **Node.js 20+ on the Windows host.** Required for native Windows *and* for WSL2: in
+   the single-hub model the server **runs on the host**, so the host needs `node.exe`
+   (the WSL2 path finds it via `where node`, else `C:\Program Files\nodejs\node.exe`).
+   Node inside WSL2 still runs the hook CLI.
 
 The **WebView2 SDK DLLs are bundled** in `desktop/webview2/` (no manual download).
 
 ### WebView2 SDK DLLs (`desktop/webview2/`) — bundled
 
 The C# host creates the WebView2 controller directly on the window handle, so it needs
-exactly **two** files, both of which ship with RPGDev (no WinForms/WPF wrapper
-assembly, no bundled Chromium — the Evergreen runtime does the actual rendering):
+exactly **two** files, both shipped with RPGDev:
 
-- `Microsoft.Web.WebView2.Core.dll` — managed Core wrapper (AnyCPU, .NET Framework
-  4.6.2 target).
+- `Microsoft.Web.WebView2.Core.dll` — managed Core wrapper (AnyCPU, .NET Framework 4.6.2).
 - `WebView2Loader.dll` — native loader, **x64**.
 
 Microsoft's [distribution docs](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution#files-to-ship-with-the-app)
-explicitly require shipping these two with the app, so they are committed to the repo
-(and included in the npm package). See `desktop/webview2/README.md` for the source
-package version and how to update them. If they are ever removed, the build stops with
-a clear error (it does not silently skip the window).
+require shipping these two with the app, so they are committed to the repo (and the npm
+package). If removed, the build stops with a clear error.
 
-> arm64 Windows: swap in the `win-arm64` `WebView2Loader.dll` and change
-> `/platform:x64` to `/platform:arm64` in `scripts/desktop.mjs` (deferred / untested).
+> arm64 Windows: swap in the `win-arm64` `WebView2Loader.dll` and change `/platform:x64`
+> to `/platform:arm64` in `scripts/desktop.mjs` (deferred / untested).
 
-## How the Windows window is built and launched
+## How the Windows window is built and launched (native)
 
-`npm start` (or the `UserPromptSubmit` hook → `node scripts/desktop.mjs --from-hook`):
+`npm start` (or the `UserPromptSubmit` hook → `node scripts/desktop.mjs`):
 
 1. `detectPlatform()` → `win32`.
-2. `buildWinWindowIfNeeded()` — copies the two DLLs next to the exe, then compiles
-   `desktop/RPGDevWindow.cs` with `csc.exe` to `.rpgdev/RPGDevWin/RPGDev.exe`
-   **only if the source is newer** (same mtime check as the Swift path).
-3. Launch `RPGDev.exe http://127.0.0.1:37373/overlay.html <webview2-data> <state.json> <instanceKey>`.
-4. A named `Mutex` inside the host enforces a single window: a second launch brings
-   the existing window to the foreground and exits. `npm run build:desktop` just
-   compiles and exits.
+2. `ensureServer()` starts the hub locally with `RPGDEV_HOST=0.0.0.0` and
+   `RPGDEV_PROJECT_DIR=%LOCALAPPDATA%\rpgdev\hub`. If a hub already serves, it is a no-op.
+3. `buildWinWindowIfNeeded()` compiles `desktop/RPGDevWindow.cs` to
+   `%LOCALAPPDATA%\rpgdev\hub\RPGDevWin\RPGDev.exe` (mtime-gated).
+4. Launch `RPGDev.exe http://127.0.0.1:37373/overlay.html <webview2-data> <state.json> rpgdev-hub`.
+5. The fixed `rpgdev-hub` `Mutex` (in the `Global\` namespace, Everyone-allow ACL) enforces a
+   single window **across sessions** (so a WSL2-interop launch and a Windows-native launch
+   share one window); a second launch foregrounds the existing one. `npm run build:desktop`
+   just compiles and exits.
 
-Runtime state stays under the project's `.rpgdev/`: `RPGDevWin/RPGDev.exe`,
-`webview2-data/` (WebView2 user-data dir), `desktop-window-win.json` (window
-position/size, keyed by a display signature — reset when monitors change, exactly like
-the macOS `UserDefaults` logic).
+Hub runtime state lives in **`%LOCALAPPDATA%\rpgdev\hub`** — `RPGDevWin/RPGDev.exe`,
+`webview2-data/`, `desktop-window-win.json`, and the server's `state.json` /
+`events.ndjson` / `playback.ndjson`. Only per-launch **error logs** stay in the project's
+own `.rpgdev/`.
 
 ### Window behaviour & v1 limitations
 
-- **Always-on-top**, **no taskbar button**, **4:3** aspect kept on resize, min client
-  512×384, position restored across restarts.
-- **Resize quality.** Two separate concerns are handled:
-  - *Flicker* — the host uses **Window-to-Visual hosting**
-    (`COREWEBVIEW2_FORCED_HOSTING_MODE=COREWEBVIEW2_HOSTING_MODE_WINDOW_TO_VISUAL`) so
-    the page composes through a DirectComposition visual instead of a child HWND.
-  - *Pixel-art sharpness* — the window fit uses **ZoomFactor re-rasterization**
-    (`BoundsMode=UseRawPixels`, `RasterizationScale=1`, integer `ZoomFactor`) plus the
-    overlay's existing `image-rendering: pixelated`, with **integer-multiple scaling +
-    letterbox**. This avoids "scale a pre-rasterized surface" blur; sprites resample
-    once from their high-res sources.
-- **Audio.** No native audio bridge on Windows. BGM plays from the same
-  `/audio/*.wav` files via the overlay's `<audio loop>` elements (identical to the
-  macOS native audio). SFX are **WebAudio-synthesized** (the macOS native path plays
-  the rendered SFX WAVs; on Windows they are synthesized — functionally complete, a
-  touch different). Autoplay is enabled with
-  `--autoplay-policy=no-user-gesture-required`; if your runtime still blocks it, click
-  the `♪` button once.
+- **Always-on-top**, **no taskbar button**, **4:3** kept on resize, min client 512×384,
+  position restored across restarts.
+- **Resize quality.** *Flicker* — Window-to-Visual hosting
+  (`COREWEBVIEW2_FORCED_HOSTING_MODE=…WINDOW_TO_VISUAL`). *Pixel-art sharpness* —
+  ZoomFactor re-rasterization (`BoundsMode=UseRawPixels`, `RasterizationScale=1`, integer
+  `ZoomFactor`) + `image-rendering: pixelated` + integer-multiple scaling + letterbox.
+- **Audio.** No native bridge on Windows. BGM and SFX both play through the overlay's
+  `<audio>` elements (the unified `<audio>` path as of v0.6.5; macOS uses `AVAudioPlayer`).
+  Autoplay via `--autoplay-policy=no-user-gesture-required`; if blocked, click `♪` once.
 - **Transparency.** v1 keeps a normal titled window; letterbox bars are black. A
-  frameless, per-pixel-transparent desktop overlay (matching the macOS see-through
-  look) is deferred.
+  frameless per-pixel-transparent overlay is deferred.
+
+### Task-tray resident (Windows / WSL2)
+
+Alongside the window, `scripts/desktop.mjs` also builds and launches a small **task-tray
+resident** (`desktop/RPGDevTray.cs` → `RPGDevTray.exe`, C# WinForms `NotifyIcon`, **no
+WebView2**). Its job is to make hub liveness visible: it polls `GET /health` every **3s** and
+removes **itself** after **3 consecutive failures**, so **tray icon present = hub running,
+gone = hub stopped**. The icon is the **water-spirit Aqua face**, cropped at runtime from
+`public/assets/sprites/ally-water-facing-slit.png` via `System.Drawing` (no external image
+tool; `--make-ico` also writes a PNG-in-ICO). Right-click menu: **Open window** / **Return to
+town** (`POST /control/return-town`) / **Quit** which stops the hub (`POST /control/shutdown`).
+Single instance is a file lock `rpgdev-hub.tray.lock` in the hub dir (separate from the
+window's `Global\` mutex). Note: **Windows hides newly-added tray icons in the overflow (`^`)
+by default** — drag it out to keep it visible.
 
 ### Hook setup (Windows native)
 
-The setup flow is the same on every platform: ask your AI agent to set it up (it runs
-`rpgdev setup` and merges the result), or run `rpgdev setup` yourself and copy the printed
-config. See [install-hooks.md](install-hooks.md). The target is
-`<project>\.claude\settings.local.json` or `%USERPROFILE%\.claude\settings.local.json`
-(Claude Code), or your Codex hooks file.
+Same on every platform: ask your AI agent to set it up (it runs `rpgdev setup` and merges
+the result), or run `rpgdev setup` yourself. See [install-hooks.md](install-hooks.md). The
+target is `<project>\.claude\settings.local.json` or `%USERPROFILE%\.claude\settings.json`
+(Claude Code user-global), or your Codex hooks file.
 
-**Why `rpgdev setup` matters specifically on Windows:** the generated Claude config is exec
-form (`"command": "<node.exe>", "args": ["<…>\\rpg-hook.mjs", "claude", "<Event>"]`). Claude
-Code spawns exec-form hooks **without a shell**, so a bare `"command": "rpgdev-hook"` does
-*not* resolve the `rpgdev-hook.cmd` PATH shim — the hook silently never fires. The
-absolute-path-to-node form sidesteps that entirely (no `PATH`, no `.cmd` shim). Run
-`rpgdev setup` in the environment the agent runs in (native Windows here) so the captured
-paths are the Windows ones.
+**Why `rpgdev setup` matters on Windows:** the Claude config is exec form
+(`"command": "<node.exe>", "args": ["<…>\\rpg-hook.mjs", …]`). Claude Code spawns exec-form
+hooks **without a shell**, so a bare `"command": "rpgdev-hook"` does *not* resolve the
+`rpgdev-hook.cmd` PATH shim — the hook silently never fires. The absolute-node form
+sidesteps that. Run `rpgdev setup` in the environment the agent runs in.
 
-- **Codex (native Windows)** — uses the same absolute-node inline form. If Codex on your
-  machine doesn't spawn it, re-run with `rpgdev setup --codex --codex-cmd-wrap` to wrap it as
-  `cmd /c …` (real-device verification still welcome).
+> The static `examples\*.json` remain for manual copying but assume a global install.
 
-> The static `examples\*.json` remain for manual copying but assume a global install. The
-> `examples\claude-settings.local.json` shell form (single `command` string, no `args`) lets the
-> shell resolve the `.cmd` shim — that's the manual-copy fallback, not the exec form above.
+### Start Menu shortcut (Windows / WSL2)
 
-## WSL2 (developer in Linux, window on the Windows host)
+`rpgdev setup-shortcut` adds a Start Menu entry so the hub can be launched without a
+terminal. It writes `%APPDATA%\Microsoft\Windows\Start Menu\Programs\RPGDev.lnk` with the
+Aqua-face `rpgdev.ico` (generated under `%LOCALAPPDATA%\rpgdev\hub` by the tray exe's
+`--make-ico` mode); the shortcut target launches `rpgdev`. **No admin needed**, and it works
+from **WSL2 via interop**. On macOS / bare Linux it is a no-op (skipped).
 
-When Claude Code / Codex run **inside WSL2**, the hook runs in Linux, the server runs
-in WSL2, but the window must appear on the **Windows host**. RPGDev does this
-automatically:
+## WSL2 (developer in Linux, hub + window on the Windows host)
+
+When Claude Code / Codex run **inside WSL2**, the hook runs in Linux, but both the **hub
+server and the window run on the Windows host** — WSL2 does not run its own server. The
+WSL2 side resolves the host's WSL-adapter IP (its default gateway) for hooks, and the
+window connects via `localhost`. Automatically:
 
 1. `detectPlatform()` → `wsl`.
-2. The server starts in WSL2 (Linux Node), listening on `127.0.0.1:37373`.
-3. `scripts/desktop.mjs` builds the Windows host **via interop**: it reads
-   `%LOCALAPPDATA%` (`cmd.exe`), creates a Windows-local cache
-   `%LOCALAPPDATA%\rpgdev\<hash>\`, copies `RPGDevWindow.cs` + the two WebView2 DLLs
-   there, and compiles with the Windows `csc.exe` (found under `/mnt/c/Windows/...`),
-   passing Windows paths translated with `wslpath`.
-4. It launches `RPGDev.exe` on the host (interop runs the `.exe`), pointed at
-   `http://localhost:37373/overlay.html`.
+2. `ensureWindowsHubFromWsl()` makes sure the hub is up **on the host**: it checks
+   `http://<gateway>:37373/health`, and if nothing answers it **copies `server/` and
+   `public/` into `%LOCALAPPDATA%\rpgdev\hub`** (via `wslpath`-translated paths) and starts
+   that copy with the host `node.exe` (`where node`, else `C:\Program Files\nodejs`).
+   Env crosses the WSL→Windows boundary via **`WSLENV`**: `RPGDEV_HOST=0.0.0.0`,
+   `RPGDEV_PORT`, `RPGDEV_PROJECT_DIR=%LOCALAPPDATA%\rpgdev\hub`. It waits for `/health`
+   (on the gateway IP) before continuing. *(The hook CLI delegates this to
+   `node scripts/desktop.mjs --ensure-hub`.)*
+3. The window is built on the host via interop (`csc.exe`), into `%LOCALAPPDATA%\rpgdev\hub`.
+4. It launches `RPGDev.exe` pointed at **`http://127.0.0.1:37373/overlay.html`** — the
+   window is on the host, so it talks to the hub over `localhost` (the same `0.0.0.0` hub
+   that WSL2 hooks reach via the gateway IP).
+
+> **WSLENV is required.** Only variables listed in `WSLENV` cross into the
+> interop-spawned Windows process. Without it the host `node.exe` falls back to its
+> defaults and the shared hub never comes up correctly.
+>
+> **Why copy instead of running off the share.** Running `server/rpgdev-server.mjs`
+> straight from `\\wsl.localhost\…` makes the host WebView2 unable to receive `/events`
+> (SSE) — the window shows static art but never updates. Copying to local files fixes it
+> (verified). `server/` is small; `public/` is a few MB and is copied mtime-gated.
 
 ### WSL2 requirements
 
-- **`.wslconfig localhostForwarding=true`** (the default). This is what lets the
-  Windows-host window reach the WSL2 server at `localhost:37373`. In
-  `%UserProfile%\.wslconfig`:
+- **A Windows-host firewall rule allowing WSL→host inbound on the hub port** (see
+  "Firewall" below) — the one external dependency. Needed even with `0.0.0.0`, because
+  Defender's *default* inbound block otherwise drops the WSL `vEthernet` traffic.
+- **Node.js on the Windows host** (the hub runs there), plus the WebView2 runtime,
+  `csc.exe`, and the bundled `desktop/webview2/` DLLs (copied across by the build).
+- **WSL interop enabled** (default) so `cmd.exe` / `csc.exe` / the host `node.exe` / the
+  built `.exe` run from Linux.
+- **`localhostForwarding` is not required.** The window connects to the hub over
+  `localhost` on the *same host*, and WSL2 reaches it over the gateway IP — nothing relies
+  on the Windows→WSL `localhostForwarding` mechanism. Keeping the default is harmless.
 
-  ```ini
-  [wsl2]
-  localhostForwarding=true
-  ```
+> **Mirrored networking mode.** This is for the default **NAT** mode. Under
+> `networkingMode=mirrored` host and WSL2 share `localhost` with no separate gateway —
+> set `RPGDEV_HOST=127.0.0.1` so both sides resolve the same loopback hub.
 
-- The **Windows host** must have the WebView2 runtime, `csc.exe`, and the same
-  `desktop/webview2/` DLLs (they ship in the package, which is installed inside WSL2;
-  the build copies them across).
-- **WSL interop enabled** (the default) so `cmd.exe` / `csc.exe` / the built `.exe` are
-  runnable from Linux.
+### Firewall (the one thing you may have to do by hand)
 
-The Windows-side runtime (exe, DLLs, `webview2-data/`, `window.json`) lives in
-`%LOCALAPPDATA%\rpgdev\<hash>\` — not under the project `.rpgdev/` — because the window
-is a Windows process and running an exe / WebView2 cache off the `\\wsl$` share is
-fragile.
+The single hub lives on the Windows host, so the host firewall must allow WSL2→host inbound
+on the hub port. **The easy, correct way is `rpgdev setup-firewall`** — run it **on the
+Windows host** (it asks for admin once). It applies a **reboot-stable** allow rule at **both
+firewall layers**:
+
+- **Standard Windows Defender Firewall.** WSL2→host arrives on the host's `vEthernet (WSL …)`
+  adapter as **inbound**, which Defender blocks by default. The rule is scoped by the WSL NAT
+  **source range `-RemoteAddress 172.16.0.0/12`**, *not* by `-InterfaceAlias`: scoping by
+  interface bakes the WSL adapter's **GUID** into the saved rule, and that GUID changes on
+  every reboot, so an interface-scoped rule silently stops matching after a restart (hit on a
+  real box, 2026-06-18). The NAT range is stable and still host-only — LAN/VPN are outside it.
+- **Hyper-V firewall.** On builds that expose `New-NetFirewallHyperVRule`, the WSL vmCreator's
+  **default inbound is Block**, so a matching allow rule is added there too. If *either* layer
+  blocks, the hub is unreachable — that is why both are needed.
+
+**From WSL2 you can't raise the UAC prompt** the change needs, so `rpgdev setup-firewall` run
+inside WSL2 just tells you to run it on the Windows side (and exits non-zero so an agent can
+branch). Verify from inside WSL2:
+`curl http://$(ip route show default | grep -oE '([0-9]+\.){3}[0-9]+' | head -1):37373/health`
+should return `{"ok":true,...}`. If it still fails, a VPN kill-switch (e.g. NordVPN) may be
+blocking it — allow LAN/local in the VPN, or run `wsl --shutdown` from Windows to refresh
+networking.
 
 ### WSL2 hooks
 
-No new config: Claude/Codex run inside WSL2, so the **existing Linux examples**
-(`examples/claude-settings.local.json`, `examples/codex-hooks.json`) are used
-unchanged at `~/.claude/settings.local.json` / your Codex hooks path.
+No new config and no baked-in address: the hook resolves the hub IP at runtime
+(`hubReachHost()`), so the **existing Linux examples** — or `rpgdev setup` — are used
+unchanged at `~/.claude/settings.local.json` / your Codex hooks path. The same configs
+work whether you set up Windows first or WSL2 first.
 
 ### Networking / security
 
-Keep `RPGDEV_HOST=127.0.0.1` (the default). With `localhostForwarding`, the Windows
-host reaches it. **Do not** default to `0.0.0.0`: the hook server exposes unauthenticated
-`/hook` and `/control/reset`, so a wider bind would expose game-state mutation to the
-LAN. Only set `RPGDEV_HOST=0.0.0.0` if `localhostForwarding` is unavailable and you
-understand the exposure.
+The hub binds **`0.0.0.0`** so the host window (`localhost`) and WSL2 (the gateway IP) can
+both reach it. That is *not* a LAN exposure in practice: Windows Defender's default
+inbound block keeps the physical NIC closed, and the only inbound allow rule is scoped to
+the WSL NAT source range (`-RemoteAddress 172.16.0.0/12`). So the unauthenticated `/hook` and
+the `/control/*` endpoints (e.g. `/control/reset`, and the tray's `/control/return-town` /
+`/control/shutdown`) are reachable only from the host itself and from WSL2 — which is why
+**no token is needed**. The window never uses a non-loopback address, so there is
+no WebView2-to-private-IP fragility.
 
 ## Verification checklist (real Windows / WSL2 box)
 
-These cannot be validated on macOS and must be checked on a real machine:
+Verified on a real WSL2 box (the first three); the rest still wants eyes on a real machine:
 
+- [x] WSL2 → host reachability: `curl http://<gateway>:37373/health` returns `{"ok":true}`
+      (needs the firewall rule above).
+- [x] `node scripts/desktop.mjs --ensure-hub` from WSL2 reuses a running hub (no-op) and,
+      from cold, copies `server/`+`public/` locally and starts a `0.0.0.0` hub.
+- [x] WSL2 tool use drives the window: Explore (field bg), encounter→defeat, and Clear
+      (town bg + resting hero) render with correct backgrounds/sprites and BGM/SFX.
 - [ ] `npm run build:desktop` compiles the exe (the WebView2 DLLs are bundled).
-- [ ] Window: transparent/black content, always-on-top, no taskbar button, 4:3 on
-      resize, min size, position restored after restart and reset on display change.
-- [ ] Resize: no flicker (Window-to-Visual); pixel-art edges stay crisp at various
-      sizes (ZoomFactor + integer letterbox). Confirm on your WebView2 runtime version
-      (some versions have had composition resize regressions — pin a fixed-version
-      runtime if needed).
-- [ ] BGM autostarts (autoplay arg); SFX synthesize; `♪` toggles.
-- [ ] Single instance: two `UserPromptSubmit` hooks in quick succession → one window.
+- [ ] Window chrome: always-on-top, no taskbar button, 4:3 on resize, min size, position
+      restored, reset on display change.
+- [ ] Resize: no flicker; pixel-art edges stay crisp (confirm on your WebView2 version).
+- [ ] Single instance: a Windows launch and a WSL2 launch → **one** window (`rpgdev-hub`).
+- [ ] Order independence: Windows-first then WSL2, and WSL2-first then Windows.
 - [ ] Hooks: Claude/Codex resolve `rpgdev-hook`, POST succeeds, window opens on
       `UserPromptSubmit`.
-- [ ] WSL2: server reachable at `localhost:37373` from the host; interop build +
-      launch works; `.wslconfig localhostForwarding=true`.

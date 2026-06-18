@@ -12,7 +12,11 @@ RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風デ�
 macOS / Windows（WSL2 含む）対応、Node 20+、全体が ESM
 (`"type": "module"`)。JS のビルド/バンドル工程はなく、TypeScript も使っていない。
 デスクトップ窓だけがプラットフォーム依存（macOS=Swift+WKWebView / Windows=C# WinForms+WebView2 /
-WSL2=Windows ホスト側に interop で同窓を起動 / 素の Linux は窓なし＝`npm run web`）。詳細は
+WSL2=Windows ホスト側に interop で同窓を起動 / 素の Linux は窓なし＝`npm run web`）。**Windows/WSL2 は
+サーバ（ハブ）も窓も Windows ホスト上の単一インスタンスに集約**＝ハブ1つを Windows ローカルのファイルから起動して
+`0.0.0.0` で待ち受け（窓は localhost 接続、WSL2 フックはホストの WSL アダプタ IP 経由）、Windows でも WSL2 でも同じ1つの
+共有冒険を動かす（セットアップ順非依存。要：WSL→ホスト inbound を許可する**標準 Defender ＋ Hyper-V の両層**の
+ファイアウォール許可規則＝`rpgdev setup-firewall` が適用。標準は `RemoteAddress 172.16/12`、Hyper-V は WSL vmCreator の既定 Block の例外）。詳細は
 [docs/windows-wsl.md](docs/windows-wsl.md)。
 
 ## RPGDev 固有の検証ルール
@@ -202,10 +206,15 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 `ally-wind` + `life<=3` → `ally-wind-damaged.png`
 （同一キャンバス・同一CSS位置/倍率）。
 ④戦闘→探検／町→探検（idle・complete→field。v0.5.7 追加）の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
-覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストはオーナーセッション限定（`ownerSession`/`isOwnerSession`。
-**ロック中**のオーナーは素の UserPromptSubmit でも TODO でも奪われない＝作業中の乗っ取り防止）。**v0.5.3〜v0.5.4 で動的化**：オーナーがアイドル
-（進行中の本物TODO・稼働サブエージェント/WFのいずれも無い）なら、別セッションが**素のメッセージでも TODO でも**オーナーを奪取してクエストを更新する（v0.5.4 で UserPromptSubmit も対称化＝クエスト単発が休眠オーナーに固定される問題を解消）。
-ロック解除はアイドル化 or ターン終了（＝オーナーのStop限定。`subagentCounts` で稼働を数える。詳細は docs §15）。⑥`SubagentStart`/`SubagentStop`
+覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストはオーナーセッション限定で、**町／冒険の二相モデル**で律する
+（`ownerSession`/`isOwnerSession`。唯一の相判定は `state.active`。`active=true` にできるのはクエスト発行だけ。詳細は docs §15）。
+**町（`!active`＝冒険前/ターン終了後）はクエスト発行（UserPromptSubmit のテキスト or TodoWrite/update_plan）だけを受け付け、
+それ以外（攻撃・出現・Stop・精霊・反撃）は全部ドロップ**＝最初に発行したセッションがオーナーになり冒険開始。
+**冒険中（`active`）は全セッションのフックを受け付ける（出現・スキル攻撃・精霊＝全員ぶん反映＝攻撃が沢山起きる）が、
+クエスト更新（TODO）とターン終了はオーナーのみ**＝非オーナーの TODO はクエストを変えずツール使用として戦闘だけ駆動、非オーナーの Stop は前進のみ。
+ロックは**冒険まるごと**（毎フックのアイドル奪取は廃止）＝オーナーが街に戻る（オーナーの Stop＝`finishTurn`。応答ごとに発火し毎ターン自然に町へ戻り交代）まで奪取不可。
+オーナーが応答途中でクラッシュして無反応のまま固まった場合は、**時間切れ自動解除**（`OWNER_IDLE_RELEASE_MS`＝5分 無反応で次の非オーナー発行が引き継ぐ。`ownerActivityAt` で計測）＋
+**手動「街に戻る」ボタン**（overlay の `#townButton`→`POST /control/return-town`＝合成 SessionStart で `townReset`）で復旧する。⑥`SubagentStart`/`SubagentStop`
 フックを配線（reducer は元から対応・`examples/` の設定にも追加）。
 
 設計判断・Codex/Claude のフック実機検証結果・実装ステータスは
@@ -240,8 +249,8 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 2. **サーバ** ([server/rpgdev-server.mjs](server/rpgdev-server.mjs)) は依存ゼロの
    `node:http` サーバ。`/hook` で reducer を実行し、永続化してブロードキャストする。
    静的フロントエンドの配信に加え、`/hook`、`/state`、`/events`（SSE）、`/health`、`/trace`、
-   `/control/reset`、`/control/demo`、`/control/counter-hit`、`/control/layout-spirits`、
-   `/control/layout-monster` を公開する。
+   `/control/reset`、`/control/return-town`、`/control/shutdown`（ハブ停止＝トレイの「終了」）、`/control/demo`、
+   `/control/counter-hit`、`/control/layout-spirits`、`/control/layout-monster` を公開する。
 
 3. **Reducer / 状態機械** ([server/adventure-state.mjs](server/adventure-state.mjs))
    がアプリの心臓部であり、**唯一のユニットテスト対象モジュール**。純粋関数:
@@ -283,10 +292,23 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      **ネイティブ音声ブリッジは無い**＝overlay の `<audio>`/WebAudio が鳴らす（BGM は同じ WAV、SFX は合成版）。
      リサイズ品質は Window-to-Visual hosting（ちらつき防止）＋ ZoomFactor 再ラスタライズ＋整数倍 letterbox
      （ドット絵維持。`BoundsMode=UseRawPixels`/`RasterizationScale=1`）。最前面/タスクバー非表示/4:3/位置永続化
-     （`.rpgdev/desktop-window-win.json`）/単一インスタンス（C# named Mutex）。win32 は `.rpgdev/RPGDevWin/RPGDev.exe`、
-     wsl は interop で Windows 側 `%LOCALAPPDATA%\rpgdev\<hash>` にビルドし localhost 転送で窓を起動。
-     WebView2 SDK DLL は `desktop/webview2/` に同梱（無ければ明確エラー）。詳細は
+     （`%LOCALAPPDATA%\rpgdev\hub\desktop-window-win.json`）/単一インスタンス（C# named Mutex＝固定キー `rpgdev-hub`。**`Global\` 名前空間＋Everyone 許可 ACL でセッション横断 dedup**＝Windows ネイティブ起動と WSL2 interop 起動が別セッションでも窓は1つ。`Local\` だと別セッションで二重窓になる既知不具合の修正。`Global\` 不可環境は `Local\` にフォールバック）。
+     **Windows/WSL2 はサーバ（ハブ）を Windows ホスト上に1つだけ・Windows ローカルのファイルから起動し `0.0.0.0` で待ち受ける**
+     ＝状態も窓ビルドも `%LOCALAPPDATA%\rpgdev\hub`（win32 もプロジェクト別 `.rpgdev` でなくここ。エラーログのみプロジェクト
+     `.rpgdev`）。win32 はローカル node でハブを spawn、wsl は interop で Windows の `node.exe` が `server/`＋`public/` を hub dir に
+     コピーしてから起動する（**WSL 共有 `\\wsl.localhost` から直接実行すると WebView2 が配信(SSE)を受けられない**＝今回の修正）。
+     住所は `scripts/hub-net.mjs` の用途別3関数＝`hubBindHost`（待受。win32/wsl は 0.0.0.0）/`hubReachHost`（このプロセス→ハブ。
+     win32 は 127.0.0.1、wsl は既定ゲートウェイ＝ホストの WSL アダプタ IP）/`HUB_WINDOW_HOST`（窓の接続先＝常に 127.0.0.1）。
+     env は `WSLENV` で越境。**窓は両者とも `localhost:37373` へ繋ぐ**（窓は必ずハブと同ホスト）。物理 NIC は Defender 既定遮断で
+     露出せず、WSL→ホスト inbound を許可する標準 Defender ＋ Hyper-V の両層の許可規則が要る（`rpgdev setup-firewall` が両層を適用）。セットアップ順非依存。
+     WebView2 SDK DLL は `desktop/webview2/` に同梱（無ければ明確エラー）。同梱 DLL のコピー（`copyDll`）は、
+     実行中の窓が掴んでいて上書きできない（`EACCES`/`EBUSY`/`EPERM`）かつ既に配置済みなら**落ちずに続行**＝窓が動いたままの再起動でクラッシュさせない。詳細は
      [docs/windows-wsl.md](docs/windows-wsl.md)。
+   - **Windows/WSL2 のタスクトレイ常駐**（[desktop/RPGDevTray.cs](desktop/RPGDevTray.cs)）：ハブが起動しているか分かりづらい問題への可視化。
+     窓 exe(RPGDev.exe) とは別の C# WinForms NotifyIcon（WebView2 不要）を `desktop.mjs` が窓と一緒にビルド・起動する。
+     アイコンは水の精霊 Aqua の顔をスプライト `ally-water-facing-slit.png` から実行時に機械的に切り出す（System.Drawing＝外部画像ツール不要・`--make-ico` で .ico も生成）。
+     `/health` を3秒ごとに監視し連続失敗でトレイ自身も退場＝**トレイの有無＝ハブの稼働**。右クリックで窓を開く/街に戻る(`/control/return-town`)/終了(`/control/shutdown`＝ハブ停止)。
+     単一インスタンスは窓と同じハブ dir の `rpgdev-hub.tray.lock`（ファイルロック）。**スタートメニュー登録は `rpgdev setup-shortcut`**（管理者不要・`%APPDATA%\…\Start Menu\Programs\RPGDev.lnk`＝顔 .ico 付き・Target は `rpgdev` 起動。WSL2 からも interop で作成）。
    - **素の Linux**：窓なし。`npm run web`（ブラウザ表示）へ明確に誘導。
 
 5. **2 つのフロントエンド、1 つのサーバ:**
@@ -333,9 +355,12 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 
 ## Hook の組み込み（ツール利用者向け）
 
-**推奨は `rpgdev setup`**：実パス入りの正しい設定（node 絶対パス exec 形式）＋安全マージ手順を表示するだけのコマンド。
-利用者のエージェントが [docs/install-hooks.md](docs/install-hooks.md) の安全規則に従って既存設定へマージする
-（rpgdev 自身は設定ファイルを書かない＝既存設定を壊さない）。純関数 `scripts/hook-config.mjs`（`buildHookConfig`／
+**インストール思想（v0.7.1〜）＝「できるだけスクリプトに任せ、任せられるか（安全に自動でできるか）は AI が判断、人手は権限の壁だけ」**。
+利用者は AI に「この GitHub を見てインストールして」と言うだけで、AI が [docs/agent-install.md](docs/agent-install.md) に従い自動スクリプトを順に実行する。
+`rpgdev setup`（表示）＝実パス入りの正しい設定（node 絶対パス exec 形式）＋安全マージ手順を**表示**。`rpgdev setup --apply`＝
+その設定を**安全に自動書込**（`scripts/apply-hooks.mjs`：`.hooks` だけ・既存維持・`_rpgdev` で冪等・バックアップ＋アトミック・
+不正 JSON/想定外形状なら**書かずに理由を返して**AI/人へフォールバック）。`rpgdev setup-firewall`＝WSL2→ホストのファイアウォール許可を
+標準＋Hyper-V 両層・再起動耐性（`RemoteAddress 172.16/12`）で適用（昇格は Windows 側でのみ＝WSL からは UAC を出せない）。純関数 `scripts/hook-config.mjs`（`buildHookConfig`／
 `EVENT_SETS`）が“正解”の単一の源で、`test/hook-config.test.mjs` がガード。`bin/rpgdev`→`scripts/cli.mjs` が
 `setup` だけ分岐（他は `desktop.mjs` で従来同一）。
 

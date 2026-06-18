@@ -24,6 +24,8 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -41,17 +43,31 @@ namespace RPGDev
             string stateFile = args.Length > 2 && args[2].Length > 0 ? args[2] : Path.Combine(Path.GetTempPath(), "rpgdev-window.json");
             string instanceKey = args.Length > 3 && args[3].Length > 0 ? args[3] : "rpgdev-default";
 
-            // 単一インスタンス: 既存窓があれば、その窓を前面化させて自分は退場する（二重窓防止）。
-            // セッション内で十分なので Local\ 名前空間を使う（Global\ の権限問題を避ける）。
-            bool createdNew;
-            Mutex mutex = new Mutex(true, "Local\\" + instanceKey + ".mutex", out createdNew);
-            bool eventCreated;
-            EventWaitHandle showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\" + instanceKey + ".show", out eventCreated);
-            if (!createdNew)
+            // 単一窓（二重窓防止）: 共有ハブ dir の lock ファイルを排他オープンして握り、プロセス生存中ずっと保持する
+            // （正常終了でもクラッシュでも OS がハンドルを閉じてロック解放＝DeleteOnClose でファイルも消える）。
+            // 名札(Mutex)は Local\ がセッション跨ぎ不可、Global\ も別セッションの既定 ACL/権限で開けないことがあり、
+            // WSL2 interop 起動と Windows ネイティブ起動が別 Terminal-Services セッションに乗る本ツールでは不安定。
+            // ファイル排他なら両者が同じ Windows ファイル（…\rpgdev\hub\<key>.window.lock）を奪い合うので、
+            // セッション/権限に依らず確実に1つだけが握れる＝窓は必ず1つ。
+            string hubDir = Path.GetDirectoryName(stateFile);
+            if (string.IsNullOrEmpty(hubDir)) hubDir = Path.GetTempPath();
+            try { Directory.CreateDirectory(hubDir); } catch { }
+            string lockPath = Path.Combine(hubDir, instanceKey + ".window.lock");
+            FileStream singleInstanceLock;
+            try
             {
-                showEvent.Set(); // 既存インスタンスに「前面に出ろ」と通知
+                singleInstanceLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 8, FileOptions.DeleteOnClose);
+            }
+            catch (IOException)
+            {
+                // 既に別の窓がロックを握っている＝二重窓を防ぐため退場し、既存窓の前面化を試みる（best-effort）。
+                TrySignalForeground(instanceKey);
                 return;
             }
+
+            // 既存窓へ「前面に出ろ」と通知する経路（best-effort）。Global\＋Everyone ACL を試し、無理なら Local\、それも無理なら null。
+            // 二重窓防止そのものは上の file lock が担保するので、この通知は前面化の最適化に過ぎない。
+            EventWaitHandle showEvent = TryCreateShowEvent(instanceKey);
 
             // Window-to-Visual hosting（DComp Visual 経由＝子 HWND 直描きのちらつき/DPI を回避）。
             // 環境変数は WebView2 環境作成より前に設定する必要がある。
@@ -66,27 +82,69 @@ namespace RPGDev
 
             MainForm form = new MainForm(url, userDataFolder, stateFile);
 
-            // 別インスタンスからの「前面化」要求を待つリスナ。
-            Thread listener = new Thread(delegate()
+            // 別インスタンスからの「前面化」要求を待つリスナ（showEvent が作れた時だけ）。
+            if (showEvent != null)
             {
-                while (true)
+                Thread listener = new Thread(delegate()
                 {
-                    showEvent.WaitOne();
-                    try
+                    while (true)
                     {
-                        if (!form.IsDisposed)
+                        showEvent.WaitOne();
+                        try
                         {
-                            form.BeginInvoke((MethodInvoker)delegate() { form.BringToForeground(); });
+                            if (!form.IsDisposed)
+                            {
+                                form.BeginInvoke((MethodInvoker)delegate() { form.BringToForeground(); });
+                            }
                         }
+                        catch { }
                     }
-                    catch { }
-                }
-            });
-            listener.IsBackground = true;
-            listener.Start();
+                });
+                listener.IsBackground = true;
+                listener.Start();
+            }
 
             Application.Run(form);
-            GC.KeepAlive(mutex);
+            GC.KeepAlive(singleInstanceLock); // プロセス生存中ロックを保持（終了でハンドルが閉じ、DeleteOnClose で解放＆削除）
+        }
+
+        // 既存窓へ前面化を促すイベントを作る（single instance 側が待つ）。作れなければ null（前面化は諦めるが二重窓防止は file lock が担保）。
+        private static EventWaitHandle TryCreateShowEvent(string instanceKey)
+        {
+            try
+            {
+                EventWaitHandleSecurity sec = new EventWaitHandleSecurity();
+                sec.AddAccessRule(new EventWaitHandleAccessRule(
+                    new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+                    EventWaitHandleRights.FullControl, AccessControlType.Allow));
+                bool created;
+                return new EventWaitHandle(false, EventResetMode.AutoReset, "Global\\" + instanceKey + ".show", out created, sec);
+            }
+            catch
+            {
+                try
+                {
+                    bool created;
+                    return new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\" + instanceKey + ".show", out created);
+                }
+                catch { return null; }
+            }
+        }
+
+        // 二番手インスタンスが既存窓に前面化を依頼する（Global\→Local\ の順で開けたら Set。失敗は無視＝二重窓防止は file lock 側）。
+        private static void TrySignalForeground(string instanceKey)
+        {
+            string[] namespaces = new string[] { "Global\\", "Local\\" };
+            foreach (string ns in namespaces)
+            {
+                try
+                {
+                    EventWaitHandle ev = EventWaitHandle.OpenExisting(ns + instanceKey + ".show");
+                    ev.Set();
+                    return;
+                }
+                catch { }
+            }
         }
 
         [DllImport("user32.dll")]

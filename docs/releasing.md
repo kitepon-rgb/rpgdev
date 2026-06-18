@@ -1,6 +1,6 @@
 # リリース手順（npm publish）
 
-最終更新: 2026-06-06。**rpgdev は 2026-06-05 に npm 初公開済み（v0.1.0）。**
+最終更新: 2026-06-18。**rpgdev は 2026-06-05 に npm 初公開済み（v0.1.0）。**
 ここに書いてあるのは「次回以降どう publish するか」と「初回でハマった罠（再発防止のための記録）」。
 
 ---
@@ -21,6 +21,13 @@
    - 認証は `~/.npmrc` の `//registry.npmjs.org/:_authToken=<トークン>` を使う。
    - **Claude に実行させる場合**、`.claude/settings.local.json` の `permissions.allow` に `Bash(npm publish:*)` が必要（`.claude/` は gitignore 対象なので、無ければ足す）。これが無いと auto-mode 分類器が publish をブロックする。
 5. 確認: `npm view rpgdev version`
+
+> **⚠ 公開後に Windows のグローバルを更新するときは Windows の作業ディレクトリから。** 挙動確認のため
+> `npm i -g rpgdev@<ver>` を Windows 側でも更新するが、`powershell.exe npm i -g` を WSL から叩くと cwd が
+> `\\wsl.localhost\...` の UNC になり、Windows の npm が WSL 側の `~/.npmrc`（Linux 用 `prefix`）を project config
+> として読み込んで `prefix cannot be changed from project config` で失敗する（**404 として表面化**して紛らわしい）。
+> 必ず Windows のパスから実行する：`powershell.exe -Command 'Set-Location $env:USERPROFILE; npm i -g rpgdev@<ver>'`。
+> WSL 側のグローバルは WSL から普通に `npm i -g` でよい（両方更新が要る＝Windows ネイティブと WSL2 で別グローバル）。
 
 ---
 

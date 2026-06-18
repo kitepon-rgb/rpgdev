@@ -1,6 +1,6 @@
 # RPGDev 再設計メモ：ランダムエンカウント モデル
 
-最終更新: 2026-06-07
+最終更新: 2026-06-18
 ステータス: **実装済み・検証済み**。現行コードは ランダムエンカウント モデルへ移行済み。
 このドキュメントは、設計判断・実機調査・実装ステータスの単一の記録。
 
@@ -120,7 +120,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
   in_progress TODO が無くなったら `linkedTodo` は解除され、その後は通常の 5撃／ターン終了で倒せる。
   これはターン終盤に TODO status の整理漏れが残っても、戦闘を次ターンへ持ち越さないための最終クリーンアップ。
 - HP は演出専用で、HP では討伐しない（上の条件のみで討伐）。
-- 注（v0.5.3＝§15）：ここでの「ターン終了（Stop）」は**オーナーの Stop 限定**。全セッションが Stop を発火するため、非オーナーの Stop はターンを終わらせず討伐もしない（`step` のみ）。
+- 注（§15）：ここでの「ターン終了（Stop）」は**オーナーの Stop 限定**。全セッションが Stop を発火するため、非オーナーの Stop はターンを終わらせず討伐もしない（`step` のみ）。
 
 ### 攻撃＝ツールフック（1 Hook = 1 アクション）[決定]
 - **1つの Hook では「出現 / 召喚 / 攻撃 / 前進」のいずれか1つだけ**を実行する（出現→攻撃→召喚を同一 Hook で連鎖させない＝演出上の違和感を排除）。
@@ -529,8 +529,8 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - **被覆ピーク（中央静止）で `applyWorld`（背景/勇者/phase 差替）を実行**＝勇者配置の瞬間移動を隠す。キュー直列の末尾（撃破→精霊帰還の後）で再生される。
 - サーバーの MIME に `.woff2/.woff/.ttf/.otf` を追加（無いと 404→無言フォールバックでフォントが効かないため必須）。
 
-### 13.6 クエストはオーナーセッション限定（要件6。v0.5.3 で動的化＝§15）[サーバー]
-- `state.ownerSession`＝クエスト/ターンのオーナー（`raw.session_id`）。当初は「最初に UserPromptSubmit したセッションに固定」だったが、**v0.5.3 で動的化**（§15）：オーナーがアイドルなら別セッションが奪取できる。**v0.5.4**：奪取トリガーを TODO だけでなく**素の UserPromptSubmit にも対称化**（アイドルなオーナーには素のメッセージでも奪取＝クエスト単発が休眠オーナーに張り付いて更新できない問題の解消）。**ロック中（進行中の本物TODO／稼働サブエージェント）のオーナーは素のメッセージでも TODO でも奪われない**＝作業中のオーナーを spawned codex 等が乗っ取らない要件6の肝は維持。エンカウント/攻撃は §12 どおり全エージェントぶん受ける＝**クエストだけスコープ**。`SessionStart`／ターン終了でリセット。
+### 13.6 クエストはオーナーセッション限定（要件6。現行は §15 の町／冒険二相モデル）[サーバー]
+- `state.ownerSession`＝進行中クエストを発行したオーナー（`raw.session_id`）。**現行モデルは §15（町／冒険の二相）**：v0.5.3〜v0.5.4 の「アイドル奪取」動的モデルは廃止。町（`!active`）はクエスト発行だけ受け付け最初の発行者がオーナーになり、冒険中（`active`）はオーナーが街に戻る（オーナーの Stop）まで奪取不可（無反応放置は `OWNER_IDLE_RELEASE_MS` 時間切れ＋手動「街に戻る」で復旧）。**作業中のオーナーを spawned codex 等が乗っ取らない要件6の肝は維持**（冒険まるごとロック）。エンカウント/攻撃は §12 どおり冒険中は全エージェントぶん受ける＝**クエストだけスコープ**。`SessionStart`／ターン終了でリセット。
 
 ### 13.7 SubagentStart/SubagentStop の配線 [設定]
 - reducer は元々 `SubagentStart→summonAlly` / `SubagentStop→returnAlly`（FIFO）対応済みだが、**フックが未配線**だった（`.claude/settings.local.json` / `.codex/hooks.json` に無い）。両方に追加。
@@ -564,28 +564,29 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 ---
 
-## 15. v0.5.3：ownerSession の動的化（TODO 奪取＋稼働ロック）[実装済み 2026-06-07・reducer]
+## 15. クエストのオーナーシップ：町／冒険の二相モデル [実装 2026-06-17・reducer]
 
-要件6（§13.6）の「最初の UserPromptSubmit に固定」を緩和。**実作業（TODO）をしているセッションが最初のオーナーと別だと、そのTODOがクエストに反映されない**硬直を解消する。multi-session（親 claude＋spawned codex 等）が併走する実環境向け。
+要件6（§13.6）の multi-session 仲裁。**過去の v0.5.3〜v0.5.4「アイドル奪取」動的モデルは廃止**し、`state.active` を唯一の相判定にした明快な二相モデルへ置き換えた（共有ハブに複数会話が並走する実環境向け）。狙い：町では誰でも冒険を始められ、冒険中は全員の作業が戦闘に出つつ、進行中クエストの発行者だけがクエストを進め・終わらせる。
+
+**唯一の相判定 = `state.active`**（false=町／true=冒険）。`active=true` にできるのは**クエスト発行だけ**（`beginTurn`＝UserPromptSubmit のテキスト、または `reconcileQuest` 経由の `ensureActive`＝TodoWrite/update_plan）。`townReset`/`finishTurn` が `active=false` へ戻す。
 
 **仕様**
-- **オーナー奪取は TODO（TodoWrite/update_plan）または素の UserPromptSubmit でできる**（v0.5.4 で UserPromptSubmit も対称化）。いずれも**現オーナーがアイドル（ロックされていない）時だけ**。ロック中（進行中の本物TODO／稼働サブエージェント）は素のメッセージでも TODO でも奪取不可＝作業中のオーナーを横取りしない（要件6の肝）。サブエージェント/ワークフローによる「別セッションへの切替」は**しない**（実機事実：SubagentStart/Stop は親=オーナーの session_id で発火し、独自 session を持たない。区別子は別フィールド `agent_id`）。
-  - 注（v0.5.3→v0.5.4 の補正）：v0.5.3 は素の UserPromptSubmit を奪取対象外にしたため、TODO を書かないセッションがアイドル/休眠オーナーからクエスト単発を取り戻せなかった（`beginTurn` が `!isOwnerSession` で即 step）。v0.5.4 で `beginTurn` のガードを `!isOwnerSession && ownerLocked` に変え、`claimQuestOwnership` で奪取するよう修正。
-- 非オーナー B の TODO が奪取できるのは、**現オーナーがアイドル**＝`ownerLocked(state)` が false の時だけ。`ownerLocked` = 未完了の本物TODOがある（`ownerHasOpenTodos`＝pending/in_progress。アイドルは全完了か本物TODO無し）／オーナー名義の稼働サブエージェント・ワークフローがある（`subagentCounts[ownerSession] > 0`）。
-- ロック解除は**二段構え**：(1) アイドル化（最適化：奪取を早める）、(2) **ターン終了＝オーナーの Stop だけ**（保証付き安全弁：`finishTurn` が `ownerSession=null`・`subagentCounts={}`）。アイドル判定は不完全（**SubagentStop の取りこぼし**がありうる）なので、誤って“稼働中”でロックが残っても**ターン終了が必ずオーナーを手放す**＝恒久ロックにしない。
-- **ターン終了はオーナーの Stop 限定**：全セッションが Stop を発火するため、非オーナーの Stop は `step()`（親ターンを終わらせない・モンスター強制討伐もしない）。
+- **町（`!active`＝冒険前/ターン終了後）**：受け付けるのは**クエスト発行（UserPromptSubmit のテキスト or TodoWrite/update_plan）だけ**。PreToolUse/PostToolUse(非TODO)/Stop/SubagentStart・Stop/CounterHit/PermissionRequest/Compact 等は**全部ドロップ**（各ハンドラを `if (state.active)` で gate）。最初に発行したセッションがオーナーになり冒険開始。
+- **冒険中（`active`）**：全セッションのフックを受け付ける（出現・スキル攻撃・精霊召喚＝全員ぶん反映＝§12。攻撃が沢山起きる）。ただし**クエスト更新（TODO）とターン終了はオーナー（発行セッション）のみ**。非オーナーの TODO はクエストを変えず `skillAttack`（ツール使用として戦闘だけ駆動）、非オーナーの UserPromptSubmit/Stop は `step`（前進のみ）。
+- **ロックは冒険まるごと**（毎フックのアイドル奪取は廃止）。オーナーが**街に戻る（オーナーの Stop＝`finishTurn`）まで**奪取不可。Stop は応答ごとに発火するので通常は毎ターン自然に町へ戻り、次の発行者へ交代する。
+- **クラッシュ復旧（二段）**：オーナーが応答途中で落ちて Stop を出せず街に戻れない場合、(1) **時間切れ自動解除**＝`OWNER_IDLE_RELEASE_MS`（5分）以上オーナーのフックが来なければ、次の非オーナー発行が引き継ぐ（`ownerStale`）。(2) **手動「街に戻る」ボタン**＝overlay `#townButton`→`POST /control/return-town`（合成 SessionStart で `townReset`）。
 
 **実装（`server/adventure-state.mjs`）**
-- 追加 state：`subagentCounts: { [sessionId]: number }`（`createInitialState`／旧 state 正規化／`townReset`／`finishTurn` で初期化・クリア）。`bumpSubagentCount` を SubagentStart(+1)/SubagentStop(-1) で呼ぶ（`summonAlly` の表示上限4とは独立に常に数える）。
-- ヘルパ：`ownerHasOpenTodos` / `ownerActiveSubagents` / `ownerLocked` / `canClaimQuest`（=`isOwnerSession || (sessionId && !ownerLocked)`）/ `claimQuestOwnership`（実 session のときだけ `ownerSession` を書き換え＝P7：null をオーナーにしない）。
-- PostToolUse(TODO)：`if (todoItems && canClaimQuest()) { claimQuestOwnership(); reconcileQuest(); }`。ロック中の非オーナー TODO は奪取せず `skillAttack`（ツール使用は §12 で全員ぶん戦闘駆動・クエスト不変）。
-- Stop/SessionEnd：`isOwnerSession()` なら `finishTurn`、でなければ `step`。
+- 相判定：dispatch switch の各ハンドラを `state.active` で gate（上記）。UserPromptSubmit は `if (!state.active || canClaimQuest()) beginTurn() else step()`。PostToolUse は `if (todoItems && canClaimQuest()) { claimQuestOwnership(); reconcileQuest(); } else if (state.active) { detectFailure?counter:skillAttack }`。
+- オーナー：`isOwnerSession`（owner null／session 不明は許可＝P7）。`canClaimQuest = isOwnerSession || (sessionId && ownerStale)`。`claimQuestOwnership`（実 session のとき `ownerSession` を書き換え＋`ownerActivityAt=now`）。`canEndTurn`（オーナー本人の Stop だけ）。
+- 時間切れ：state に `ownerActivityAt`（サーバー now。`createInitialState`=0、`townReset`/`finishTurn`=0）。`reduceHookEvent` 冒頭でオーナーのフックごとに `ownerActivityAt=serverNow` を延命。`ownerStale = ownerActivityAt && now-ownerActivityAt >= OWNER_IDLE_RELEASE_MS`。
+- 廃止：`subagentCounts`／`bumpSubagentCount`／`ownerHasOpenTodos`／`ownerActiveSubagents`／`ownerLocked`／`beginTurn` の旧ロックガード（アイドル奪取機構を全廃）。
 
-**回帰なし**：単一セッション運用（全イベント同一 session_id、または session_id null）は `isOwnerSession` が常に true ＝奪取ロジックは発火せず**従来と完全一致**。demo/manual（session 不明）はクエスト更新は許可・オーナーは変えない。
+**回帰なし**：単一セッション運用（全イベント同一 session_id、または session_id null）は `isOwnerSession` が常に true で、町なら誰でも発行・冒険中はそのセッションが継続＝**従来の単一フローと一致**。demo/manual（session 不明）は permissive（クエスト更新は許可・owner は変えない＝P7）。
 
-**実測確認（2026-06-07）**：Workflow を1回（19エージェント）流したところ events.ndjson の SubagentStart/Stop がちょうど +19/+19 増え、いずれも**親（オーナー）の session_id で発火**（区別子は `agent_id`/`agent_type`）。＝**ワークフロー稼働分もオーナーのロックに正しく反映される**（docs §13.7 の「発火見込み」を実証）。残る不確実性は SubagentStop の取りこぼしのみだが、ターン終了（オーナーStop）が必ず解放する安全弁で恒久ロックは起きない。
+**不変条件**：`active=false ⇒ ownerSession=null`（`townReset`/`finishTurn` が両方落とす）。逆は不成立（session-less 発行で active=true・owner=null がありうる）＝「active なら owner≠null」を仮定しない。
 
-**テスト**：`test/adventure-state.test.mjs` に5本（synthetic オーナーからの奪取／TODOロック／サブエージェントロック＋解除/全TODO完了での解除／オーナー限定 Stop）。reducer **60/60 pass**。
+**テスト**：`test/adventure-state.test.mjs`（町ドロップ／発行で開始＆オーナー確定／冒険中は全員の戦闘・非オーナーTODOはクエスト不変／街帰還まで奪取不可・全TODO完了でも／時間切れ自動解除／オーナー限定 Stop ほか）。reducer **66/66 pass**。
 
 ## 16. v0.6：Windows / WSL2 対応（デスクトップ窓のクロスプラットフォーム化）[実装 2026-06-16・実機未検証]
 
@@ -597,9 +598,10 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - **音声ブリッジは廃止**（Windows/WSL2）。BGM は overlay の `<audio loop src="/audio/*.wav">` がネイティブと同一 WAV を再生＝劣化なし。SFX も同じ `<audio>` 経路で `/audio/<name>.wav`（render-sfx 生成の WAV）を再生する（`playSfx`/`playSfxFile`、v0.6.5）。当初は WebAudio 合成だったが、`--autoplay-policy=no-user-gesture-required` は `<audio>` には効くものの **WebView2 では AudioContext が suspended のままで WebAudio SFX が全く鳴らなかった**ため、BGM と同じ実証済みの `<audio>` 経路へ統一した。autoplay は同フラグで許可（macOS はネイティブ AVAudioPlayer なので不変）。
 - **リサイズ品質の2系統**：(A) ちらつき＝Window-to-Visual hosting（env `COREWEBVIEW2_FORCED_HOSTING_MODE`）で子 HWND 由来の破綻/DPI を回避。(B) ドット絵＝ZoomFactor 再ラスタライズ（`BoundsMode=UseRawPixels`/`RasterizationScale=1`）＋既存 `image-rendering:pixelated`＋整数倍 letterbox。**層拡大は禁止**（二重ボケ回避）。高解像度ソース（1254–1536px）を ~0.4倍縮小表示しているため窓拡縮でも鮮明（~2.3倍超で初めて拡大ボケ）。
 - **dedup**：mkdir ロック（全 OS 共通）＋ C# 側 named Mutex（多重窓を防ぎ既存窓を前面化）。macOS の `pgrep`/`osascript` は darwin 専用のまま。
-- **WSL2 = 完全自動**：サーバは WSL2、窓は Windows ホスト。`desktop.mjs` が interop で `%LOCALAPPDATA%\rpgdev\<hash>` に `RPGDevWindow.cs`＋DLL をコピーし Windows の `csc.exe`（`/mnt/c/...`）でコンパイル、`wslpath` でパス変換、`localhost:37373`（`.wslconfig localhostForwarding=true`）へ向けて exe を起動。窓側ランタイムは Windows ローカルキャッシュに置く（`\\wsl$` 共有での exe 実行/WebView2 キャッシュの不安定さを回避）。
-- **位置永続化**：Windows は `.rpgdev/desktop-window-win.json`（WSL は上記キャッシュの `window.json`）。画面署名キーで構成変更時リセット＝Swift の `UserDefaults` ロジックと同等。
+- **WSL2 = 完全自動・単一 Windows ハブ**：ハブ（node サーバ）も窓も Windows ホスト側で動く（WSL2 から interop で起動）。ハブは **Windows ローカルのファイルから起動して `0.0.0.0` に待ち受ける**（物理 NIC は Defender 既定遮断で露出せず、WSL `vEthernet`〔inbound 許可1本〕と localhost だけ通る）。`desktop.mjs` が interop で `%LOCALAPPDATA%\rpgdev\hub` に **`server/`＋`public/` をコピーし、Windows の `node.exe` でそのコピーを実行**する（**WSL 共有 `\\wsl.localhost` から server を直接実行すると、ホスト WebView2 が `/events`〔SSE〕を受けられず窓が静止する＝今回の修正・実証済み**）。窓（C# exe）も同 hub dir に `csc.exe` でビルドし、**`http://127.0.0.1:37373/overlay.html`〔localhost〕**へ向けて起動する（窓は必ずハブと同ホスト）。住所は `scripts/hub-net.mjs` の用途別3関数＝`hubBindHost`（待受=win32/wsl は 0.0.0.0）/`hubReachHost`（このプロセス→ハブ=win32 は 127.0.0.1・wsl は既定ゲートウェイ）/`HUB_WINDOW_HOST`（窓=127.0.0.1）。env は `WSLENV` で interop 越境。窓は localhost なので `localhostForwarding` は不要（NAT 前提。mirrored では `RPGDEV_HOST=127.0.0.1`）。WSL→ホスト inbound を許す**標準 Defender 規則1本**が要る（Hyper-V 層ではない。0.0.0.0 でも vEthernet inbound は既定遮断のため必要）。
+- **位置永続化**：win32/WSL2 とも `%LOCALAPPDATA%\rpgdev\hub` 配下（win32=`desktop-window-win.json`、WSL=`window.json`。win32 もプロジェクト別 `.rpgdev` ではなくハブ dir＝1つの共有冒険。エラーログのみプロジェクト `.rpgdev`）。画面署名キーで構成変更時リセット＝Swift の `UserDefaults` ロジックと同等。
 - **package.json** `"os"` を `["darwin","win32","linux"]` に開放（WSL2=linux の install を通す）。
+- **単一 Windows ハブへ集約 [2026-06-17・実機検証済み]**：当初の v0.6 は「サーバは各環境ローカル」だったが、Windows と WSL2 を併用すると 37373 の奪い合い・二窓・WSL2 窓の誤接続が起きる。これを設計で消すため、ハブは Windows ホスト上に1つだけ（**Windows ローカルのファイルから `0.0.0.0` 待受**）・固定インスタンスキー `rpgdev-hub`（C# named Mutex）・単一グローバル状態 `%LOCALAPPDATA%\rpgdev\hub` へ統合し、Windows/WSL2 の全ツール使用が同じ1つの共有冒険を動かす（オーナーは既存の `ownerSession` 仲裁）。フック設定は接続先を焼き込まず実行時に `scripts/hub-net.mjs` の用途別住所（`hubBindHost`=待受 / `hubReachHost`=このプロセス→ハブ / `HUB_WINDOW_HOST`=窓）で解決するので**セットアップ順非依存**。**実機の落とし穴（実証済み・2点）**：①server を WSL 共有 `\\wsl.localhost` から実行するとホスト WebView2 が配信(SSE)を受けられない→`server/`+`public/` を hub dir にローカルコピーして実行で解決。②窓の WebView2 が立ち上がりきる前に状態を一気に流すと、場面転換（背景/勇者の差替）を取りこぼし背景が前の状態で固まる。詳細は [windows-wsl.md](windows-wsl.md)。
 
 **棚上げ（v1 OUT）**：素の Linux 窓（WSLg/GTK）/枠なし per-pixel-alpha 透過（v1 は枠付き・黒 letterbox）/full Visual hosting（入力自前転送。Window-to-Visual で不足時のみ昇格）/Windows での rendered-WAV SFX/Windows ネイティブ音声ブリッジ（恒久的に作らない）。
 
@@ -646,3 +648,13 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 （`scripts/hook-config.mjs`）へ切り出し、claude×user→`~/.claude/settings.json`、claude×project→`.claude/settings.local.json`、
 codex→`<base>/.codex/hooks.json` を返す。`test/hook-config.test.mjs` に3ケース追加。`rpgdev setup` 出力・docs/install-hooks.md・
 README(en/ja)・AGENTS/CLAUDE も「user は settings.json」へ統一。フックはスコープ間でマージ（両方走る）ので既存フックは追記で保持する。
+
+## 18. v0.7：タスクトレイ常駐＋スタートメニュー登録＋ハブ停止 API [実装 2026-06-18・Windows/WSL2]
+
+**動機**：Windows/WSL2 ではハブ（node サーバ）が Windows ホスト上のバックグラウンドで動くため「今ハブが生きているか」が見えづらい。可視化と手動の起動口・終了口を足す。
+
+**決定**：
+- **タスクトレイ常駐（[desktop/RPGDevTray.cs](../desktop/RPGDevTray.cs)）**：窓 exe（RPGDev.exe）とは別の C# WinForms `NotifyIcon`（WebView2 不要）を `desktop.mjs` が**窓と一緒にビルド・起動**する。アイコンは水の精霊 Aqua の**顔**をスプライト `public/assets/sprites/ally-water-facing-slit.png` から実行時に `System.Drawing` で機械的に切り出す（外部画像ツール不要・`--make-ico` で .ico も生成）。`/health` を**3秒ごと**に監視し**連続3回失敗**でトレイ自身も `Application.Exit()`＝**トレイの有無＝ハブの稼働**。右クリックメニューで窓を開く／街に戻る（`POST /control/return-town`）／終了（`POST /control/shutdown`＝ハブ停止）。単一インスタンスは窓と同じハブ dir の `rpgdev-hub.tray.lock`（FileStream ロック）。**Windows は新規トレイアイコンを既定でオーバーフロー（^）に隠す**点に注意。macOS / 素の Linux は対象外。
+- **ハブ停止 API `POST /control/shutdown`（[server/rpgdev-server.mjs](../server/rpgdev-server.mjs)）**：トレイの「終了」用。`{ok:true, shuttingDown:true}` を返してから `process.exit(0)`（応答を返し切るため 120ms 遅延）。
+- **スタートメニュー登録 `rpgdev setup-shortcut`（[scripts/setup-shortcut.mjs](../scripts/setup-shortcut.mjs)）**：新サブコマンド（`scripts/cli.mjs` が `argv[2]==="setup-shortcut"` で分岐）。`%APPDATA%\Microsoft\Windows\Start Menu\Programs\RPGDev.lnk` を Aqua の顔 .ico 付きで作成し、Target は `rpgdev` 起動（win32=node.exe＋bin/rpgdev、WSL=interop の `wsl.exe -e`）。**管理者不要**（ユーザーの Start Menu に .lnk を置くだけ）・WSL2 からも interop で作成可。.ico はトレイ exe の `--make-ico` モード（PNG-in-ICO を書き出す）で生成。macOS / 素の Linux は skip。
+- **同梱 WebView2 DLL の使用中エラー耐性（`copyDll`）**：実行中の窓が DLL を掴んでいて上書きできない（`EACCES`/`EBUSY`/`EPERM`）かつ既に配置済みなら、コピー失敗を**起動失敗にせず黙って既存を使う**（窓を開き直すたびに起動がクラッシュしないため）。

@@ -25,16 +25,30 @@ TODO リスト（Claude の TodoWrite / Codex の update_plan）はクエスト�
 
 ## Install
 
+一番簡単なのは **AI コーディングエージェントに頼む**ことです。Claude Code か Codex にこう言ってください：
+
+> **https://github.com/kitepon-rgb/rpgdev を見て RPGDev をインストールして。**
+
+エージェントが [docs/agent-install.md](docs/agent-install.md) に従って、パッケージ導入・フックの**安全な自動書込**（バックアップ＋アトミック＋冪等＝既存設定を壊さない）・Windows/WSL2 のファイアウォール許可・窓の起動まで行います。スクリプトが自動でやり、**管理者が要る1手（WSL2 のときの Windows 側ファイアウォール）だけ**あなたに頼みます。
+
+自分でやる場合:
+
 ```bash
 npm install -g rpgdev
+rpgdev setup --apply        # フックを安全に書込（無理なら書かずに表示へフォールバック）
+rpgdev setup-firewall       # Windows/WSL2 のみ・Windows 側で実行
+rpgdev setup-shortcut       # Windows/WSL2 のみ・スタートメニューに登録（Aqua の顔アイコン）
+rpgdev                      # 窓を開く
 ```
+
+`rpgdev help` でオプション（`--codex` / `--all` / `--user` …）を確認できます。
 
 Requirements:
 
 - Node.js 20+（全プラットフォーム共通）
 - **macOS** — Swift compiler / Xcode Command Line Tools（窓は `swiftc` で必要時コンパイル）
 - **Windows** — WebView2 ランタイム（Windows 11 標準）＋ .NET Framework 4.x の `csc.exe`（窓は C# WinForms+WebView2 を必要時コンパイル）。WebView2 SDK DLL は同梱済み（追加 DL 不要）。詳細は [docs/windows-wsl.md](docs/windows-wsl.md)
-- **WSL2** — `.wslconfig` に `localhostForwarding=true`。窓は Windows ホスト側でビルド/表示。詳細は [docs/windows-wsl.md](docs/windows-wsl.md)
+- **WSL2** — ハブ（サーバ）も窓も Windows ホスト側で動き（interop 起動）、WSL2 は単一の共有ハブへ接続。ホストに Node＋WebView2 と、WSL→ホスト inbound を許すホスト側ファイアウォール許可（`rpgdev setup-firewall` が標準 Defender＋Hyper-V の両層を適用）が必要（`localhostForwarding` は不要に）。詳細は [docs/windows-wsl.md](docs/windows-wsl.md)
 - **素の Linux** — デスクトップ窓は未対応。ブラウザ表示（`npm run web`）を使用
 
 ## Start
@@ -44,6 +58,8 @@ rpgdev
 ```
 
 デスクトップ右上に小さい RPGDev ウィンドウが開きます（macOS / Windows。WSL2 では Windows ホスト側に表示）。状態やログは、実行したプロジェクトの `.rpgdev/` に保存されます。Windows/WSL2 のセットアップは [docs/windows-wsl.md](docs/windows-wsl.md) を参照。
+
+**Windows / WSL2 では、窓と一緒にタスクトレイ常駐（Aqua の顔アイコン）も起動します。** これはハブ（サーバ）が動いている目印で、アイコンがあれば稼働中・消えていれば停止です（新しいトレイアイコンは Windows 既定では `^` のあふれメニューに隠れます）。右クリックから「窓を開く」「街に戻る」「終了（ハブを停止）」ができます。
 
 Web 版だけを開きたい場合:
 

@@ -4,13 +4,20 @@ This file provides guidance to Codex when working with code in this repository.
 
 ## 概要
 
-RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風 macOS デスクトップ
+RPGDev は Codex / Claude Code の Hook イベントを、小さな RPG 風デスクトップ
 ウィンドウの演出に変換するツール。モンスターはツール使用ごとに一定確率で出現する
 **ランダムエンカウント**で、ツール利用が攻撃になる。撃破条件は出現時に紐づいた TODO の
-有無で変わる（紐づき無しは攻撃5回／ターン終了で討伐、紐づき有りは TODO 完了／ターン終了で討伐）。TODO は
+有無で変わる（攻撃5回／ターン終了で討伐、または紐づき TODO の完了で討伐）。TODO は
 クエスト一覧として表示しつつ、紐づきエンカウントの討伐トリガーにもなる。
-macOS 専用、Node 20+、全体が ESM
+macOS / Windows（WSL2 含む）対応、Node 20+、全体が ESM
 (`"type": "module"`)。JS のビルド/バンドル工程はなく、TypeScript も使っていない。
+デスクトップ窓だけがプラットフォーム依存（macOS=Swift+WKWebView / Windows=C# WinForms+WebView2 /
+WSL2=Windows ホスト側に interop で同窓を起動 / 素の Linux は窓なし＝`npm run web`）。**Windows/WSL2 は
+サーバ（ハブ）も窓も Windows ホスト上の単一インスタンスに集約**＝ハブ1つを Windows ローカルのファイルから起動して
+`0.0.0.0` で待ち受け（窓は localhost 接続、WSL2 フックはホストの WSL アダプタ IP 経由）、Windows でも WSL2 でも同じ1つの
+共有冒険を動かす（セットアップ順非依存。要：WSL→ホスト inbound を許可する**標準 Defender ＋ Hyper-V の両層**の
+ファイアウォール許可規則＝`rpgdev setup-firewall` が適用。標準は `RemoteAddress 172.16/12`、Hyper-V は WSL vmCreator の既定 Block の例外）。詳細は
+[docs/windows-wsl.md](docs/windows-wsl.md)。
 
 ## RPGDev 固有の検証ルール
 
@@ -39,6 +46,8 @@ npm run trace                         # 演出トレースを解析（二連続/
 ```
 
 `npm run demo` は事前にサーバが起動している必要がある（`rpgdev` / `npm run server`）。
+`npm run trace` は `.rpgdev/events.ndjson`（reducer の emit）と `playback.ndjson`（overlay の再生）を
+由来 Hook の `seq` で突き合わせる（`--all` / `--seq N` / `--anomalies`）。
 
 ## リリース（npm publish）
 
@@ -53,21 +62,29 @@ npm run trace                         # 演出トレースを解析（二連続/
 ゲームモデルは「TODO 項目＝モンスター」ではなく「**モンスター＝ランダムエンカウント**」。
 モンスターは TODO 項目から湧かない。ツール使用ごと（PreToolUse）に 20% の確率で出現する
 エンカウントで、同時に画面へ出るのは最大1体（2体同時出現はしない）。スプライト/HP/反撃種別は
-ステージ別 `MONSTER_CATALOGS` からランダムに選ぶ（HP は演出専用）。`battle`
+ステージ別 `MONSTER_CATALOGS` からランダムに選ぶ（HP は演出専用。field は Slime/Goblin/Orc/Ogre、
+dungeon/castle は各ステージ専用モンスター。castle の Dragon/Demon Lord は TODO が4個以上で最後の TODO が
+現在地の時だけ抽選。詳細は docs §2/§3）。`battle`
 フェーズになるのは「エンカウントのモンスターが画面に居る時」だけで、TODO があるだけでは
-戦闘にならない。出現カタログは冒険ステージ別で、field は既存4体、dungeon/castle は各ステージ専用モンスターから
-ランダムに選ぶ。castle の Dragon / Demon Lord は TODO が4個以上あり、最後の TODO が現在地の時だけ抽選に入る。
-**dungeon/castle 限定の強制エンカウント**：突入・直近出現・直近討伐のうち最新から 30秒（`FORCED_ENCOUNTER_MS`）経っても
-敵が居なければ、次の PreToolUse で 20% 判定をバイパスして確実に出現させる（`forcedEncounterDue`。後半の細かい TODO で
-敵が出ないまま終わるのを防ぐ）。field は対象外。基準時刻 `stageEnteredAt` はステージ変化時・ターン開始時に更新、拠点で 0。
+戦闘にならない。
+
+**ペーシング（唯一の頭＝サーバーが時刻で律速。多エージェントの洪水でも点滅させない。詳細は docs §12）**：
+出現は確率に加えて**出現クールダウン（討伐後 4s）＋連続出現の最小間隔（2s）**で律速する。討伐条件を満たしても
+**最低在席時間（出現から 4s）**未満なら即討伐せず `pendingDefeat` に保留し、寿命経過後の次の Hook でスイープ確定する
+（Stop だけは寿命無視で強制討伐）。これで「倒して即湧き→即死」の点滅が起きない。ペーシングの基準時刻は
+**サーバーが `reduceHookEvent` に注入**する（`event.at`＝エージェント側の時計は使わない）。`handleHook` は `event.id` で冪等化する。
+
+**dungeon/castle 限定の強制エンカウント（30秒保証）**：後半の細かい TODO で 20% を引けず最後まで敵が出ないことがあるため、
+dungeon/castle では突入(`stageEnteredAt`)・直近出現・直近討伐のうち最新から **30秒（`FORCED_ENCOUNTER_MS`）**経っても敵が居なければ、
+次の PreToolUse で 20% 判定をバイパスして**確実に出現**させる（`forcedEncounterDue`）。field は対象外。クールダウン(4s)/最小間隔(2s)は
+30秒 >> なので強制時も満たされる。`stageEnteredAt` はステージ変化時とターン開始時に更新、拠点リセットで 0。
 
 各エンカウントは出現時の状況で `linkedTodo` フラグを持ち、討伐条件が変わる：
 - `linkedTodo=false`（出現時に in_progress の TODO 無し）：hero の攻撃 5回、または
   ターン終了（Stop）で討伐。
 - `linkedTodo=true`（出現時に in_progress の TODO あり）：攻撃では倒れない。TODO 項目が
-  1つ `completed` になった時、またはターン終了（Stop）で討伐する。in_progress TODO が無くなると
-  `linkedTodo` は解除され、以後は5撃／ターン終了で倒せるようになる。Stop は TODO status の
-  整理漏れが残っても戦闘を次ターンへ持ち越さない最終クリーンアップ。
+  1つ `completed` になった時に討伐する。in_progress TODO が無くなると `linkedTodo` は解除され、
+  以後は5撃／ターン終了で倒せるようになる。
 
 TODO（TodoWrite / update_plan）は state.quest（label+status+stage のスナップショット、元の順序）を
 更新するだけでモンスターは湧かさない。新たに `completed` になった項目があれば、紐づく
@@ -79,17 +96,20 @@ TODO（TodoWrite / update_plan）は state.quest（label+status+stage のスナ�
 TODO 一覧を元の順序のまま3区画へ均等割りし（端数は castle 側を厚く＝端数で減らすのは field→dungeon の順）、各項目に `stage` を付与する。
 現在地は最初の未完了 TODO のステージで、completed が進むほど奥（dungeon→castle）へ進む。
 背景画像（field/dungeon/castle.png）と BGM トラックがステージで切り替わる。TODO 不在は常に field。
-ステージは背景/BGMと出現カタログに影響するが、討伐条件やエンカウント確率には影響しない。詳細は docs §2.1。
+ステージは背景/BGMと出現カタログ（敵の名簿）に影響するが、討伐条件やエンカウント確率には影響しない。詳細は docs §2.1。
 
 **1つの Hook では1アクションだけ**（出現／召喚／攻撃／前進のいずれか1つ）。出現→攻撃→召喚を
 同一 Hook で連鎖させない。攻撃・増援召喚は敵が居なければ起きない。
 
 精霊（仲間 allies）：戦闘中はツール使用ごと（PreToolUse）に 20% で1体だけ増援し（`BATTLE_SUMMON_CHANCE=0.2`）、
 `SubagentStart` でも1体参戦する。常に1体ずつで属性の重複を避け（火 Ignis / 地 Terra /
-風 Sylph / 水 Aqua）、上限4体。**精霊の追撃は reducer では出さない（脱Hook）。フロント（overlay.js
-`enqueueSpiritFollowup`）が勇者スキル攻撃を再生した時点で在席精霊ぶんの追撃をキューへ生成する**
-（属性別エフェクト＋効果音。演出のみで討伐の5撃にはカウントしない。詳細は docs §12）。
-モンスターを倒すたびに精霊は全員消滅し、`SubagentStop` で1体ずつ FIFO（最初に出た精霊から）帰還する。
+風 Sylph / 水 Aqua）、上限4体。**精霊の追撃は reducer では出さない（脱Hook。多エージェントで多重化するため）。
+フロント（overlay.js `enqueueSpiritFollowup`）が「勇者スキル攻撃を再生した時点」で在席精霊ぶんの追撃を
+キューへ生成する**＝Hook 数で増えず「再生された勇者スキル1回につき1巡」だけ（属性別エフェクト＋効果音、討伐の5撃には数えない）。詳細は docs §12。
+モンスターを倒すたびに精霊は全員退場するが、**撃破演出（モンスター消滅）を見せ切ってから1体ずつ順番に
+FIFO で帰還**する（各帰還に属性色のエフェクト＋`ally-return` 効果音。reducer は `ally_return` に `element`/`name`/
+`last` を付け、フロントは最後の `last` 帰還が終わってから背景/BGMを切り替える＝精霊が全員帰る前に背景を変えない）。
+`SubagentStop` でも1体ずつ FIFO（最初に出た精霊から）帰還する。
 `Aqua` は水精霊スプライト `ally-water-facing-slit.png` を使う。
 
 ### 精霊・キャラクター画像生成の最重要ルール
@@ -169,7 +189,7 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 
 現時点の採用状態：
 - `Aqua` は `public/assets/sprites/ally-water-facing-slit.png`。元 `ally-water-facing.png` の alpha を適用済み。
-- 戦闘表示の `Aqua` は `public/overlay.css` の `.ally-water` で他より 1割大きめに表示する。
+- 戦闘表示の精霊4体は `public/overlay.css`（`body[data-phase="battle"]` の `.ally-fire`/`.ally-earth`/`.ally-wind`/`.ally-water`）で各自固有の表示サイズを持つ（最大幅：火 469px / 地 372px / 風 435px / 水 418px）。`.ally-water`（Aqua）は共通基準に対する一律1割拡大ではなく固有値で、実際は火・風より小さい。
 - `Sylph` は `public/assets/sprites/ally-wind.png`。上記の風 Sylph 採用プロンプトで再生成した retro/pixel 版。
 - `Sylph` damaged は `public/assets/sprites/ally-wind-damaged.png`。2026-06-15 に候補 C/v39 相当を採用。通常版 `ally-wind.png`
   との位置差は頭中心 `+1.0px/+0.5px`、右足先中心 `-1.0px/+0.5px` で、同一 CSS 位置/倍率で表示できる。
@@ -186,10 +206,15 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 `ally-wind` + `life<=3` → `ally-wind-damaged.png`
 （同一キャンバス・同一CSS位置/倍率）。
 ④戦闘→探検／町→探検（idle・complete→field。v0.5.7 追加）の遷移は `#sceneTransition` の全画面トランジション（`title.png`＋自己ホスト Cinzel のテキストが右上→中央→左下）で
-覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストはオーナーセッション限定（`ownerSession`/`isOwnerSession`。
-**ロック中**のオーナーは素の UserPromptSubmit でも TODO でも奪われない＝作業中の乗っ取り防止）。**v0.5.3〜v0.5.4 で動的化**：オーナーがアイドル
-（進行中の本物TODO・稼働サブエージェント/WFのいずれも無い）なら、別セッションが**素のメッセージでも TODO でも**オーナーを奪取してクエストを更新する（v0.5.4 で UserPromptSubmit も対称化＝クエスト単発が休眠オーナーに固定される問題を解消）。
-ロック解除はアイドル化 or ターン終了（＝オーナーのStop限定。`subagentCounts` で稼働を数える。詳細は docs §15）。⑥`SubagentStart`/`SubagentStop`
+覆い、被覆ピークで背景/勇者を差替＝瞬間移動を隠す。⑤クエストはオーナーセッション限定で、**町／冒険の二相モデル**で律する
+（`ownerSession`/`isOwnerSession`。唯一の相判定は `state.active`。`active=true` にできるのはクエスト発行だけ。詳細は docs §15）。
+**町（`!active`＝冒険前/ターン終了後）はクエスト発行（UserPromptSubmit のテキスト or TodoWrite/update_plan）だけを受け付け、
+それ以外（攻撃・出現・Stop・精霊・反撃）は全部ドロップ**＝最初に発行したセッションがオーナーになり冒険開始。
+**冒険中（`active`）は全セッションのフックを受け付ける（出現・スキル攻撃・精霊＝全員ぶん反映＝攻撃が沢山起きる）が、
+クエスト更新（TODO）とターン終了はオーナーのみ**＝非オーナーの TODO はクエストを変えずツール使用として戦闘だけ駆動、非オーナーの Stop は前進のみ。
+ロックは**冒険まるごと**（毎フックのアイドル奪取は廃止）＝オーナーが街に戻る（オーナーの Stop＝`finishTurn`。応答ごとに発火し毎ターン自然に町へ戻り交代）まで奪取不可。
+オーナーが応答途中でクラッシュして無反応のまま固まった場合は、**時間切れ自動解除**（`OWNER_IDLE_RELEASE_MS`＝5分 無反応で次の非オーナー発行が引き継ぐ。`ownerActivityAt` で計測）＋
+**手動「街に戻る」ボタン**（overlay の `#townButton`→`POST /control/return-town`＝合成 SessionStart で `townReset`）で復旧する。⑥`SubagentStart`/`SubagentStop`
 フックを配線（reducer は元から対応・`examples/` の設定にも追加）。
 
 設計判断・Codex/Claude のフック実機検証結果・実装ステータスは
@@ -199,19 +224,15 @@ reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と
 フロントエンド（[public/overlay.js](public/overlay.js) / [public/app.js](public/app.js)）も
 state / effect に配線済み。overlay には精霊スプライト、斬撃、技名カットイン、揺れ、
 召喚/属性別追撃演出、ステージ別背景、出現（ポータル+煙）/撃破（発光+破片）アニメと効果音
-（`monster-appear.wav` / `monster-defeat.wav` / 攻撃SFX群）があり、攻撃/リアクションのアニメは全体共通の
+（`monster-appear.wav` / `monster-defeat.wav`）があり、攻撃/リアクションのアニメは全体共通の
 単一キューで直列化される（勇者攻撃・精霊追撃・精霊召喚はすべて前のキュー再生開始から固定1秒間隔
 ＝前のキューが無ければ即座、その他はアニメ目安+0.1秒で次へ。モンスター出現の
 演出開始から4秒間（`APPEAR_ATTACK_DELAY_MS=4000`）は攻撃/召喚キューを再生しない＝出現演出と直後の初撃/召喚を被らせない
 （＝登場の4秒後に最初のキュー再生）。精霊召喚も攻撃キューと同じ扱いで、カード表示も召喚がキューで再生される瞬間まで
-伏せる（`awaitingSummon`＝state更新で先にカードを出さない）。出現演出の
-色変化 filter は終了時に通常状態へ戻し、WKWebView に色味を残留させない。出現/帰還/
-クリア等の即時演出はキューを占有しない。撃破時は同じバッチ内でトドメに至った攻撃を捨てずに順に
-流してから会心の一撃（`finisher`＝斬撃。技名テキストは出さず視覚演出のみ）→撃破＋消滅を流す。
-撃破effectを含むバッチを受信した瞬間に過去バッチから溜まっていた攻撃キューを破棄し、`monster_defeated`
-がキューに入った後の別バッチ攻撃は受け付けず、消滅演出開始時点でも残った攻撃キューを再度破棄する
-（旧実装は撃破時に攻撃を破棄しており通常攻撃が欠落して見えた）。撃破effectを受信したらワールド演出を保留し、
-実際に消滅演出を再生した後で次の背景/BGM/フェーズへ切り替える）。
+伏せる（`awaitingSummon`＝state更新で先にカードを出さない）。出現/帰還/
+クリア等の即時演出はキューを占有しない。撃破時はキュー内の攻撃を捨てず、トドメに至った攻撃を順に
+流してから会心の一撃（`finisher`＝斬撃。技名テキストは出さず視覚演出のみ）→撃破＋消滅を流す
+（旧実装は撃破時に攻撃を破棄しており通常攻撃が欠落して見えた）。撃破中はワールド演出を約1.8秒保留して撃破を見せる）。
 重なり順は `.monster`(z-index:3) < 水精霊 Aqua `.ally-water`(4) < 勇者 `.hero`(5) < 火/地(6) < 風(8)＝勇者は敵と水精霊の前面・火/地/風は勇者の前面（v0.5.8。`.allies` の stacking context を外し各精霊を `.stage` 文脈で個別評価）。仲間精霊は `Ignis` / `Terra` / `Sylph` / `Aqua` の4体。
 docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite payload、TODO無しセッション方針）は全て検証・決定済み。
 
@@ -222,18 +243,19 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 
 1. **Hook CLI** ([scripts/rpg-hook.mjs](scripts/rpg-hook.mjs)、`rpgdev-hook <provider> <event>` として公開)
    は Hook ペイロードを JSON として stdin から読み、サーバの起動を確認し、
-   `{id, provider, event, raw, at}` を `/hook` に POST する（`id`＝Hook 個体識別子。docs §10）。`UserPromptSubmit` の時は
+   `{id, provider, event, raw, at}` を `/hook` に POST する（`id`＝Hook 個体識別子＝トレースの由来キー。docs §10）。`UserPromptSubmit` の時は
    デスクトップウィンドウも起動する。
 
 2. **サーバ** ([server/rpgdev-server.mjs](server/rpgdev-server.mjs)) は依存ゼロの
    `node:http` サーバ。`/hook` で reducer を実行し、永続化してブロードキャストする。
    静的フロントエンドの配信に加え、`/hook`、`/state`、`/events`（SSE）、`/health`、`/trace`、
-   `/control/reset`、`/control/demo`、`/control/counter-hit`、`/control/layout-spirits`、
-   `/control/layout-monster` を公開する。
+   `/control/reset`、`/control/return-town`、`/control/shutdown`（ハブ停止＝トレイの「終了」）、`/control/demo`、
+   `/control/counter-hit`、`/control/layout-spirits`、`/control/layout-monster` を公開する。
 
 3. **Reducer / 状態機械** ([server/adventure-state.mjs](server/adventure-state.mjs))
    がアプリの心臓部であり、**唯一のユニットテスト対象モジュール**。純粋関数:
-   `reduceHookEvent(prevState, hookEvent) → { state, effects, normalized }`。I/O なし。
+   `reduceHookEvent(prevState, hookEvent, now) → { state, effects, normalized }`（`now` は
+   サーバー注入のペーシング基準時刻＝`handleHook` が渡す。docs §12）。I/O なし。
    - `normalizeHookEvent` は Codex/Claude の多様なペイロード形状
      （`hook_event_name`、`tool_input.command` など）を 1 つの正規化イベントに平坦化する。
    - `detectFailure` は Claude の失敗イベント名と構造化された失敗/exit-code フィールドだけを見る。
@@ -244,34 +266,56 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
    - モンスターはランダムエンカウント：PreToolUse ごとに 20% で出現し（同時最大1体）、
      ステージ別 `MONSTER_CATALOGS` から sprite/HP/反撃種別をランダムに選ぶ。HP は演出専用。
      TodoWrite/update_plan はモンスターを湧かさず、state.quest を更新する（各項目に field/dungeon/castle の `stage` を割り当て）だけ。
-   - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` なら攻撃5回または
+   - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` ならスキル攻撃5回または
      ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
-     なった時またはターン終了(Stop)で討伐（in_progress TODO が消えると linkedTodo は解除）。
+     なった時のみ討伐（in_progress TODO が消えると linkedTodo は解除）。
    - 攻撃/増援判定：**PreToolUse は攻撃しない（勇者の通常攻撃は廃止）**。PreToolUse は 20% エンカウント出現判定、
-     戦闘中は 20% 精霊増援判定（`BATTLE_SUMMON_CHANCE=0.2`）、出なければ前進（1ツール呼び出し1アクション）。
-     PostToolUse はスキル攻撃（技名＝tool_name 基準＝PascalCase / MCP はサーバ名。コマンド/パッチ本文は
-     見ない＝apply_patch の「***」を回避）のみで出現・増援判定はしない。精霊の追撃は reducer では出さず、
-     フロント（overlay.js）がスキル攻撃の再生時に生成する（docs §12）。
+     戦闘中は 20% 精霊増援判定（`BATTLE_SUMMON_CHANCE=0.2`）、出なければ前進（1ツール呼び出し1アクション）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝
+     PascalCase / MCP はサーバ名。コマンド/パッチ本文は見ない＝apply_patch の「***」を回避）のみで
+     出現・増援判定はしない。**攻撃も討伐ヒットも PostToolUse スキル攻撃だけ**。精霊の追撃はフロントが
+     スキル攻撃の再生時に生成する（reducer では出さない＝docs §12）。
      `SubagentStart` でも精霊1体参戦、`SubagentStop` で FIFO 帰還（最初に出た精霊から）。
    ここの挙動を変えたら [test/adventure-state.test.mjs](test/adventure-state.test.mjs) を更新すること。
 
-4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs) + [desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift))。
-   `desktop.mjs` は Swift ソースを `swiftc` でオンデマンドにコンパイルし（ソースの mtime が
-   バイナリより新しい時のみ再ビルド）、`.rpgdev/RPGDev.app` を生成して `/overlay.html` を
-   指して `open` する。Swift アプリはタイトルバー付き・4:3固定・リサイズ可能なフローティング
-   ウィンドウ（`.titled` styleMask＋`.floating` level、`LSUIElement`/アクセサリアプリ。内部解像度
-   1024x768 を全体ズームで等倍スケール）に載せた背景透過（`drawsBackground=false`）の `WKWebView` で、
-   `window.webkit.messageHandlers.rpgdev` の JS↔Swift ブリッジ経由で音声を
-   ネイティブ再生する（7種の BGM トラックをループ再生し、`sfx` メッセージで 11 種のワンショット SFX
-   （`monster-appear` / `monster-defeat` / 勇者攻撃3種 / 精霊4属性攻撃 / `ally-return` / `damage-hit`）を
-   `AVAudioPlayer` で再生）。ウィンドウの位置・サイズは終了/移動/
-   リサイズ時に `UserDefaults` に保存し、次回起動で復元する（ディスプレイ構成が変わったら既定位置に
-   リセット。`isRestorable=false` で macOS 自動復元と競合させず自前管理）。
+4. **デスクトップウィンドウ** ([scripts/desktop.mjs](scripts/desktop.mjs))。`desktop.mjs` は
+   [scripts/desktop-platform.mjs](scripts/desktop-platform.mjs) の `detectPlatform()` で
+   darwin / win32 / wsl / linux に分岐する。**唯一のプラットフォーム依存部**で、reducer/server/フロント等は
+   全 OS 共通。
+   - **macOS**（[desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift)）。Swift を `swiftc` でオンデマンド
+     コンパイルし（mtime 判定）、`.rpgdev/RPGDev.app` を生成して `open` する。タイトルバー付き・4:3固定・
+     リサイズ可能なフローティング窓（`.titled`＋`.floating`、`LSUIElement`、内部 1024x768 を全体ズーム）に
+     載せた背景透過（`drawsBackground=false`）の `WKWebView`。`window.webkit.messageHandlers.rpgdev` の
+     JS↔Swift ブリッジで音声をネイティブ再生（7 BGM ループ＋11 SFX を `AVAudioPlayer`）。位置/サイズは
+     `UserDefaults` に保存し復元（ディスプレイ構成変更でリセット、`isRestorable=false`）。
+   - **Windows / WSL2**（[desktop/RPGDevWindow.cs](desktop/RPGDevWindow.cs)）。C# WinForms+WebView2 を
+     在来 `csc.exe`（.NET Framework 4.x）でオンデマンドコンパイル（swiftc 方式と同型・npm 依存ゼロ）。
+     **ネイティブ音声ブリッジは無い**＝overlay の `<audio>`/WebAudio が鳴らす（BGM は同じ WAV、SFX は合成版）。
+     リサイズ品質は Window-to-Visual hosting（ちらつき防止）＋ ZoomFactor 再ラスタライズ＋整数倍 letterbox
+     （ドット絵維持。`BoundsMode=UseRawPixels`/`RasterizationScale=1`）。最前面/タスクバー非表示/4:3/位置永続化
+     （`%LOCALAPPDATA%\rpgdev\hub\desktop-window-win.json`）/単一インスタンス（C# named Mutex＝固定キー `rpgdev-hub`。**`Global\` 名前空間＋Everyone 許可 ACL でセッション横断 dedup**＝Windows ネイティブ起動と WSL2 interop 起動が別セッションでも窓は1つ。`Local\` だと別セッションで二重窓になる既知不具合の修正。`Global\` 不可環境は `Local\` にフォールバック）。
+     **Windows/WSL2 はサーバ（ハブ）を Windows ホスト上に1つだけ・Windows ローカルのファイルから起動し `0.0.0.0` で待ち受ける**
+     ＝状態も窓ビルドも `%LOCALAPPDATA%\rpgdev\hub`（win32 もプロジェクト別 `.rpgdev` でなくここ。エラーログのみプロジェクト
+     `.rpgdev`）。win32 はローカル node でハブを spawn、wsl は interop で Windows の `node.exe` が `server/`＋`public/` を hub dir に
+     コピーしてから起動する（**WSL 共有 `\\wsl.localhost` から直接実行すると WebView2 が配信(SSE)を受けられない**＝今回の修正）。
+     住所は `scripts/hub-net.mjs` の用途別3関数＝`hubBindHost`（待受。win32/wsl は 0.0.0.0）/`hubReachHost`（このプロセス→ハブ。
+     win32 は 127.0.0.1、wsl は既定ゲートウェイ＝ホストの WSL アダプタ IP）/`HUB_WINDOW_HOST`（窓の接続先＝常に 127.0.0.1）。
+     env は `WSLENV` で越境。**窓は両者とも `localhost:37373` へ繋ぐ**（窓は必ずハブと同ホスト）。物理 NIC は Defender 既定遮断で
+     露出せず、WSL→ホスト inbound を許可する標準 Defender ＋ Hyper-V の両層の許可規則が要る（`rpgdev setup-firewall` が両層を適用）。セットアップ順非依存。
+     WebView2 SDK DLL は `desktop/webview2/` に同梱（無ければ明確エラー）。同梱 DLL のコピー（`copyDll`）は、
+     実行中の窓が掴んでいて上書きできない（`EACCES`/`EBUSY`/`EPERM`）かつ既に配置済みなら**落ちずに続行**＝窓が動いたままの再起動でクラッシュさせない。詳細は
+     [docs/windows-wsl.md](docs/windows-wsl.md)。
+   - **Windows/WSL2 のタスクトレイ常駐**（[desktop/RPGDevTray.cs](desktop/RPGDevTray.cs)）：ハブが起動しているか分かりづらい問題への可視化。
+     窓 exe(RPGDev.exe) とは別の C# WinForms NotifyIcon（WebView2 不要）を `desktop.mjs` が窓と一緒にビルド・起動する。
+     アイコンは水の精霊 Aqua の顔をスプライト `ally-water-facing-slit.png` から実行時に機械的に切り出す（System.Drawing＝外部画像ツール不要・`--make-ico` で .ico も生成）。
+     `/health` を3秒ごとに監視し連続失敗でトレイ自身も退場＝**トレイの有無＝ハブの稼働**。右クリックで窓を開く/街に戻る(`/control/return-town`)/終了(`/control/shutdown`＝ハブ停止)。
+     単一インスタンスは窓と同じハブ dir の `rpgdev-hub.tray.lock`（ファイルロック）。**スタートメニュー登録は `rpgdev setup-shortcut`**（管理者不要・`%APPDATA%\…\Start Menu\Programs\RPGDev.lnk`＝顔 .ico 付き・Target は `rpgdev` 起動。WSL2 からも interop で作成）。
+   - **素の Linux**：窓なし。`npm run web`（ブラウザ表示）へ明確に誘導。
 
 5. **2 つのフロントエンド、1 つのサーバ:**
    - `/` → [public/index.html](public/index.html) + [public/app.js](public/app.js) — フル Web ビュー。
-   - `/overlay.html` → [public/overlay.js](public/overlay.js) — Swift WebView 内で読み込む
-     コンパクトなウィンドウ UI。ネイティブブリッジが無い時はページ内 WebAudio に
+   - `/overlay.html` → [public/overlay.js](public/overlay.js) — デスクトップ窓の WebView
+     （macOS=WKWebView / Windows・WSL2=WebView2）内で読み込むコンパクトなウィンドウ UI。
+     ネイティブブリッジが無い時（Windows/WSL2 や素のブラウザ）はページ内 WebAudio に
      フォールバックする。
    どちらも `/events` を `EventSource` で購読し、`effects` 配列に反応するだけで、
    ゲームロジック自体は計算しない —— サーバが唯一の信頼できる情報源。
@@ -295,20 +339,28 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
   記録し、成功を装わずに非ゼロ終了する。サーバは `.rpgdev/server-errors.log` に記録する。
   編集時もこの挙動を維持し、エラーを握りつぶさないこと。
 - サーバと reducer は **npm 依存ゼロ**。stdlib のみを保つこと。
+- **二重起動防止**：同一プロジェクト・同一ポートでサーバ／ウィンドウが二重に立たないようにする。
+  サーバは listen の `EADDRINUSE` を捕捉し、既存ありとして**後発を `exit 0` で退場**させる（クラッシュ・
+  エラーログ汚染をしない）。デスクトップは `desktop.mjs` が既存窓を `focusExistingWindow` で検出したら開かず、
+  かつ `.rpgdev/desktop.lock`（mkdir のアトミック性＋30秒で stale 奪取）で起動を直列化する。編集時もこの不変条件を壊さない。
+- **攻撃/帰還 SFX** は [scripts/render-sfx.mjs](scripts/render-sfx.mjs)（`npm run render:sfx`）で生成し、
+  Swift の `sfxNames`（[desktop/RPGDevWindow.swift](desktop/RPGDevWindow.swift)）にも登録する。新しい SFX を足したら両方を更新する。
 - BGM（`field` / `adventure` / `battle` / `dungeon-*` / `castle-*` の7トラック）は
   [scripts/render-bgm.mjs](scripts/render-bgm.mjs) で生成される（既存曲を使わないオリジナルの
   クラシック JRPG 調シーケンスを WAV に合成。決定的で乱数なし）。ジェネレータを編集してから
   `npm run render:bgm` を実行すること。BGM の WAV を直接編集しない。
-  - 攻撃SFX（勇者通常/スキル/トドメ、精霊4属性）は [scripts/render-sfx.mjs](scripts/render-sfx.mjs)
-    で生成される。編集後は `npm run render:sfx` を実行すること。
-  - 例外：`public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm/render-sfx 管轄外の
-    効果音アセット（ジェネレータでは生成しない別ファイル）。`npm run render:bgm` では再生成されない。
+  - 例外：`public/audio/monster-appear.wav` / `monster-defeat.wav` は render-bgm / render-sfx 管轄外の
+    効果音アセット（どちらのジェネレータでも生成しない別ファイル）。`npm run render:bgm` / `npm run render:sfx`
+    のどちらでも再生成されない。
 
 ## Hook の組み込み（ツール利用者向け）
 
-**推奨は `rpgdev setup`**：実パス入りの正しい設定（node 絶対パス exec 形式）＋安全マージ手順を表示するだけのコマンド。
-利用者のエージェントが [docs/install-hooks.md](docs/install-hooks.md) の安全規則に従って既存設定へマージする
-（rpgdev 自身は設定ファイルを書かない＝既存設定を壊さない）。純関数 `scripts/hook-config.mjs`（`buildHookConfig`／
+**インストール思想（v0.7.1〜）＝「できるだけスクリプトに任せ、任せられるか（安全に自動でできるか）は AI が判断、人手は権限の壁だけ」**。
+利用者は AI に「この GitHub を見てインストールして」と言うだけで、AI が [docs/agent-install.md](docs/agent-install.md) に従い自動スクリプトを順に実行する。
+`rpgdev setup`（表示）＝実パス入りの正しい設定（node 絶対パス exec 形式）＋安全マージ手順を**表示**。`rpgdev setup --apply`＝
+その設定を**安全に自動書込**（`scripts/apply-hooks.mjs`：`.hooks` だけ・既存維持・`_rpgdev` で冪等・バックアップ＋アトミック・
+不正 JSON/想定外形状なら**書かずに理由を返して**AI/人へフォールバック）。`rpgdev setup-firewall`＝WSL2→ホストのファイアウォール許可を
+標準＋Hyper-V 両層・再起動耐性（`RemoteAddress 172.16/12`）で適用（昇格は Windows 側でのみ＝WSL からは UAC を出せない）。純関数 `scripts/hook-config.mjs`（`buildHookConfig`／
 `EVENT_SETS`）が“正解”の単一の源で、`test/hook-config.test.mjs` がガード。`bin/rpgdev`→`scripts/cli.mjs` が
 `setup` だけ分岐（他は `desktop.mjs` で従来同一）。
 

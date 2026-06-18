@@ -428,18 +428,25 @@ test("5撃に達しても最低在席時間内は討伐せず保留(pendingDefea
 });
 
 test("討伐後 SPAWN_COOLDOWN 内は再出現しない／クールダウン明けは出現する", () => {
+  // クールダウンはターン内（Stop を跨がない）で検証する。Stop で討伐すると町に戻り以降の pre はドロップされ、
+  // かつ新ターンは lastDefeatAt をリセットするため検証できない。→ ターン内で5スキル攻撃により討伐する。
   const T0 = 1000;
   let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} }, T0);
-  __setChance(chanceSeq(0, 0));
-  r = reduceHookEvent(r.state, pre(), T0 + 100); // 出現 appearedAt=T0+100
+  __setChance(chanceSeq(0, 0)); // 次の Pre で wild 出現（appearedAt=T0+100, lastSpawnAt=T0+100）
+  r = reduceHookEvent(r.state, pre(), T0 + 100);
   assert.equal(r.state.monsters.length, 1);
-  r = reduceHookEvent(r.state, { provider: "claude", event: "Stop", raw: {} }, T0 + 5000); // 討伐 lastDefeatAt=T0+5000
-  assert.equal(r.state.monsters.length, 0);
-  assert.equal(r.state.lastDefeatAt, T0 + 5000);
+  assert.equal(r.state.monsters[0].linkedTodo, false);
+  __setChance(() => 0.99); // 以降 増援/追加出現なし
+  let t = T0 + 200;
+  for (let i = 0; i < 4; i += 1) { r = reduceHookEvent(r.state, post(), t); t += 100; } // 寿命内に4撃
+  assert.equal(r.state.monsters.length, 1, "4撃ではまだ生存");
+  r = reduceHookEvent(r.state, post(), T0 + 4200); // 5撃目を寿命経過後に置く → 即討伐。lastDefeatAt=T0+4200
+  assert.equal(r.state.monsters.length, 0, "5撃（寿命経過後）で討伐");
+  assert.equal(r.state.lastDefeatAt, T0 + 4200);
   __setChance(() => 0); // 出現させたい（がクールダウンで弾かれる）
-  r = reduceHookEvent(r.state, pre(), T0 + 5000 + 1000); // 討伐の1s後（<4s）
+  r = reduceHookEvent(r.state, pre(), T0 + 4200 + 1000); // 討伐の1s後（<4s）
   assert.equal(r.state.monsters.length, 0, "クールダウン中は出現しない");
-  r = reduceHookEvent(r.state, pre(), T0 + 5000 + 4001); // 4s経過後
+  r = reduceHookEvent(r.state, pre(), T0 + 4200 + 4001); // 4s経過後
   assert.equal(r.state.monsters.length, 1, "クールダウン明けは出現する");
 });
 
@@ -577,8 +584,10 @@ test("one Hook does exactly one action (spawn XOR summon XOR attack — never co
 
 test("TODO 不在で遭遇したモンスターは表示ライフ20、TODO中はカタログ値", () => {
   // TODO 無し（synthetic も無し）で出現 → linkedTodo=false → hp=20。
+  // 町ではツール使用がドロップされるので、まず素の UserPromptSubmit（テキスト無し＝synthetic も立たない）で冒険を始める。
   __setChance(chanceSeq(0, 0)); // 出現(gate0, select0=field Slime)
-  let r = reduceHookEvent(createInitialState(), pre());
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, pre());
   assert.equal(r.state.monsters.length, 1);
   assert.equal(r.state.monsters[0].linkedTodo, false);
   assert.equal(r.state.monsters[0].hp, 20, "TODO不在のモンスターは hp=20");
@@ -595,7 +604,8 @@ test("TODO 不在で遭遇したモンスターは表示ライフ20、TODO中は
 
 test("精霊召喚の成功確率は20%（境界：0.15で召喚、0.25で非召喚）", () => {
   __setChance(chanceSeq(0, 0)); // 戦闘を作る（モンスター出現）
-  let r = reduceHookEvent(createInitialState(), pre());
+  let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
+  r = reduceHookEvent(r.state, pre());
   assert.equal(r.state.monsters.length, 1);
 
   __setChance(() => 0.15); // 0.15 < 0.2 → 召喚成功
@@ -792,26 +802,35 @@ const planBy = (sid, plan) => ({
   event: "PostToolUse",
   raw: { session_id: sid, tool_name: "update_plan", tool_input: { plan } }
 });
-const subStartBy = (sid) => ({ provider: "claude", event: "SubagentStart", raw: { session_id: sid } });
-const subStopBy = (sid) => ({ provider: "claude", event: "SubagentStop", raw: { session_id: sid } });
 const stopBy = (sid) => ({ provider: "claude", event: "Stop", raw: { session_id: sid } });
 
-test("アイドルなオーナーからは、素の UserPromptSubmit でも TODO でも別セッションが奪取する", () => {
-  // A が最初に UserPromptSubmit → オーナー A、synthetic クエスト。
+test("冒険中は別セッションが奪取できない／オーナーが街に戻った後は別セッションが新オーナーになれる", () => {
+  // A が最初に UserPromptSubmit → オーナー A、冒険開始、synthetic クエスト。
   let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
   assert.equal(r.state.ownerSession, "A");
+  assert.equal(r.state.active, true);
   assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
 
-  // A はアイドル（本物TODO/サブエージェント無し）なので、B の素のメッセージでオーナーを奪取し単発クエストを更新できる。
-  // ＝「クエスト単発が休眠オーナーに張り付いて更新できない」問題の回帰。
+  // 冒険中は B の素のメッセージでも奪取できない＝前進のみ。オーナー/クエストは不変。
   r = reduceHookEvent(r.state, promptBy("B", "Bの作業"));
-  assert.equal(r.state.ownerSession, "B", "アイドルなオーナーからは素のメッセージでも奪取できる");
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["Bの作業"], "奪取後は単発クエストが新セッションのメッセージへ");
+  assert.equal(r.state.ownerSession, "A", "冒険中は素の非オーナー入力で奪われない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
+  assert.ok(r.effects.some((e) => e.type === "step"), "冒険中の非オーナー UserPromptSubmit は前進のみ");
 
-  // さらに別セッション C の TODO（update_plan）も、B がアイドルなら奪取できる。
+  // 冒険中は C の TODO でも奪取できない（ツール使用として戦闘は駆動するがクエストは不変）。
   r = reduceHookEvent(r.state, planBy("C", [{ step: "C task", status: "in_progress" }]));
-  assert.equal(r.state.ownerSession, "C", "アイドルなオーナーからは TODO でも奪取できる");
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["C task"]);
+  assert.equal(r.state.ownerSession, "A", "冒険中は非オーナーTODOで奪われない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"], "冒険中の非オーナーTODOはクエストを変えない");
+
+  // オーナー A が Stop＝街に戻る → owner 解放・active=false。
+  r = reduceHookEvent(r.state, stopBy("A"));
+  assert.equal(r.state.ownerSession, null);
+  assert.equal(r.state.active, false);
+
+  // 街に戻った後は B が発行して新オーナーになれる。
+  r = reduceHookEvent(r.state, promptBy("B", "Bの作業"));
+  assert.equal(r.state.ownerSession, "B", "街に戻った後は別セッションが新オーナー");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["Bの作業"]);
 });
 
 test("ロック中のオーナーは、素の UserPromptSubmit でも TODO でも奪われない（要件6の肝）", () => {
@@ -839,39 +858,6 @@ test("TODOロック：オーナーが進行中の本物TODOを持つ間は、別
   assert.deepEqual(r.state.quest.map((q) => q.label), ["A task"], "ロック中の非オーナーTODOはクエストを変えない");
 });
 
-test("サブエージェントロック：オーナーが稼働サブエージェントを持つ間は奪取不可、SubagentStop でアイドル化したら奪取可", () => {
-  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業")); // オーナーA・synthetic（本物TODOなし）
-  r = reduceHookEvent(r.state, subStartBy("A")); // A 名義のサブエージェント稼働
-  assert.equal(r.state.subagentCounts.A, 1);
-
-  // 本物TODOは無いが A のサブエージェントが稼働中＝ロック → B の TODO は奪取不可。
-  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
-  assert.equal(r.state.ownerSession, "A", "稼働サブエージェントがあれば奪取不可");
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["親の作業"]);
-
-  // SubagentStop で A の稼働数が 0 ＝アイドル → 次の B の TODO は奪取できる。
-  r = reduceHookEvent(r.state, subStopBy("A"));
-  assert.equal(r.state.subagentCounts.A, 0);
-  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
-  assert.equal(r.state.ownerSession, "B", "サブエージェント完了でアイドル化したら奪取可");
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["B task"]);
-});
-
-test("TODOロック解除：オーナーが全TODOを完了したら、別セッションの TODO が奪取できる", () => {
-  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
-  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "in_progress" }]));
-  // 進行中 → ロック → B 奪取不可。
-  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
-  assert.equal(r.state.ownerSession, "A");
-  // A が完了 → アイドル化。
-  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "completed" }]));
-  assert.equal(r.state.ownerSession, "A");
-  // 解除後は B が奪取できる。
-  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
-  assert.equal(r.state.ownerSession, "B", "全TODO完了でロック解除→奪取可");
-  assert.deepEqual(r.state.quest.map((q) => q.label), ["B task"]);
-});
-
 test("ターン終了はオーナーの Stop だけ：非オーナーの Stop は親ターンを終わらせない／オーナーの Stop でオーナー解放", () => {
   let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
   assert.equal(r.state.active, true);
@@ -885,29 +871,27 @@ test("ターン終了はオーナーの Stop だけ：非オーナーの Stop �
   // オーナー A の Stop でターン終了＆オーナー/カウンタ解放。
   r = reduceHookEvent(r.state, stopBy("A"));
   assert.equal(r.state.phase, "complete", "オーナーの Stop でターン終了");
-  assert.equal(r.state.ownerSession, null, "ターン終了でオーナーを手放す（安全弁）");
-  assert.deepEqual(r.state.subagentCounts, {}, "ターン終了で稼働カウンタもクリア");
+  assert.equal(r.state.ownerSession, null, "ターン終了でオーナーを手放す（街に戻る）");
 });
 
 // 以下はレビュー（多視点＋敵対的検証ワークフロー）で見つかった抜けを塞ぐ回帰テスト。
 
-test("オーナーStopで owner=null 化した後、野良の非オーナーStopは再びターンを終わらせない（要件5の穴の回帰）", () => {
-  // バグ：isOwnerSession は owner==null で true を返すため、オーナーStop後の野良Stopが再 finishTurn して
-  // 再活性化したモンスターを強制討伐していた。canEndTurn で塞ぐ。
+test("街（オーナー解放後）では野良のツール使用も Stop もドロップされる（冒険再開・出現・ターン終了しない）", () => {
   let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
-  r = reduceHookEvent(r.state, stopBy("A")); // オーナー終了 → owner=null, phase=complete
+  r = reduceHookEvent(r.state, stopBy("A")); // オーナー終了 → owner=null, active=false（町）
   assert.equal(r.state.ownerSession, null);
+  assert.equal(r.state.active, false);
 
-  // 野良の非オーナー B が PreToolUse で再活性化＆出現（onPreToolUse はオーナー非依存＝§12）。
+  // 町では非オーナー B の PreToolUse はドロップ＝冒険を再開も出現もしない（町＝発行のみ）。
   __setChance(chanceSeq(0, 0));
   r = reduceHookEvent(r.state, { provider: "codex", event: "PreToolUse", raw: { session_id: "B", tool_name: "Read" } });
-  assert.equal(r.state.monsters.length, 1, "非オーナーのツール使用は出現する（§12）");
+  assert.equal(r.state.active, false, "町のツール使用で冒険は始まらない");
+  assert.equal(r.state.monsters.length, 0, "町では出現しない");
 
-  // 野良の Stop（C）は owner=null でも finishTurn を呼ばず、モンスターを強制討伐しない。
+  // 町では野良 Stop（C）もドロップ＝ターン終了 effect も討伐も出さない。
   r = reduceHookEvent(r.state, stopBy("C"));
-  assert.equal(r.state.monsters.length, 1, "owner=null でも野良Stopは強制討伐しない");
-  assert.ok(!r.effects.some((e) => e.type === "turn_completed"), "野良Stopで turn_completed を再発しない");
-  assert.ok(!r.effects.some((e) => e.type === "monster_defeated"), "野良Stopで強制討伐しない");
+  assert.ok(!r.effects.some((e) => e.type === "turn_completed"), "町の Stop で turn_completed を出さない");
+  assert.ok(!r.effects.some((e) => e.type === "monster_defeated"), "町の Stop で討伐しない");
 });
 
 test("非オーナーの Stop は進行中のモンスターを強制討伐しない（要件5）", () => {
@@ -944,23 +928,6 @@ test("P7：session 不明(demo/manual)の TODO はクエストを更新するが
   assert.deepEqual(r.state.quest.map((q) => q.label), ["demo task"], "null session でもクエストは更新（permissive）");
 });
 
-test("ターン終了は漏れた subagentCounts ロックも解放する（安全弁）", () => {
-  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業")); // owner A, synthetic
-  r = reduceHookEvent(r.state, subStartBy("A"));
-  r = reduceHookEvent(r.state, subStartBy("A")); // count A = 2
-  r = reduceHookEvent(r.state, subStopBy("A")); // count A = 1（2 start / 1 stop ＝取りこぼし相当）
-  assert.equal(r.state.subagentCounts.A, 1);
-
-  // 漏れた稼働カウントでロックが残る＝B の TODO は奪取不可。
-  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
-  assert.equal(r.state.ownerSession, "A", "漏れた稼働カウントでロックが残る");
-
-  // オーナーの Stop（ターン終了）で漏れたロックも必ず解放（安全弁）。
-  r = reduceHookEvent(r.state, stopBy("A"));
-  assert.deepEqual(r.state.subagentCounts, {}, "ターン終了で稼働カウンタをクリア");
-  assert.equal(r.state.ownerSession, null, "ターン終了でオーナー解放");
-});
-
 test("TODO（session付き）が最初のオーナー確定イベントになれる", () => {
   // 誰も UserPromptSubmit していない（owner null）状態から、X の update_plan がオーナーを確定。
   let r = reduceHookEvent(createInitialState(), planBy("X", [{ step: "X task", status: "in_progress" }]));
@@ -984,6 +951,75 @@ test("owner session resets on SessionStart so a fresh session can own the quest"
   });
   assert.equal(r.state.ownerSession, "C", "新セッションが新オーナー");
   assert.deepEqual(r.state.quest.map((q) => q.label), ["new"]);
+});
+
+// --- 新モデル：町＝発行のみ／冒険中＝全員の戦闘・オーナーのみクエスト&ターン終了 ---
+
+test("町（冒険前）では非クエストのフック（ツール使用・Stop・SubagentStart）はドロップ＝冒険を始めない", () => {
+  __setChance(chanceSeq(0, 0)); // 出ようとしても町では出ない
+  let r = reduceHookEvent(createInitialState(), pre());
+  assert.equal(r.state.active, false, "町のツール使用で冒険は始まらない");
+  assert.equal(r.state.monsters.length, 0, "町では出現しない");
+  r = reduceHookEvent(r.state, post());
+  assert.equal(r.state.active, false, "町の PostToolUse もドロップ");
+  r = reduceHookEvent(r.state, { provider: "claude", event: "SubagentStart", raw: {} });
+  assert.equal(r.state.active, false);
+  assert.equal(r.state.allies.length, 0, "町では精霊も出ない");
+  r = reduceHookEvent(r.state, { provider: "claude", event: "Stop", raw: {} });
+  assert.ok(!r.effects.some((e) => e.type === "turn_completed"), "町の Stop でターン終了しない");
+});
+
+test("クエスト発行（プロンプト／TODO）だけが町から冒険を開始し、発行セッションがオーナーになる", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "依頼"));
+  assert.equal(r.state.active, true, "プロンプト発行で冒険開始");
+  assert.equal(r.state.ownerSession, "A");
+
+  let s = reduceHookEvent(createInitialState(), todoBy("X", [{ content: "X task", status: "in_progress" }]));
+  assert.equal(s.state.active, true, "TODO発行でも冒険開始");
+  assert.equal(s.state.ownerSession, "X");
+  assert.deepEqual(s.state.quest.map((q) => q.label), ["X task"]);
+});
+
+test("冒険中、別セッションのツール使用は出現・スキル攻撃に反映されるがクエストは変えない", () => {
+  let r = reduceHookEvent(createInitialState(), todoBy("A", [{ content: "A task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A");
+  // 非オーナー B の PreToolUse で出現（攻撃関係は全セッション）。
+  __setChance(chanceSeq(0, 0));
+  r = reduceHookEvent(r.state, { provider: "codex", event: "PreToolUse", raw: { session_id: "B", tool_name: "Read" } });
+  assert.equal(r.state.monsters.length, 1, "非オーナーのツール使用でも出現する");
+  // 非オーナー B の PostToolUse（非TODO）でスキル攻撃。
+  __setChance(() => 0.99);
+  r = reduceHookEvent(r.state, { provider: "codex", event: "PostToolUse", raw: { session_id: "B", tool_name: "Edit" } });
+  assert.ok(r.effects.some((e) => e.type === "attack" && e.kind === "skill"), "非オーナーのツール使用でスキル攻撃");
+  // 非オーナー B の TODO はクエストを変えない（戦闘だけ駆動）。
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A", "非オーナーTODOで奪われない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["A task"], "非オーナーTODOはクエストを変えない");
+});
+
+test("冒険中はオーナーが街に戻るまで奪取できない（全TODO完了でも）", () => {
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A");
+  // 全TODOを完了しても、冒険中（active）なら owner は解放されない＝B は奪取不可。
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "completed" }]));
+  assert.equal(r.state.active, true);
+  r = reduceHookEvent(r.state, planBy("B", [{ step: "B task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A", "全TODO完了でも冒険中は奪取できない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["A task"]);
+});
+
+test("時間切れ：オーナーが OWNER_IDLE_RELEASE_MS 無反応なら次の非オーナー発行が冒険を引き継ぐ", () => {
+  const T0 = 1000;
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"), T0);
+  assert.equal(r.state.ownerSession, "A");
+  // 無反応時間が短い間は奪取できない。
+  r = reduceHookEvent(r.state, promptBy("B", "横入り"), T0 + 1000);
+  assert.equal(r.state.ownerSession, "A", "時間内は奪取できない");
+  // 5分（OWNER_IDLE_RELEASE_MS）経過後は B の発行が引き継ぐ。
+  r = reduceHookEvent(r.state, promptBy("B", "横入り"), T0 + 300000);
+  assert.equal(r.state.ownerSession, "B", "時間切れで次の発行者が引き継ぐ");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["横入り"]);
 });
 
 // --- 要件4: 精霊のライフ(5) と被弾退場（CounterHit はサーバー権威）---

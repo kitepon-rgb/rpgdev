@@ -1,15 +1,20 @@
 # Contributing to RPGDev
 
-Thanks for your interest in contributing to RPGDev — a macOS desktop tool that
+Thanks for your interest in contributing to RPGDev — a desktop tool that
 turns Codex CLI and Claude Code **hook events** into a small RPG-style overlay
-window. This guide covers local setup, the dev workflow, and the conventions
-that keep the codebase consistent.
+window. It runs on macOS (Swift + WKWebView) and Windows / WSL2 (C# WinForms +
+WebView2); bare Linux has no window (`npm run web`). This guide covers local
+setup, the dev workflow, and the conventions that keep the codebase consistent.
 
 ## Project facts to keep in mind
 
-- **macOS only.** The app ships a Swift WKWebView desktop window
-  (`desktop/RPGDevWindow.swift`) compiled on demand with `swiftc`.
-  `package.json` declares `"os": ["darwin"]`. Other platforms are out of scope.
+- **Cross-platform desktop window.** macOS uses a Swift WKWebView window
+  (`desktop/RPGDevWindow.swift`) compiled on demand with `swiftc`; Windows/WSL2
+  use a C# WinForms+WebView2 window (`desktop/RPGDevWindow.cs`) compiled on
+  demand with `csc.exe`, plus a task-tray resident (`desktop/RPGDevTray.cs`).
+  Bare Linux has no window. `package.json` declares `"os": ["darwin", "win32",
+  "linux"]`. The reducer, server, and frontends are platform-independent; only
+  `desktop.mjs` and the native window sources are platform-specific.
 - **Node.js 20+**, pure ESM (`"type": "module"`). No build step, no bundler,
   no TypeScript.
 - **Zero runtime npm dependencies.** The server and reducer use the Node
@@ -27,10 +32,12 @@ step required to run the server, the reducer, or the tests.
 
 Requirements:
 
-- macOS
+- macOS, or Windows / WSL2 (bare Linux runs the bare server / web view only)
 - Node.js 20+
-- Swift compiler / Xcode Command Line Tools (only needed to build and launch
-  the desktop window, not for running tests or the bare server)
+- For the desktop window only (not for tests or the bare server): on macOS the
+  Swift compiler / Xcode Command Line Tools; on Windows/WSL2 the in-box
+  `csc.exe` (.NET Framework 4.x) — the WebView2 SDK DLLs are bundled under
+  `desktop/webview2/`.
 
 ## Running the tests
 
@@ -44,8 +51,10 @@ node --test --test-name-pattern "spawns a monster"  # run tests matching a name
 
 `server/adventure-state.mjs` is the **single unit-tested module** and the heart
 of the app — a pure function
-`reduceHookEvent(prevState, hookEvent) → { state, effects, normalized }` with no
-I/O. Its tests live in `test/adventure-state.test.mjs` (~60 tests today).
+`reduceHookEvent(prevState, hookEvent, now) → { state, effects, normalized }`
+with no I/O (`now` is the server-injected pacing clock that `handleHook` passes).
+Its tests live in `test/adventure-state.test.mjs` (~66 tests today; `npm test`
+runs ~100 across all files).
 
 **If you change behavior in `server/adventure-state.mjs`, you MUST update
 `test/adventure-state.test.mjs` to match.** This is the one rule that is not
@@ -62,9 +71,12 @@ Hook event → reducer → persisted state → SSE broadcast → UI.
    server that runs the reducer, persists state, and broadcasts over SSE.
 3. **Reducer / state machine** — `server/adventure-state.mjs`. Pure, no I/O.
    This is where game logic lives.
-4. **Desktop window** — `scripts/desktop.mjs` + `desktop/RPGDevWindow.swift`.
-   Compiles the Swift source on demand and opens a titled, 4:3 floating
-   WKWebView window (the WebView itself draws no background).
+4. **Desktop window** — `scripts/desktop.mjs`, which dispatches per platform.
+   macOS compiles `desktop/RPGDevWindow.swift` on demand and opens a titled,
+   4:3 floating WKWebView window (the WebView itself draws no background).
+   Windows/WSL2 compile `desktop/RPGDevWindow.cs` (WinForms+WebView2) on demand
+   and also build and launch a task-tray resident (`desktop/RPGDevTray.cs`)
+   alongside the window.
 5. **Frontends** — `public/overlay.js` (the compact window UI) and
    `public/app.js` (a secondary full web view). Both subscribe to `/events`
    (SSE) and only react to the `effects` array; they compute no game logic.
@@ -72,15 +84,34 @@ Hook event → reducer → persisted state → SSE broadcast → UI.
 
 Per-project runtime state and logs are written under `<PROJECT_DIR>/.rpgdev/`
 (`state.json`, `events.ndjson`, `playback.ndjson`, `*-errors.log`). `.rpgdev/`
-is gitignored.
+is gitignored. (On Windows/WSL2 the single shared hub keeps its state/build
+under `%LOCALAPPDATA%\rpgdev\hub` instead; only error logs stay per-project.)
+
+### Windows / WSL2 specifics
+
+- **Task-tray resident** (`desktop/RPGDevTray.cs`): a C# WinForms NotifyIcon (no
+  WebView2) that `scripts/desktop.mjs` builds and launches alongside the window.
+  Its icon is the water-spirit Aqua face, cropped at runtime from
+  `public/assets/sprites/ally-water-facing-slit.png` via `System.Drawing` (no
+  external image tools; `--make-ico` writes the `.ico`). It polls `GET /health`
+  every 3s and removes itself after 3 consecutive failures, so tray icon present
+  = hub running, gone = hub stopped. Right-click menu: open window / return to
+  town (`POST /control/return-town`) / quit, which stops the hub
+  (`POST /control/shutdown`). Single instance via a `rpgdev-hub.tray.lock` file
+  lock in the hub dir. (Windows hides new tray icons in the overflow `^` by
+  default.)
+- **Start Menu shortcut**: `rpgdev setup-shortcut` (`scripts/setup-shortcut.mjs`)
+  creates `%APPDATA%\Microsoft\Windows\Start Menu\Programs\RPGDev.lnk` with the
+  Aqua-face `.ico`; no admin needed, works from WSL2 via interop. Skipped on
+  macOS / bare Linux.
 
 ## Running the app locally
 
 ```bash
-npm start              # build the Swift window + launch the desktop overlay
+npm start              # build the desktop window (per platform) + launch the overlay
 npm run server         # HTTP server only (no window)
 npm run web            # server + open the full web view in a browser
-npm run build:desktop  # compile the Swift window only (does not launch)
+npm run build:desktop  # compile the desktop window only (does not launch)
 npm run demo           # replay a synthetic hook sequence against a running server
 npm run trace          # analyze the effect trace from .rpgdev/ logs
 ```
@@ -90,7 +121,7 @@ npm run trace          # analyze the effect trace from .rpgdev/ logs
 fake hook sequence — encounter spawn, attacks, defeat, wrap-up — so you can
 watch the overlay react without driving a real agent.
 
-This is a macOS desktop / overlay app, not a browser app. Prefer `npm start`,
+This is a desktop / overlay app, not a browser app. Prefer `npm start`,
 `npm run server`, the reducer tests, and `npm run demo` for verifying changes.
 The full web view at `/` is a secondary, auxiliary view — don't treat it as the
 primary surface.
@@ -121,7 +152,9 @@ primary surface.
   as a late starter (no crash, no error-log noise); the desktop side serializes
   startup via `.rpgdev/desktop.lock` and focuses an existing window instead of
   opening a second one. Don't break these invariants.
-- **macOS only.** Don't add code paths that assume another platform.
+- **Keep platform code isolated.** The reducer, server, and frontends must stay
+  platform-independent; per-OS branches live only in `scripts/desktop.mjs` and
+  the native window sources (`desktop/RPGDevWindow.{swift,cs}`, `RPGDevTray.cs`).
 
 ## Commit and pull request flow
 

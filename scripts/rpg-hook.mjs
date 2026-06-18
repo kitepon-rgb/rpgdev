@@ -3,13 +3,16 @@ import { spawn } from "node:child_process";
 import { appendFile, mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { detectPlatform } from "./desktop-platform.mjs";
+import { hubReachHost, HUB_PORT } from "./hub-net.mjs";
 
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const PROJECT_DIR = resolve(process.env.RPGDEV_PROJECT_DIR || process.cwd());
 const DATA_DIR = join(PROJECT_DIR, ".rpgdev");
 const LOG_PATH = join(DATA_DIR, "hook-errors.log");
-const PORT = Number(process.env.RPGDEV_PORT || 37373);
-const HOST = process.env.RPGDEV_HOST || "127.0.0.1";
+const PLATFORM = detectPlatform();
+const PORT = HUB_PORT;
+const HOST = hubReachHost(); // このプロセス→ハブの到達先（win32=127.0.0.1 / wsl=ゲートウェイ / 他=127.0.0.1）。フック送信・起動確認に使う。
 const BASE_URL = `http://${HOST}:${PORT}`;
 const [provider = "manual", event = "Unknown"] = process.argv.slice(2);
 
@@ -39,15 +42,25 @@ try {
 async function ensureServer() {
   if (await health()) return;
 
-  const child = spawn(process.execPath, [join(PACKAGE_ROOT, "server", "rpgdev-server.mjs")], {
-    cwd: PACKAGE_ROOT,
-    detached: true,
-    stdio: "ignore",
-    env: { ...process.env, RPGDEV_PORT: String(PORT), RPGDEV_HOST: HOST, RPGDEV_PROJECT_DIR: PROJECT_DIR }
-  });
+  // win32 / wsl は単一 Windows ハブの起動を desktop.mjs に委譲（hub-dir / interop を一元化）。
+  // darwin / linux は従来通りローカル node サーバを直接起こす。
+  const child =
+    PLATFORM === "win32" || PLATFORM === "wsl"
+      ? spawn(process.execPath, [join(PACKAGE_ROOT, "scripts", "desktop.mjs"), "--ensure-hub"], {
+          cwd: PACKAGE_ROOT,
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env }
+        })
+      : spawn(process.execPath, [join(PACKAGE_ROOT, "server", "rpgdev-server.mjs")], {
+          cwd: PACKAGE_ROOT,
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env, RPGDEV_PORT: String(PORT), RPGDEV_HOST: HOST, RPGDEV_PROJECT_DIR: PROJECT_DIR }
+        });
   child.unref();
 
-  const deadline = Date.now() + 3500;
+  const deadline = Date.now() + 7000; // wsl は interop 起動＋wsl-share 読込で初回やや遅い
   while (Date.now() < deadline) {
     if (await health()) return;
     await delay(120);
@@ -93,7 +106,9 @@ function launchDesktopWindow() {
     cwd: PACKAGE_ROOT,
     detached: true,
     stdio: "ignore",
-    env: { ...process.env, RPGDEV_PORT: String(PORT), RPGDEV_HOST: HOST, RPGDEV_PROJECT_DIR: PROJECT_DIR }
+    // RPGDEV_HOST は渡さない＝desktop.mjs が待受(0.0.0.0)/窓接続先(localhost)を自前で解決する。
+    // ここで渡すとサーバが localhost で受けられず窓が繋がらない。
+    env: { ...process.env, RPGDEV_PORT: String(PORT), RPGDEV_PROJECT_DIR: PROJECT_DIR }
   });
   child.unref();
 }

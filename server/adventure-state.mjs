@@ -48,6 +48,11 @@ const MIN_MONSTER_LIFETIME_MS = 4000; // 出現から最低この時間は討伐
 // 後半の細かい TODO で 20% を引けず、最後まで敵が出ないことがあるための保険（field は対象外）。
 const FORCED_ENCOUNTER_MS = 30000; // 30秒
 
+// オーナー（進行中クエストの発行セッション）が無反応のまま放置されたら、次の非オーナー発行が冒険を引き継げる時間切れ。
+// 通常はオーナーの Stop（応答ごとに発火）で街に戻り owner が解放されるが、応答途中でクラッシュして Stop を出せない場合の
+// 自動復旧用（手動「街に戻る」ボタンと二段構え）。長いツール実行＝Pre/Post 間の無フック区間でも誤奪取しない側に倒して長めにする。
+const OWNER_IDLE_RELEASE_MS = 300000; // 5分
+
 // ゲーム確率の判定に使う乱数。テストから差し替え可能（id 生成の Math.random とは分離）。
 let chance = Math.random;
 export function __setChance(fn) {
@@ -84,8 +89,8 @@ export function createInitialState() {
 
     defeated: [],
     quest: [], // 最新 TodoWrite スナップショット（元の順序・status 付き）= クエスト一覧の表示用
-    ownerSession: null, // クエスト/ターンのオーナー（要件6→動的化）。TODO で奪取・ターン終了で解放。
-    subagentCounts: {}, // session_id 別の稼働サブエージェント数（オーナーのロック判定に使う。SubagentStart/Stop で増減）
+    ownerSession: null, // 進行中クエストを発行したオーナーセッション。発行で確定・町帰還で解放（冒険まるごとロック）。
+    ownerActivityAt: 0, // オーナーの直近フック時刻（サーバー now）。無反応放置の時間切れ自動解除に使う。
     allies: [], // 在席中の精霊（攻撃時に増援 / SubagentStart でも参戦）
     steps: 0,
     attacks: 0,
@@ -110,7 +115,6 @@ export function reduceHookEvent(previousState, hookEvent, now) {
   if (!Array.isArray(state.defeated)) state.defeated = [];
   if (!Array.isArray(state.allies)) state.allies = [];
   if (!Array.isArray(state.quest)) state.quest = [];
-  if (!state.subagentCounts || typeof state.subagentCounts !== "object") state.subagentCounts = {};
   if (!QUEST_STAGES.includes(state.adventureStage)) state.adventureStage = "field";
   const event = normalizeHookEvent(hookEvent);
   const effects = [];
@@ -126,69 +130,80 @@ export function reduceHookEvent(previousState, hookEvent, now) {
 
   state.lastEvent = event;
 
+  // オーナーのフックが来るたびに活動時刻を延命する。クラッシュ等で延命が止まると OWNER_IDLE_RELEASE_MS 後に
+  // ownerStale=true となり、次の非オーナー発行が（町を介さず）冒険を引き継げる＝無反応オーナーからの自動復旧。
+  if (state.ownerSession && event.sessionId === state.ownerSession) {
+    state.ownerActivityAt = serverNow;
+  }
+
   // 最低在席時間の遅延討伐スイープ：5撃や TODO 完了で討伐保留(pendingDefeat)になったモンスターは、
   // 出現から MIN_MONSTER_LIFETIME_MS 経過後の「次の任意の Hook」で確定討伐する（即死を防ぎつつ取りこぼさない）。
   sweepPendingDefeats(state, event, effects);
 
+  // 町（!active）／冒険中（active）の二相モデル。state.active を唯一の相判定にする。
+  // 町＝冒険が走っていない＝クエスト発行（UserPromptSubmit テキスト / TodoWrite・update_plan）だけを受け付け、
+  // それ以外（攻撃・出現・Stop・精霊・反撃…）は全部ドロップする。最初に発行したセッションがオーナーになり冒険開始。
+  // 冒険中＝全セッションのフックを受け付ける（出現・スキル攻撃・精霊＝全員ぶん反映）。ただしクエスト更新とターン終了は
+  // オーナー（発行セッション）だけ。active を true にできるのはクエスト発行（beginTurn / reconcileQuest 経由の ensureActive）だけ。
   switch (event.event) {
     case "SessionStart":
       townReset(state, event, effects);
       break;
     case "UserPromptSubmit":
-      beginTurn(state, event, effects);
+      // 町なら誰でも開始＝オーナー確定。冒険中はオーナー（または時間切れ放置の奪取）のみ新ターン、他は前進のみ。
+      if (!state.active || canClaimQuest(state, event)) {
+        beginTurn(state, event, effects);
+      } else {
+        step(state, event, effects);
+      }
       break;
     case "PreToolUse":
-      onPreToolUse(state, event, effects);
+      if (state.active) onPreToolUse(state, event, effects); // 町ではツール使用で冒険を始めない＝ドロップ
       break;
     case "PermissionRequest":
-      hold(state, event, effects);
+      if (state.active) hold(state, event, effects);
       break;
     case "PostToolUse":
       if (event.todoItems && canClaimQuest(state, event)) {
-        // 非オーナーでも、現オーナーがロック中でなければ（アイドル）クエストを奪取して反映（要件: TODO 奪取）。
+        // クエスト発行/更新：町なら開始＆オーナー確定、冒険中はオーナー（または時間切れ奪取）のみ反映。
         claimQuestOwnership(state, event);
         reconcileQuest(state, event, effects);
-      } else if (detectFailure(event)) {
-        counter(state, event, effects);
-      } else {
-        // ロック中の非オーナー TODO は奪取せず＝ツール使用として戦闘駆動（§12。クエストは不変）。
-        skillAttack(state, event, effects);
+      } else if (state.active) {
+        // 冒険中の非クエスト/非オーナーTODO＝ツール使用として戦闘駆動（クエストは不変）。町ではドロップ。
+        if (detectFailure(event)) counter(state, event, effects);
+        else skillAttack(state, event, effects);
       }
       break;
     case "PostToolUseFailure":
     case "StopFailure":
     case "PermissionDenied":
-      counter(state, event, effects);
+      if (state.active) counter(state, event, effects);
       break;
     case "SubagentStart":
-      summonAlly(state, event, effects);
-      bumpSubagentCount(state, event, 1); // オーナーのロック判定用（summonAlly の上限とは独立に常に数える）
+      if (state.active) summonAlly(state, event, effects);
       break;
     case "SubagentStop":
-      returnAlly(state, event, effects);
-      bumpSubagentCount(state, event, -1);
+      if (state.active) returnAlly(state, event, effects);
       break;
     case "CounterHit":
-      applyCounterHit(state, event, effects);
+      if (state.active) applyCounterHit(state, event, effects);
       break;
     case "PreCompact":
-      ambient(state, event, effects, "compact_pre");
+      if (state.active) ambient(state, event, effects, "compact_pre");
       break;
     case "PostCompact":
-      ambient(state, event, effects, "compact_post");
+      if (state.active) ambient(state, event, effects, "compact_post");
       break;
     case "Stop":
     case "SessionEnd":
-      // ターン終了は確定オーナー本人の Stop だけ（全セッションが Stop を発火するため。非オーナーの Stop は親ターンを終わらせない）。
-      // owner 未確定(null)を「全員オーナー」と扱わない＝オーナー Stop で owner=null 化した後の野良 Stop による再 finishTurn を防ぐ。
-      if (canEndTurn(state, event)) {
-        finishTurn(state, event, effects);
-      } else {
-        step(state, event, effects);
+      // ターン終了（町帰還）はオーナー本人の Stop だけ。冒険中の非オーナー Stop は前進のみ、町の Stop はドロップ。
+      if (state.active) {
+        if (canEndTurn(state, event)) finishTurn(state, event, effects);
+        else step(state, event, effects);
       }
       break;
     default:
-      step(state, event, effects);
+      if (state.active) step(state, event, effects);
       break;
   }
 
@@ -433,8 +448,8 @@ function townReset(state, event, effects) {
   state.monsters = [];
   state.allies = [];
   state.adventureStage = "field";
-  state.ownerSession = null; // 新セッションでオーナーをリセット（次の UserPromptSubmit/TODO が新オーナー。要件6）
-  state.subagentCounts = {}; // 稼働サブエージェントカウンタもリセット
+  state.ownerSession = null; // 新セッションでオーナーをリセット（次の UserPromptSubmit/TODO が新オーナー）
+  state.ownerActivityAt = 0; // オーナー解放に合わせて活動時刻もリセット
   state.lastSpawnAt = 0; // 新セッションは出現ペーシングもリセット
   state.lastDefeatAt = 0;
   state.stageEnteredAt = 0; // idle（拠点）は強制エンカウント対象外
@@ -443,15 +458,8 @@ function townReset(state, event, effects) {
 }
 
 function beginTurn(state, event, effects) {
-  // クエスト/ターンのオーナー制御。素の UserPromptSubmit でも、現オーナーがアイドル（ロックされていない）なら
-  // 奪取してよい（TODO 奪取と対称）。これでアイドル/休眠オーナーにクエスト単発が張り付いて更新できなくなるのを防ぐ。
-  // ただし現オーナーがロック中（進行中の本物TODO／稼働サブエージェント）なら横取りしない＝前進のみ
-  // （＝作業中のオーナーを spawned codex 等が乗っ取る要件6の肝は維持）。
-  if (!isOwnerSession(state, event) && ownerLocked(state)) {
-    step(state, event, effects);
-    return;
-  }
-  claimQuestOwnership(state, event); // 実 session を持つなら（初確定／アイドル奪取とも）オーナーを当該セッションへ（null は変えない＝P7）
+  // 呼ばれるのは「町（誰でも開始）」または「冒険中のオーナー/時間切れ奪取」だけ（相判定は dispatch 側が済ませる）。
+  claimQuestOwnership(state, event); // 実 session を持つならオーナーを当該セッションへ（null は変えない＝P7）
   state.active = true;
   state.turn += 1;
   // 新ターンは出現クールダウンを引きずらない（前ターンの討伐で最初のエンカウントを律速しない）。
@@ -484,9 +492,9 @@ function finishTurn(state, event, effects) {
   }
   state.active = false;
   state.phase = "complete";
-  // ターン終了は「必ず効く安全弁」＝オーナーロックを解放する（アイドル判定が不正確でも恒久ロックにしない）。
-  state.ownerSession = null; // 次ターンの最初の入力/TODO が新オーナーになれる
-  state.subagentCounts = {}; // 稼働カウンタの残骸（取りこぼし含む）もクリア
+  // ターン終了＝町に戻る＝オーナーを解放（次ターンの最初の発行が新オーナーになれる）。
+  state.ownerSession = null;
+  state.ownerActivityAt = 0;
   pushLog(state, "turn_completed", `Turn ${state.turn} completed`, event);
   effects.push({ type: "turn_completed", track: "field" });
 }
@@ -617,47 +625,28 @@ function isOwnerSession(state, event) {
   return event.sessionId === state.ownerSession;
 }
 
-// session_id 別の稼働サブエージェント数を増減（オーナーのロック判定に使う）。session 不明なら無視。
-// SubagentStart/Stop は親（=起動した）セッションの session_id で発火する（実測。区別子は別途 agent_id）ので、
-// 「オーナーが起動したサブエージェント/ワークフローが稼働中か」は subagentCounts[ownerSession] で分かる。
-function bumpSubagentCount(state, event, delta) {
-  const sid = event.sessionId;
-  if (!sid) return;
-  if (!state.subagentCounts || typeof state.subagentCounts !== "object") state.subagentCounts = {};
-  state.subagentCounts[sid] = Math.max(0, (Number(state.subagentCounts[sid]) || 0) + delta);
+// オーナーが OWNER_IDLE_RELEASE_MS 以上 無反応か（放置/クラッシュの時間切れ判定）。基準時刻はサーバー now。
+// ownerActivityAt が 0（未確定/未計測）なら判定しない（false＝奪取させない安全側）。時計逆転は now-act<0 で false。
+function ownerStale(state, event) {
+  return Boolean(state.ownerActivityAt) && event.now - state.ownerActivityAt >= OWNER_IDLE_RELEASE_MS;
 }
 
-// オーナーが「作業中」でロック（＝非オーナーの奪取を拒む）か。
-// 条件：未完了の本物 TODO がある（pending/in_progress＝`status !== "completed"`。アイドル＝全完了か本物TODO無し）／
-// オーナー名義の稼働サブエージェント・ワークフローがある。
-// この「アイドル判定」は完全ではない（SubagentStop の取りこぼしがありうる。WF も親 session_id で
-// SubagentStart/Stop を発火するのは実測確認済み＝2026-06-07）。
-// 誤って“稼働中”でロックが残っても、ターン終了（オーナーStop＝finishTurn）が必ずオーナーを手放すので恒久ロックにはならない。
-function ownerHasOpenTodos(state) {
-  return (state.quest || []).some((q) => q && !q.synthetic && q.status !== "completed");
-}
-function ownerActiveSubagents(state) {
-  if (!state.ownerSession) return 0;
-  return Number((state.subagentCounts || {})[state.ownerSession]) || 0;
-}
-function ownerLocked(state) {
-  return ownerHasOpenTodos(state) || ownerActiveSubagents(state) > 0;
-}
-
-// TODO（TodoWrite/update_plan）でクエストを更新・オーナー化できるか。
-// - 現オーナー / オーナー未確定 / session 不明（demo/manual）→ 従来どおり可（isOwnerSession）。
-// - 非オーナーでも、現オーナーがロック中でなければ（アイドル）奪取可（実 session を持つ場合のみ）。
+// クエストを発行/更新・オーナー化できるか（町＝発行のみ／冒険まるごとロックの肝）。
+// - 現オーナー / オーナー未確定（町） / session 不明（demo/manual）→ 可（isOwnerSession）。
+// - 非オーナーでも、オーナーが時間切れ放置なら奪取可（実 session を持つ場合のみ）＝無反応オーナーからの自動復旧。
+//   （冒険中の通常時は非オーナーを拒む＝オーナーが街に戻るまで奪われない。手動「街に戻る」ボタンが即時復旧を担う）。
 function canClaimQuest(state, event) {
   if (isOwnerSession(state, event)) return true;
-  return Boolean(event.sessionId) && !ownerLocked(state);
+  return Boolean(event.sessionId) && ownerStale(state, event);
 }
 
-// 実 session を持つ別セッションがクエストを更新するなら、オーナーをそのセッションへ書き換える。
+// 実 session を持つセッションが発行するなら、オーナーをそのセッションへ書き換え、活動時刻を起こす。
 // session 不明（null）のときは書き換えない（null をオーナーにすると isOwnerSession が全許可になりスコープが崩れる＝P7）。
 function claimQuestOwnership(state, event) {
   if (event.sessionId && state.ownerSession !== event.sessionId) {
     state.ownerSession = event.sessionId;
   }
+  if (state.ownerSession) state.ownerActivityAt = event.now; // オーナーの時計を起こす（確定/再確定の両方）
 }
 
 // ターン終了（finishTurn）できるのは「確定オーナー本人の Stop/SessionEnd」だけ。

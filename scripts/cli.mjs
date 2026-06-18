@@ -5,18 +5,26 @@ const sub = process.argv[2];
 
 if (sub === "setup") {
   await import("./rpg-setup.mjs");
+} else if (sub === "setup-firewall") {
+  await import("./setup-firewall.mjs");
+} else if (sub === "setup-shortcut") {
+  await import("./setup-shortcut.mjs");
 } else if (sub === "help" || sub === "--help" || sub === "-h") {
   process.stdout.write(
     [
       "rpgdev — RPG overlay for Codex / Claude Code hooks",
       "",
       "Usage:",
-      "  rpgdev            Open the desktop adventure window",
-      "  rpgdev setup      Print the correct hook config to give your AI agent (or apply by hand)",
-      "  rpgdev help       Show this help",
+      "  rpgdev                  Open the desktop adventure window",
+      "  rpgdev setup            Print the correct hook config for your AI agent to apply",
+      "  rpgdev setup --apply    Write the hook config into your settings file automatically",
+      "                          (safe: backs up, atomic, idempotent; refuses if it can't do it safely)",
+      "  rpgdev setup-firewall   Allow WSL2 -> Windows-host on the hub port (Windows/WSL2 only; run on Windows)",
+      "  rpgdev setup-shortcut   Add a Start Menu entry with the Aqua-face icon (Windows/WSL2 only)",
+      "  rpgdev help             Show this help",
       "",
-      "Hook setup: ask your AI agent to \"set up RPGDev hooks\" (see docs/install-hooks.md),",
-      "or run `rpgdev setup` and copy the printed config.",
+      "Easiest install: tell your AI agent \"read https://github.com/kitepon-rgb/rpgdev and install RPGDev\".",
+      "It follows docs/agent-install.md — runs the auto scripts and only asks you for the few admin-only steps.",
       ""
     ].join("\n")
   );

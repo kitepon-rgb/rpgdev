@@ -9,6 +9,7 @@ const heroImage = document.querySelector("#heroImage");
 const monsterImage = document.querySelector("#monsterImage");
 const audioButton = document.querySelector("#audioButton");
 const resetButton = document.querySelector("#resetButton");
+const townButton = document.querySelector("#townButton");
 const fieldAudio = document.querySelector("#fieldAudio");
 const adventureAudio = document.querySelector("#adventureAudio");
 const battleAudio = document.querySelector("#battleAudio");
@@ -217,6 +218,18 @@ let audio = {
   nextTime: 0
 };
 
+// ミュート希望はページ再読込（新セッション/ハブ再起動で overlay は何度も再ロードされる）を跨いで保持する。
+// これが無いと再読込のたび userMuted=false に戻り、applyWorld の自動有効化で BGM が勝手に復活する
+// （＝マルチセッション運用で「音 ON/OFF ボタンが効かない」ように見える不具合の主因）。
+try {
+  if (localStorage.getItem("rpgdev.audioMuted") === "1") audio.userMuted = true;
+} catch (_) {}
+function persistAudioMuted(muted) {
+  try {
+    localStorage.setItem("rpgdev.audioMuted", muted ? "1" : "0");
+  } catch (_) {}
+}
+
 new EventSource("/events").addEventListener("state", (message) => {
   const payload = JSON.parse(message.data);
   const effectList = (payload.effects || []).slice();
@@ -233,6 +246,11 @@ new EventSource("/events").addEventListener("state", (message) => {
   // 召喚エフェクト付きの精霊は、その召喚がキューで再生されるまでカードを伏せる（攻撃キューと同じ扱い）。
   for (const effect of effectList) {
     if (effect.type === "ally_summon" && effect.ally?.id) awaitingSummon.add(effect.ally.id);
+    // 精霊の被弾/退場/帰還エフェクトの画面位置は、ここ（render が当該カードを除去する前＝カードが確実に在る今）で確定する。
+    // 再生時にカードを引かない＝消えてから位置を読んで中央へフォールバックする不具合を根本から無くす（原因隠しを廃止）。
+    if (effect.type === "ally_return" || effect.type === "ally_defeated" || effect.type === "ally_hit") {
+      effect.allyCenter = allyCardCenter(effect.allyId);
+    }
   }
   render(payload.state);
   effects(effectList);
@@ -286,6 +304,7 @@ audioButton.addEventListener("click", async () => {
   if (audio.enabled) {
     audio.enabled = false;
     audio.userMuted = true;
+    persistAudioMuted(true); // 再読込を跨いでミュートを保持
     audioButton.classList.remove("is-on");
     stopMusic();
     return;
@@ -297,12 +316,20 @@ audioButton.addEventListener("click", async () => {
   }
   audio.enabled = true;
   audio.userMuted = false;
+  persistAudioMuted(false);
   audioButton.classList.add("is-on");
   setTrack(currentTrack);
 });
 
 resetButton?.addEventListener("click", async () => {
   await fetch("/control/reset", { method: "POST" });
+});
+
+townButton?.addEventListener("click", () => {
+  // 手動「街に戻る」：今の冒険を終えて拠点へ戻し、オーナーを解放する（無反応オーナーで固まった時の即時復旧）。
+  fetch("/control/return-town", { method: "POST" }).catch((error) =>
+    console.error("[rpgdev] return-town POST failed", error)
+  );
 });
 
 requestAnimationFrame(draw);
@@ -325,7 +352,17 @@ function render(state) {
   const target = monsters.find((m) => m.status === "in_progress") || null;
   if (!target) {
     // 探検中（in_progress なし）または待機: 戦闘相手を出さない
-    if (monsterStage.dataset.action === "defeat" || monsterStage.dataset.action === "defeat-pending") return;
+    // 撃破がキュー/進行中の間は、敵不在 render でモンスターを隠さない（経路Bの早隠しを止める）。
+    // 脆い dataset.action（出現タイマーが delete しうる）だけに頼らず、撃破の真の状態で判定する＝
+    // 「素早く消える→一瞬戻る→破片で消える」の二重消滅を無くし、最終消滅は撃破アニメ1回だけにする。
+    if (
+      monsterStage.dataset.action === "defeat" ||
+      monsterStage.dataset.action === "defeat-pending" ||
+      monsterDefeatInProgress ||
+      worldVisualsHeld ||
+      fxQueue.some((e) => e.type === "monster_defeated")
+    )
+      return;
     monsterStage.dataset.active = "false";
     monsterStage.dataset.dying = "false";
     monsterName.textContent = "";
@@ -847,14 +884,14 @@ function playEffect(effect) {
       break;
     case "ally_hit":
       // サーバー確定の精霊被弾（CounterHit→ally_hit）。残ライフは render が反映。被弾演出＋音（要件3/4）。
-      allyHitImpact(effect.allyId, effect.element, counterEffectKind(effect.counterEffect));
+      allyHitImpact(effect.allyId, effect.element, effect.allyCenter, counterEffectKind(effect.counterEffect));
       flash("#ff5a4d");
       damageSound();
       break;
     case "ally_defeated":
       // 精霊が5回被弾して退場（被弾死。撃破時の ally_return とは別演出）（要件4）。
-      allyHitImpact(effect.allyId, effect.element, counterEffectKind(effect.counterEffect), 1.18);
-      returnSpiritCard(effect.allyId, effect.element);
+      allyHitImpact(effect.allyId, effect.element, effect.allyCenter, counterEffectKind(effect.counterEffect), 1.18);
+      returnSpiritCard(effect.allyId, effect.element, effect.allyCenter);
       flash("#ff5a4d");
       damageSound();
       break;
@@ -906,7 +943,7 @@ function playEffect(effect) {
     case "ally_return":
       // 撃破演出のあと、精霊を1体ずつ順番に帰す（属性色のエフェクト＋効果音つき）。
       // 背景切替は末尾の world 効果が担うので、ここでは帰還演出だけ。
-      returnSpiritCard(effect.allyId, effect.element);
+      returnSpiritCard(effect.allyId, effect.element, effect.allyCenter);
       allyReturnSound(effect.element);
       break;
     case "world":
@@ -1008,16 +1045,17 @@ function pulseAlly(allyId, kind) {
 const ELEMENT_COLORS = { fire: "#ff7a35", earth: "#d6b16a", wind: "#caff8a", water: "#72e8ff" };
 
 // 撃破後の精霊帰還：該当カードを帰還アニメ（data-action="return"）＋属性色の上昇エフェクトで消す。
-function returnSpiritCard(allyId, element) {
+function returnSpiritCard(allyId, element, center) {
+  allyReturnImpact(element, center); // 位置は SSE 受信時に確定済み（カード除去前）＝再生時にカードを引かない
+  // カードの帰還アニメ除去は位置とは独立：まだ DOM に居れば帰還アニメで消す、既に消えていれば何もしない。
   const card = allyId && allies ? allies.querySelector(`[data-ally-id="${allyId}"]`) : null;
-  allyReturnImpact(element, card);
   if (!card) return;
   card.dataset.action = "return";
   window.setTimeout(() => card.remove(), 520); // 帰還アニメが終わってからカードを消す
 }
 
-function allyReturnImpact(element, card) {
-  const center = cardCanvasCenter(card);
+function allyReturnImpact(element, center) {
+  if (!center) return; // 位置未確定なら撒かない（静かに中央へ逃げない＝中央誤爆を起こさない）
   const color = ELEMENT_COLORS[element] || "#cfeaff";
   for (let index = 0; index < 20; index += 1) {
     particles.push({
@@ -1033,11 +1071,22 @@ function allyReturnImpact(element, card) {
   particles.push({ kind: "ring", x: center.x, y: center.y + 6, vx: 0, vy: 0, life: 16, maxLife: 16, color, size: 30 });
 }
 
+// 精霊カードの中心を canvas 座標で返す。card は呼び出し側が存在を保証して渡す（null フォールバックは持たない＝原因隠しをしない）。
 function cardCanvasCenter(card) {
   const rect = canvas.getBoundingClientRect();
-  if (!card) return { x: rect.width * 0.5, y: rect.height * 0.72 };
   const box = card.getBoundingClientRect();
   return { x: box.left - rect.left + box.width * 0.5, y: box.top - rect.top + box.height * 0.5 };
+}
+
+// 精霊カードの中心を「カードが在るうち（render の除去前）」に確定する入口。在るべきカードが無ければ
+// 黙って中央へ逃げず、明示エラーで null を返す＝回帰が即露見する。
+function allyCardCenter(allyId) {
+  const card = allyId && allies ? allies.querySelector(`[data-ally-id="${allyId}"]`) : null;
+  if (!card) {
+    console.error(`[rpgdev] ally card missing at capture time: ${allyId} — effect position skipped (should not happen).`);
+    return null;
+  }
+  return cardCanvasCenter(card);
 }
 
 function allyReturnSound(element) {
@@ -1060,10 +1109,9 @@ function heroHitReaction(kind = currentCounterEffect()) {
 }
 
 // 精霊の被弾演出（要件3/4）：カードのヒットリアクション＋カード位置のインパクト。
-function allyHitImpact(allyId, element, kind = currentCounterEffect(), scale = 1) {
-  pulseAlly(allyId, "hit");
-  const card = allyId && allies ? allies.querySelector(`[data-ally-id="${allyId}"]`) : null;
-  const center = cardCanvasCenter(card);
+function allyHitImpact(allyId, element, center, kind = currentCounterEffect(), scale = 1) {
+  pulseAlly(allyId, "hit"); // カードのヒット反応（カードが在れば動く。位置とは独立）
+  if (!center) return; // 位置未確定なら粒子は撒かない（静かに中央へ逃げない）
   counterImpact(kind, center, scale);
 }
 
@@ -1229,6 +1277,12 @@ function prepareMonsterEffects(list) {
 }
 
 function primeDefeatedMonster() {
+  // 出現時の setMonsterAction("appear",700) の残存タイマーは、撃破再生の前に data-action を delete してしまい、
+  // 敵不在 render の早隠し（経路B）を誘発する。撃破を仕込む時点でそのタイマーを止める（堅牢化した render ガードと二重で防ぐ）。
+  if (monsterActionTimer) {
+    window.clearTimeout(monsterActionTimer);
+    monsterActionTimer = null;
+  }
   const monster = lastRenderedMonster;
   if (monster) {
     const sprite = monsterSprite(monster);

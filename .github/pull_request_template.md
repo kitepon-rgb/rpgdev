@@ -1,5 +1,5 @@
 <!--
-RPGDev: macOS-only RPG overlay for Codex / Claude Code hook events.
+RPGDev: RPG overlay (macOS / Windows / WSL2) for Codex / Claude Code hook events.
 Read docs/design-todo-rpg.md (single source of truth) before changing the reducer.
 -->
 
@@ -10,8 +10,9 @@ Read docs/design-todo-rpg.md (single source of truth) before changing the reduce
 ## What changed
 
 <!-- Bullet the concrete changes. Call out anything touching the reducer
-     (server/adventure-state.mjs), the server, the Swift window, or the
-     overlay/web frontends. Note any new BGM/SFX assets or generator edits. -->
+     (server/adventure-state.mjs), the server, the native desktop window
+     (Swift on macOS / C# on Windows/WSL2), or the overlay/web frontends.
+     Note any new BGM/SFX assets or generator edits. -->
 
 -
 
@@ -30,5 +31,5 @@ Read docs/design-todo-rpg.md (single source of truth) before changing the reduce
 - [ ] Reducer changes are covered by updated `test/adventure-state.test.mjs`
 - [ ] Docs updated (`README.md` / `CLAUDE.md` / `docs/`) if behavior changed
 - [ ] No new npm runtime dependencies (server + reducer stay stdlib-only)
-- [ ] macOS-only assumptions respected (Swift window, `swiftc`, generated WAV assets)
+- [ ] Platform code stays isolated (per-OS branches only in `desktop.mjs` + native window sources; reducer/server/frontends platform-independent)
 - [ ] BGM/SFX changes go through the generators (`npm run render:bgm` / `npm run render:sfx`), WAVs not edited by hand
