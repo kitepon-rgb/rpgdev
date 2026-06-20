@@ -195,8 +195,20 @@ export function reduceHookEvent(previousState, hookEvent, now) {
       if (state.active) ambient(state, event, effects, "compact_post");
       break;
     case "Stop":
+      // 「街に戻る（ターン終了＝オーナー解放）」は、オーナー本人で、かつクエストが本当に終わっている
+      // （未完の本物 TODO が無い）ときだけ。Stop は「AI の出力が終わり次の入力待ちになった」合図で、
+      // 1 つのクエストを仕上げる間に何度も来る。入力待ちのたびに手放すと、やりかけのクエストが他セッションに
+      // 奪われる。未完の本物 TODO が残る間は前進のみ＝オーナー継続（全 TODO 完了、または OWNER_IDLE_RELEASE_MS
+      // 放置で交代）。本物 TODO 無し（synthetic/chat）や全完了なら従来どおりターン終了して町へ戻り交代する。
+      // 冒険中の非オーナー Stop は前進のみ、町の Stop はドロップ。
+      if (state.active) {
+        if (canEndTurn(state, event) && !hasUnfinishedRealTodo(state)) finishTurn(state, event, effects);
+        else step(state, event, effects);
+      }
+      break;
     case "SessionEnd":
-      // ターン終了（町帰還）はオーナー本人の Stop だけ。冒険中の非オーナー Stop は前進のみ、町の Stop はドロップ。
+      // セッション終了はオーナーが居なくなる＝未完 TODO が残っていても解放する（さもないとロックが
+      // OWNER_IDLE_RELEASE_MS まで残り続け、交代が遅れる）。終了できるのはオーナー本人のみ（非オーナーは前進）。
       if (state.active) {
         if (canEndTurn(state, event)) finishTurn(state, event, effects);
         else step(state, event, effects);
@@ -599,6 +611,13 @@ function hasEngaged(state) {
 // 「本物の TODO（TodoWrite/update_plan 由来）」が進行中か。ユーザー入力の合成クエスト(synthetic)は数えない。
 function hasRealTodoInProgress(state) {
   return state.quest.some((q) => q.status === "in_progress" && !q.synthetic);
+}
+
+// 「本物の TODO（synthetic 除外）」に未完了（completed でない＝in_progress / pending）が1つでも残っているか。
+// オーナーの Stop（入力待ち）で街に戻る＝ターン終了するかの判定に使う：残っていればクエスト未完なので
+// 街に戻さずオーナーを保持する（やりかけを他セッションに奪われない）。本物 TODO が無ければ false。
+function hasUnfinishedRealTodo(state) {
+  return state.quest.some((q) => !q.synthetic && q.status !== "completed");
 }
 
 function monsterCatalogForState(state, stage = currentAdventureStage(state)) {

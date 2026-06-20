@@ -71,7 +71,7 @@ dungeon/castle は各ステージ専用モンスター。castle の Dragon/Demon
 **ペーシング（唯一の頭＝サーバーが時刻で律速。多エージェントの洪水でも点滅させない。詳細は docs §12）**：
 出現は確率に加えて**出現クールダウン（討伐後 4s）＋連続出現の最小間隔（2s）**で律速する。討伐条件を満たしても
 **最低在席時間（出現から 4s）**未満なら即討伐せず `pendingDefeat` に保留し、寿命経過後の次の Hook でスイープ確定する
-（Stop だけは寿命無視で強制討伐）。これで「倒して即湧き→即死」の点滅が起きない。ペーシングの基準時刻は
+（ターン終了＝全 TODO 完了/セッション終了時のオーナー Stop だけは寿命無視で強制討伐）。これで「倒して即湧き→即死」の点滅が起きない。ペーシングの基準時刻は
 **サーバーが `reduceHookEvent` に注入**する（`event.at`＝エージェント側の時計は使わない）。`handleHook` は `event.id` で冪等化する。
 
 **dungeon/castle 限定の強制エンカウント（30秒保証）**：後半の細かい TODO で 20% を引けず最後まで敵が出ないことがあるため、
@@ -81,7 +81,7 @@ dungeon/castle では突入(`stageEnteredAt`)・直近出現・直近討伐の�
 
 各エンカウントは出現時の状況で `linkedTodo` フラグを持ち、討伐条件が変わる：
 - `linkedTodo=false`（出現時に in_progress の TODO 無し）：hero の攻撃 5回、または
-  ターン終了（Stop）で討伐。
+  ターン終了（＝全 TODO 完了/セッション終了時のオーナー Stop）で討伐。
 - `linkedTodo=true`（出現時に in_progress の TODO あり）：攻撃では倒れない。TODO 項目が
   1つ `completed` になった時に討伐する。in_progress TODO が無くなると `linkedTodo` は解除され、
   以後は5撃／ターン終了で倒せるようになる。
@@ -212,7 +212,9 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 それ以外（攻撃・出現・Stop・精霊・反撃）は全部ドロップ**＝最初に発行したセッションがオーナーになり冒険開始。
 **冒険中（`active`）は全セッションのフックを受け付ける（出現・スキル攻撃・精霊＝全員ぶん反映＝攻撃が沢山起きる）が、
 クエスト更新（TODO）とターン終了はオーナーのみ**＝非オーナーの TODO はクエストを変えずツール使用として戦闘だけ駆動、非オーナーの Stop は前進のみ。
-ロックは**冒険まるごと**（毎フックのアイドル奪取は廃止）＝オーナーが街に戻る（オーナーの Stop＝`finishTurn`。応答ごとに発火し毎ターン自然に町へ戻り交代）まで奪取不可。
+ロックは**冒険まるごと**（毎フックのアイドル奪取は廃止）＝オーナーが街に戻るまで奪取不可。街に戻る（`finishTurn`＝オーナー解放）のは
+**オーナーの Stop のうち未完の本物 TODO が無い（全完了）とき**と**オーナーの SessionEnd**だけ（`hasUnfinishedRealTodo` で判定）。Stop は応答ごと（AI 出力が終わり次の入力待ちになるたび）に発火するが、
+**未完の本物 TODO が残る間は街に戻さず前進（`step`）のみ＝オーナー継続**＝やりかけのクエストを他セッションに奪われない。TODO 不在（synthetic/chat）や全完了は従来どおり Stop ごとに町へ戻り交代する。
 オーナーが応答途中でクラッシュして無反応のまま固まった場合は、**時間切れ自動解除**（`OWNER_IDLE_RELEASE_MS`＝5分 無反応で次の非オーナー発行が引き継ぐ。`ownerActivityAt` で計測）＋
 **手動「街に戻る」ボタン**（overlay の `#townButton`→`POST /control/return-town`＝合成 SessionStart で `townReset`）で復旧する。⑥`SubagentStart`/`SubagentStop`
 フックを配線（reducer は元から対応・`examples/` の設定にも追加）。
@@ -267,7 +269,7 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      ステージ別 `MONSTER_CATALOGS` から sprite/HP/反撃種別をランダムに選ぶ。HP は演出専用。
      TodoWrite/update_plan はモンスターを湧かさず、state.quest を更新する（各項目に field/dungeon/castle の `stage` を割り当て）だけ。
    - 討伐は出現時に決まる `linkedTodo` で分岐：`linkedTodo=false` ならスキル攻撃5回または
-     ターン終了(Stop)、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
+     ターン終了（＝全 TODO 完了/セッション終了時のオーナー Stop）、`linkedTodo=true` なら攻撃では倒れず TODO 項目が `completed` に
      なった時のみ討伐（in_progress TODO が消えると linkedTodo は解除）。
    - 攻撃/増援判定：**PreToolUse は攻撃しない（勇者の通常攻撃は廃止）**。PreToolUse は 20% エンカウント出現判定、
      戦闘中は 20% 精霊増援判定（`BATTLE_SUMMON_CHANCE=0.2`）、出なければ前進（1ツール呼び出し1アクション）。PostToolUse はスキル攻撃（技名＝tool_name 基準＝

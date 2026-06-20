@@ -323,8 +323,13 @@ test("the 30s forced-encounter timer resets after a defeat (no monster lingers >
   const entered = r.state.stageEnteredAt;
   const spawn1 = reduceHookEvent(r.state, pre(), entered + 30_000); // 強制出現
   assert.equal(spawn1.state.monsters.length, 1);
-  // ターン終了で討伐（wild は Stop で討伐）。lastDefeatAt が基準になる。
-  const cleared = reduceHookEvent(spawn1.state, { provider: "claude", event: "Stop", raw: {} }, entered + 31_000);
+  // 全 TODO を完了 → クエスト完了なのでオーナーの Stop でターン終了＝force 討伐（lastDefeatAt が基準になる）。
+  const done = reduceHookEvent(
+    spawn1.state,
+    todoWrite(DUNGEON_TODOS.map((t) => ({ ...t, status: "completed" }))),
+    entered + 31_000
+  );
+  const cleared = reduceHookEvent(done.state, { provider: "claude", event: "Stop", raw: {} }, entered + 31_500);
   assert.equal(cleared.state.monsters.length, 0);
   // 討伐から30秒後、新ターンで再度 dungeon に入り（同ステージ）強制出現する。
   let next = reduceHookEvent(cleared.state, { provider: "claude", event: "UserPromptSubmit", raw: {} }, entered + 32_000);
@@ -729,20 +734,30 @@ test("benign output containing the word 'error' is NOT a failure", () => {
   assert.equal(detectFailure(event), false);
 });
 
-test("Stop completes the turn and clears even a linked encounter", () => {
+test("Stop（入力待ち）：本物TODO無しならターン終了、未完の本物TODOが残る間は街に戻らず linked も生存", () => {
+  // 本物TODO無し（synthetic/chat）→ 従来どおり Stop でターン終了（街に戻る）。
   let r = reduceHookEvent(createInitialState(), { provider: "claude", event: "UserPromptSubmit", raw: {} });
   const clear = reduceHookEvent(r.state, { provider: "claude", event: "Stop", raw: {} });
   assert.equal(clear.state.phase, "complete");
+  assert.ok(clear.effects.some((e) => e.type === "turn_completed"));
 
+  // 未完の本物TODOが残る間は、Stop（入力待ち）で街に戻らない＝linked も生存（やりかけを奪われない）。
   __setChance(chanceSeq(0, 0));
   let s = reduceHookEvent(createInitialState(), todoWrite([{ content: "task", status: "in_progress" }]));
   s = reduceHookEvent(s.state, pre()); // linked 出現
+  assert.equal(s.state.monsters[0].linkedTodo, true);
   __setChance(() => 0.99);
-  const completed = reduceHookEvent(s.state, { provider: "claude", event: "Stop", raw: {} });
-  assert.equal(completed.state.monsters.length, 0, "linked もターン終了で討伐する");
-  assert.equal(completed.state.phase, "complete");
-  assert.ok(completed.effects.some((e) => e.type === "monster_defeated"));
-  assert.ok(completed.effects.some((e) => e.type === "turn_completed"));
+  const held = reduceHookEvent(s.state, { provider: "claude", event: "Stop", raw: {} });
+  assert.equal(held.state.monsters.length, 1, "未完TODOが残る間は Stop で討伐しない");
+  assert.notEqual(held.state.phase, "complete", "未完TODOが残る間は Stop で街に戻らない");
+  assert.equal(held.state.active, true, "未完TODOが残る間は冒険継続");
+  assert.ok(held.effects.some((e) => e.type === "step"), "未完TODO中の Stop は前進のみ");
+  assert.ok(!held.effects.some((e) => e.type === "turn_completed"), "未完TODO中の Stop で turn_completed を出さない");
+
+  // TODO を完了すれば linked は討伐される（討伐トリガーは TODO 完了）。
+  const finished = reduceHookEvent(held.state, todoWrite([{ content: "task", status: "completed" }]));
+  assert.equal(finished.state.monsters.length, 0, "TODO 完了で linked を討伐");
+  assert.ok(finished.effects.some((e) => e.type === "monster_defeated"));
 });
 
 test("every effect carries its origin Hook (seq, hookId, event, tool); seq increments per Hook", () => {
@@ -868,10 +883,42 @@ test("ターン終了はオーナーの Stop だけ：非オーナーの Stop �
   assert.notEqual(r.state.phase, "complete");
   assert.equal(r.state.ownerSession, "A", "非オーナーの Stop でオーナーは解放されない");
 
-  // オーナー A の Stop でターン終了＆オーナー/カウンタ解放。
+  // オーナー A の Stop でターン終了＆オーナー/カウンタ解放（本物TODO無し＝synthetic のみなので即終了）。
   r = reduceHookEvent(r.state, stopBy("A"));
   assert.equal(r.state.phase, "complete", "オーナーの Stop でターン終了");
   assert.equal(r.state.ownerSession, null, "ターン終了でオーナーを手放す（街に戻る）");
+});
+
+test("オーナーは未完の本物TODOが残る間 Stop（入力待ち）では街に戻らず奪われない／全完了後の Stop で交代できる", () => {
+  // A がオーナー＝本物TODO進行中。
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "task", status: "in_progress" }]));
+  assert.equal(r.state.ownerSession, "A");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["task"]);
+
+  // オーナー A の Stop（入力待ち）でも、未完の本物TODOが残る間は街に戻らない＝オーナー継続。
+  r = reduceHookEvent(r.state, stopBy("A"));
+  assert.equal(r.state.active, true, "未完TODOが残る間はオーナーStopで街に戻らない");
+  assert.equal(r.state.ownerSession, "A", "オーナーを手放さない");
+  assert.notEqual(r.state.phase, "complete");
+  assert.ok(r.effects.some((e) => e.type === "step"), "未完TODO中のオーナーStopは前進のみ");
+
+  // この間、別セッション B は素のメッセージでも奪取できない（クエスト不変）。
+  r = reduceHookEvent(r.state, promptBy("B", "Bの作業"));
+  assert.equal(r.state.ownerSession, "A", "未完の間は別セッションに奪われない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["task"]);
+
+  // TODO を全完了 → 次のオーナー Stop で街に戻る（owner 解放）。
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "task", status: "completed" }]));
+  r = reduceHookEvent(r.state, stopBy("A"));
+  assert.equal(r.state.active, false, "全TODO完了後の Stop で街に戻る");
+  assert.equal(r.state.ownerSession, null, "全完了後はオーナーを手放す");
+  assert.equal(r.state.phase, "complete");
+
+  // 街に戻った後は B が新オーナーになれる（交代成立）。
+  r = reduceHookEvent(r.state, promptBy("B", "Bの作業"));
+  assert.equal(r.state.ownerSession, "B", "街に戻った後は別セッションが新オーナー");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["Bの作業"]);
 });
 
 // 以下はレビュー（多視点＋敵対的検証ワークフロー）で見つかった抜けを塞ぐ回帰テスト。
