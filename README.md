@@ -1,15 +1,38 @@
+<p align="center">
+  <img src=".github/og.png" alt="RPGDev — your AI coding session, as a JRPG adventure" width="100%">
+</p>
+
 # RPGDev
 
 > Turn your Codex CLI / Claude Code hook events into a tiny RPG playing out on your desktop (macOS, Windows, WSL2).
 
-English | [日本語](README.ja.md)
+**English** · [日本語](README.ja.md)
 
 [![npm](https://img.shields.io/npm/v/rpgdev)](https://www.npmjs.com/package/rpgdev)
+[![CI](https://github.com/kitepon-rgb/rpgdev/actions/workflows/ci.yml/badge.svg)](https://github.com/kitepon-rgb/rpgdev/actions/workflows/ci.yml)
 ![license](https://img.shields.io/npm/l/rpgdev)
 ![node](https://img.shields.io/node/v/rpgdev)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20WSL2-lightgrey)
 
-RPGDev is a small desktop overlay (macOS, Windows, and WSL2) that converts the **hook events** your AI coding agent emits — Codex CLI and Claude Code — into a classic JRPG-style scene. Every tool call becomes a battle action, your TODO list becomes a quest log, and elemental spirits join you as allies while you work. It's a passive, ambient "your terminal is an adventure" companion: you don't play it, you just code and watch the adventure unfold.
+RPGDev is a small desktop overlay that turns the **hook events** your AI coding agent emits — Codex CLI and Claude Code — into a classic JRPG-style scene. Every tool call becomes a battle action, your TODO list becomes a quest log, and elemental spirits join you as allies while you work. **You don't play it — you just code, and watch the adventure unfold** in a little window on your desktop.
+
+<p align="center">
+  <img src=".github/screenshot-overlay.png" alt="The RPGDev overlay window in battle: a quest log, an encounter with its HP bar, the hero and two elemental spirits, on the dungeon stage" width="64%">
+</p>
+<p align="center"><sub>The real overlay window, mid-battle — quest log up top, an encounter with its HP, your hero + elemental spirits, on the <b>dungeon</b> stage. It reacts in real time as you work.</sub></p>
+
+## 30 seconds: what actually happens
+
+You start a task in Claude Code or Codex. RPGDev's hooks feed every event into a little window:
+
+- You **send a prompt** → the adventure begins, you arrive in the **field**.
+- Your agent **uses a tool** → ~20% of the time a **monster appears** (random encounter); otherwise you press on.
+- Your agent **finishes a tool call** → your hero lands a **skill attack** named after the tool (`Edit`, `Bash`, `Grep`…).
+- Your **TODO list** (`TodoWrite` / `update_plan`) becomes the on-screen **quest log**; completing a TODO can be what defeats a linked monster.
+- Subagents spawn **elemental spirit allies**; a failing tool call lets the enemy **counter-attack**.
+- As your TODOs progress, the scene advances **field → dungeon → castle**, swapping the background art and the BGM.
+
+It runs many agents at once without flicker — the server paces everything (see [How it works](#how-it-works)).
 
 ## Install — just ask your AI agent
 
@@ -34,44 +57,56 @@ rpgdev                      # open the window
 
 Run `rpgdev help` for options (`--codex`, `--all`, `--user`, …).
 
-## Demo
+## A whole roster to meet
 
-<!-- Maintainer: drop a screenshot or GIF of the desktop overlay here, e.g. docs/screenshot.png, and reference it below. -->
-<!-- ![RPGDev overlay](docs/screenshot.png) -->
+Monsters are **random encounters**, not your TODO items — fifteen of them across the three stages, plus your hero and four elemental spirits.
 
-_A small window sits on your desktop and reacts in real time as you work._
+<p align="center">
+  <img src=".github/roster.png" alt="The RPGDev roster: fifteen monster sprites across field, dungeon and castle, plus the hero and the four elemental spirits Ignis, Terra, Aqua and Sylph" width="100%">
+</p>
+
+### The art is forged, not stock
+
+Every sprite is generated with **[sprite-forge](https://github.com/kitepon-rgb/sprite-forge-mcp)** — a local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) sprite studio (also by the author, built *for* this game) that a human or an AI agent can drive over MCP to make clean, transparent, game-ready sprites. This Magma Golem, for instance, was forged in one pass:
+
+<p align="center">
+  <img src=".github/forged-magma-golem.png" alt="A Magma Golem boss sprite generated with sprite-forge — cracked obsidian body with glowing magma veins, transparent background" width="26%">
+</p>
 
 ## Features
 
-- **Random encounters** — Monsters aren't tied to TODO items. They appear as a random encounter on every tool use (`PreToolUse`, ~20% chance), at most one at a time. Sprite and HP are picked from a stage-specific catalog (field: Slime / Goblin / Orc / Ogre, dungeon and castle have their own rosters).
+- **Random encounters** — Monsters aren't tied to TODO items. They appear on every tool use (`PreToolUse`, ~20% chance), at most one at a time. Sprite and HP come from a stage-specific catalog (field: Slime / Goblin / Orc / Ogre; dungeon and castle have their own rosters; the Dragon and Demon Lord only show up in the castle's final stretch).
 - **TODO-driven quests** — Your TODO list (Claude `TodoWrite` / Codex `update_plan`) is shown as an on-screen quest log. Completing a TODO can be the trigger that defeats a linked encounter.
 - **Elemental spirit allies** — Up to four spirits join the fight (Ignis / Terra / Sylph / Aqua = fire / earth / wind / water), follow up after the hero's skill attacks, and retire after taking enough hits. `SubagentStart` / `SubagentStop` bring allies in and out.
 - **Counter-attacks on failure** — When a tool fails, the enemy strikes back (Claude detects this via `PostToolUseFailure` / `PermissionDenied`; Codex hooks don't report tool success/failure, so no counter there).
 - **Adventure stages with BGM** — As your TODOs progress, the scene advances field → dungeon → castle, swapping background art and one of seven original JRPG-style BGM tracks.
+- **Multi-agent safe** — Run a swarm of agents against one machine; the server paces spawns and protects an in-progress quest so it isn't overwritten mid-flight.
 - **Works with both Codex and Claude Code** — One set of hooks, one server, two providers.
+
+## Three stages, one adventure
+
+Your TODO list is split evenly across three stages; the scene (and the BGM) advances as you complete them.
+
+<p align="center">
+  <img src=".github/stages.png" alt="The three adventure stages, side by side: a sunny field, a torchlit dungeon, and a throne-room castle" width="100%">
+</p>
 
 ## How defeat works
 
 The win condition is fixed the moment a monster appears, based on whether a TODO was in progress:
 
-- **No `in_progress` TODO at spawn** → defeat with **5 hero skill attacks** (`PostToolUse`) or by ending the turn (`Stop`).
-- **An `in_progress` TODO at spawn** → the encounter is *linked*; attacks can't kill it. It falls when one TODO becomes `completed`, or on turn end (`Stop`).
+- **No `in_progress` TODO at spawn** → defeat with **5 hero skill attacks** (`PostToolUse`), or when the turn ends.
+- **An `in_progress` TODO at spawn** → the encounter is *linked*; attacks can't kill it. It falls when one TODO becomes `completed`, or when the turn ends.
 
-HP is purely for show.
+A **turn ends** (you return to town) only when the owning session has **no unfinished TODOs left** (or its session ends) — not on every reply. While real TODOs are still open, the quest stays yours and can't be claimed by another session. HP is purely for show.
 
 ## Requirements
 
 - Node.js 20+ (all platforms)
 - **macOS** — Swift compiler / Xcode Command Line Tools (the window is compiled on-demand with `swiftc`)
 - **Windows** — WebView2 Runtime (preinstalled on Windows 11) + .NET Framework 4.x `csc.exe` (the window is a C# WinForms + WebView2 host, compiled on-demand). The WebView2 SDK DLLs are bundled, so no extra download. See [docs/windows-wsl.md](docs/windows-wsl.md).
-- **WSL2** — the hub server and the window both run on the Windows host (started via interop); WSL2 connects to a single shared hub. Needs Node + WebView2 on the host and a host firewall allow for WSL→host traffic (applied by `rpgdev setup-firewall` — a standard Defender rule plus a Hyper-V rule; `localhostForwarding` is no longer required). See [docs/windows-wsl.md](docs/windows-wsl.md).
+- **WSL2** — the hub server and the window both run on the Windows host (started via interop); WSL2 connects to a single shared hub. Needs Node + WebView2 on the host and a host firewall allow for WSL→host traffic (applied by `rpgdev setup-firewall` — a standard Defender rule plus a Hyper-V rule). See [docs/windows-wsl.md](docs/windows-wsl.md).
 - **bare Linux** — no desktop window yet; use the browser view (`npm run web`).
-
-## Install
-
-```bash
-npm install -g rpgdev
-```
 
 ## Quick start
 
@@ -81,7 +116,7 @@ rpgdev
 
 A small RPGDev window opens on your desktop (macOS / Windows; on WSL2 it appears on the Windows host). Runtime state and logs are written per-project under `.rpgdev/`. Windows/WSL2 setup details: [docs/windows-wsl.md](docs/windows-wsl.md).
 
-On **Windows / WSL2** a small **task-tray icon** (the Aqua water-spirit's face) also appears alongside the window — its presence means the hub is running, and it disappears when the hub stops. Right-click it to open the window, return to town, or quit (which stops the hub). Windows hides new tray icons under the overflow (`^`) by default, so look there if you don't see it. Optionally add a Start Menu entry with `rpgdev setup-shortcut`.
+On **Windows / WSL2** a small **task-tray icon** (the Aqua water-spirit's face) also appears alongside the window — its presence means the hub is running, and it disappears when the hub stops. Right-click it to open the window, return to town, or quit (which stops the hub). Windows hides new tray icons under the overflow (`^`) by default, so look there if you don't see it.
 
 To open just the web view instead of the native window:
 
@@ -118,8 +153,6 @@ on macOS, Windows, and WSL2 alike (no `PATH` / `.cmd`-shim surprises).
 > **Reference configs:** [`examples/`](examples/) holds static snapshots for manual copying (they
 > assume a global install). Prefer `rpgdev setup`, which writes the more robust absolute-path form.
 
-Your agent may ask you to trust / review project-local hooks before they run.
-
 ### Hook → action map
 
 | Hook | What happens |
@@ -129,24 +162,30 @@ Your agent may ask you to trust / review project-local hooks before they run.
 | `PostToolUse` | `TodoWrite` / `update_plan` update the quest log; any other tool is a hero **skill attack** (move name = the tool name, formatted) — allies follow up here too |
 | `PostToolUseFailure` / `PermissionDenied` *(Claude only)* | The enemy counter-attacks |
 | `SubagentStart` / `SubagentStop` | An ally spirit joins / returns (FIFO — first in, first out) |
-| `Stop` | End of turn: any present encounter is defeated and you return to town |
+| `Stop` | End of turn **once the quest's TODOs are done** — any present encounter is defeated and you return to town |
 
 If the hook CLI can't reach the server it does **not** silently succeed — it logs to stderr and `.rpgdev/hook-errors.log` and exits non-zero.
 
 ## How it works
 
-RPGDev is a strict **one-way pipeline**:
+RPGDev is a strict **one-way pipeline** — the reducer is the only place game logic lives:
 
-```
-Hook event → reducer → persisted state → SSE broadcast → UI
+```mermaid
+flowchart LR
+    HK["Hook event<br/>Codex / Claude Code"] --> CLI["rpgdev-hook<br/>POST /hook"]
+    CLI --> R["reducer (pure fn)<br/>reduceHookEvent"]
+    R --> ST[("persisted state<br/>.rpgdev/state.json")]
+    R -->|effects| SSE["SSE · /events"]
+    SSE --> UI["desktop window<br/>overlay (WebView)"]
+    R -.->|pacing: cooldowns,<br/>min lifetime| R
 ```
 
 1. **Hook CLI** (`rpgdev-hook <provider> <event>`) reads the hook payload from stdin, ensures the server is up, and POSTs it to `/hook`.
 2. **Server** (`node:http`, zero npm dependencies) runs the reducer, persists the result, and broadcasts over SSE.
-3. **Reducer** (`server/adventure-state.mjs`) is a pure function, `reduceHookEvent(prevState, hookEvent) → { state, effects }`, with no I/O. **It is the single source of truth** — the only unit-tested module, and the heart of the app. The UI never computes game logic; it just reacts to the broadcast `effects`.
+3. **Reducer** (`server/adventure-state.mjs`) is a pure function, `reduceHookEvent(prevState, hookEvent, now) → { state, effects }`, with no I/O. **It is the single source of truth** — the only unit-tested module, and the heart of the app. The UI never computes game logic; it just reacts to the broadcast `effects`.
 4. **UI** — a desktop window hosting the overlay (`public/overlay.js`): a Swift `WKWebView` on macOS, a C# WinForms + WebView2 host on Windows / WSL2 (`scripts/desktop.mjs` dispatches per platform). Plus a secondary full web view at `/` (`public/app.js`). Both subscribe to `/events` via `EventSource`.
 
-The reducer is also responsible for **pacing**: spawn cooldowns and minimum on-screen lifetimes keep the scene calm even when many agents flood it with events, so monsters never flicker in and out.
+The reducer is also the **only clock**: spawn cooldowns and minimum on-screen lifetimes keep the scene calm even when many agents flood it with events, so monsters never flicker in and out.
 
 ## Development
 
