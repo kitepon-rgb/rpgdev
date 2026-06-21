@@ -157,7 +157,7 @@ on macOS, Windows, and WSL2 alike (no `PATH` / `.cmd`-shim surprises).
 
 | Hook | What happens |
 | --- | --- |
-| `UserPromptSubmit` | Start the adventure, open the window, head to the field |
+| `UserPromptSubmit` | Start the adventure, open the window, head to the field (a follow-up prompt while your quest is still in progress just advances — the in-progress TODO list is kept, not overwritten) |
 | `PreToolUse` | 20% chance to spawn an encounter; in battle, 20% chance an ally joins; otherwise advance (no attack) |
 | `PostToolUse` | `TodoWrite` / `update_plan` update the quest log; any other tool is a hero **skill attack** (move name = the tool name, formatted) — allies follow up here too |
 | `PostToolUseFailure` / `PermissionDenied` *(Claude only)* | The enemy counter-attacks |

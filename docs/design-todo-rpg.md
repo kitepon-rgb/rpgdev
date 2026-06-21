@@ -670,3 +670,15 @@ README(en/ja)・AGENTS/CLAUDE も「user は settings.json」へ統一。フッ�
 **修正**：`serveStatic`（[server/rpgdev-server.mjs](../server/rpgdev-server.mjs)）を標準的なメディア配信へ。範囲リクエストに **206 Partial Content**（`Content-Range`/`Accept-Ranges`/`Content-Length`）、範囲なしは **200＋`Content-Length`＋`Accept-Ranges`**（チャンク転送を解消）、満たせない範囲は **416**。範囲解釈は純関数 [server/http-range.mjs](../server/http-range.mjs) に分離し、[test/http-range.test.mjs](../test/http-range.test.mjs)（9本）でガード（hub-net/hook-config と同じ「純関数を独立モジュール化して単体テスト」の慣習）。
 
 **検証境界（正直に）**：HTTP 層（206/200/416・範囲取得の中身一致・全取得バイト一致）と全テスト（111 pass）で確認済み。WebView2 内部の接続枯渇そのものは browser 不使用方針のため直接観測していないが、「配信が範囲非対応」という客観的欠陥が鳴る/鳴らないを分ける唯一の差分。万一これで鳴らなければフロント側で「アクティブな1曲だけ読み込む」方式（同時接続を1本に絞る）が保険。
+
+## 20. v0.7.8：オーナーの未完クエストが「自分の次の発話」で上書きされる不具合の修正（UserPromptSubmit ガード）[実装 2026-06-21]
+
+**症状**：冒険中のオーナーが未完の本物 TODO（進行中の一覧）を抱えたまま新しいメッセージを送ると、その瞬間に TODO 一覧が消え、入力テキスト1件の synthetic クエストへ全消しされる。ユーザーには「やりかけクエストが別の入力に上書きされた」と見える。
+
+**切り分け（実ログ再生で確定）**：本番ハブの全イベント（8,675件・2026-06-17〜06-21）を実 reducer に通して再生し、「未完の本物 TODO が直後に置換された」瞬間を抽出。本物の上書き11件はすべて `UserPromptSubmit → adventure_started → synthetic 1件` で、かつ**11件すべて発行セッション == オーナー本人**（別セッションによる奪取はゼロ＝オーナーロックは正しく機能）。「別セッションに奪われた」という体感は誤りで、犯人はオーナー自身の次の発話だった。
+
+**根因**：v0.7.7 は「街に戻る（ターン終了）」を起こす Stop だけに `hasUnfinishedRealTodo` ガードを足したが、**もう一つのターン開始経路 UserPromptSubmit→`beginTurn` は素通し**だった。オーナーは `canClaimQuest`=true なので、冒険中に発話するたび `beginTurn` が走り、`beginTurn` 内の `state.quest = [synthetic]`（[server/adventure-state.mjs](../server/adventure-state.mjs)）が未完の本物 TODO を無条件に置換していた。synthetic クエストは本来「本物 TODO がまだ無い間だけ」の表示なのに、本物 TODO がある間も上書きしていた。
+
+**修正**：UserPromptSubmit の dispatch を Stop と対称化＝`if (state.active && isOwnerSession() && hasUnfinishedRealTodo()) step()` を先頭に追加し、**冒険中・オーナー本人・未完の本物 TODO ありなら新ターンを始めず前進（step）のみ**＝やりかけ一覧を保持。町の開始・全完了後の再発話・非オーナーの時間切れ奪取（`isOwnerSession=false` でこの枝を通らない＝`OWNER_IDLE_RELEASE_MS` の自動復旧は無傷）は従来どおり beginTurn。詳細は §15。
+
+**検証**：再現テスト（修正前=失敗→修正後=成功）＋時間切れ奪取の副作用ガードテストを追加し全テスト **114 pass**。修正後コードで上記8,675件を再生し直し、オーナー自己上書きが **11→0件**。多視点＋敵対的レビュー（分岐網羅／他の上書き経路／テスト品質／ドキュメント整合の4視点×検証）で確定問題ゼロ（`state.quest` を書く3箇所＝`townReset`/`beginTurn`/`reconcileQuest` は全て適切にゲート済みで、他に到達可能な上書き経路なし）。

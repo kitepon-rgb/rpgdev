@@ -142,7 +142,7 @@ rpgdev setup --all      # Claude Code と Codex の両方
 
 | Hook | 何が起きるか |
 | --- | --- |
-| `UserPromptSubmit` | 冒険開始・窓を開く・草原へ |
+| `UserPromptSubmit` | 冒険開始・窓を開く・草原へ（クエスト進行中の続き入力は前進のみ＝やりかけの TODO 一覧は保持され、上書きされない） |
 | `PreToolUse` | 20% でエンカウント出現、戦闘中は 20% で精霊増援、出なければ前進（**攻撃しない**） |
 | `PostToolUse` | `TodoWrite` / `update_plan` はクエスト更新；他のツールは勇者の**スキル攻撃**（技名＝ツール名を整形）。精霊もこの時だけ追撃 |
 | `PostToolUseFailure` / `PermissionDenied`（Claude のみ） | 敵が反撃 |
