@@ -161,7 +161,7 @@ phase（idle/field/battle/complete）とは独立に、**冒険の「場所」�
 | hook | フェーズ | 割り当て |
 |---|---|---|
 | SessionStart | 待機 | 拠点起動・状態ロード・BGM=town（quest/monsters/allies をクリア） |
-| UserPromptSubmit | 待機→探検 | クエスト受注、フィールドへ、BGM=field、ターン開始 |
+| UserPromptSubmit | 待機→探検 | クエスト受注、フィールドへ、BGM=field、ターン開始（オーナーが未完の本物 TODO を持つ間の継続発話は前進のみ＝クエスト不変。§15） |
 | PreToolUse | 探検/戦闘 | 20% エンカウント出現判定＋戦闘中なら 20% 精霊増援判定＋前進（**攻撃はしない**。§12） |
 | PermissionRequest | 保留 | 足止め「!」、判断待ちの硬直 |
 | PostToolUse | ★中核 | スキル攻撃＋クエスト一覧更新＋成否分岐（下記） |
@@ -572,12 +572,12 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 **仕様**
 - **町（`!active`＝冒険前/ターン終了後）**：受け付けるのは**クエスト発行（UserPromptSubmit のテキスト or TodoWrite/update_plan）だけ**。PreToolUse/PostToolUse(非TODO)/Stop/SubagentStart・Stop/CounterHit/PermissionRequest/Compact 等は**全部ドロップ**（各ハンドラを `if (state.active)` で gate）。最初に発行したセッションがオーナーになり冒険開始。
-- **冒険中（`active`）**：全セッションのフックを受け付ける（出現・スキル攻撃・精霊召喚＝全員ぶん反映＝§12。攻撃が沢山起きる）。ただし**クエスト更新（TODO）とターン終了はオーナー（発行セッション）のみ**。非オーナーの TODO はクエストを変えず `skillAttack`（ツール使用として戦闘だけ駆動）、非オーナーの UserPromptSubmit/Stop は `step`（前進のみ）。
+- **冒険中（`active`）**：全セッションのフックを受け付ける（出現・スキル攻撃・精霊召喚＝全員ぶん反映＝§12。攻撃が沢山起きる）。ただし**クエスト更新（TODO）とターン終了はオーナー（発行セッション）のみ**。非オーナーの TODO はクエストを変えず `skillAttack`（ツール使用として戦闘だけ駆動）、非オーナーの UserPromptSubmit/Stop は `step`（前進のみ）。**オーナー本人の UserPromptSubmit も、未完の本物 TODO が残る間は `step`（やりかけクエストを自分の次プロンプトで synthetic に上書きしない＝Stop ガードと対称）**。
 - **ロックは冒険まるごと**（毎フックのアイドル奪取は廃止）。オーナーが**街に戻るまで**奪取不可。街に戻る（`finishTurn`＝オーナー解放）のは**全 TODO 完了時のオーナー Stop**と**オーナーの SessionEnd**だけ（`hasUnfinishedRealTodo` で判定）。Stop は応答ごと（入力待ち）に発火するが、**未完の本物 TODO が残る間は街に戻さず `step` のみ＝オーナー継続**＝やりかけのクエストを他セッションに奪われない。TODO 不在（synthetic/chat）や全完了は従来どおり Stop ごとに町へ戻り交代する。
 - **クラッシュ復旧（二段）**：オーナーが応答途中で落ちて Stop を出せず街に戻れない場合、(1) **時間切れ自動解除**＝`OWNER_IDLE_RELEASE_MS`（5分）以上オーナーのフックが来なければ、次の非オーナー発行が引き継ぐ（`ownerStale`）。(2) **手動「街に戻る」ボタン**＝overlay `#townButton`→`POST /control/return-town`（合成 SessionStart で `townReset`）。
 
 **実装（`server/adventure-state.mjs`）**
-- 相判定：dispatch switch の各ハンドラを `state.active` で gate（上記）。UserPromptSubmit は `if (!state.active || canClaimQuest()) beginTurn() else step()`。PostToolUse は `if (todoItems && canClaimQuest()) { claimQuestOwnership(); reconcileQuest(); } else if (state.active) { detectFailure?counter:skillAttack }`。
+- 相判定：dispatch switch の各ハンドラを `state.active` で gate（上記）。UserPromptSubmit は `if (active && isOwnerSession() && hasUnfinishedRealTodo()) step()`（オーナー本人の継続入力は未完の本物 TODO を上書きしない＝Stop と対称。時間切れ奪取は非オーナー＝isOwnerSession=false でこの枝を通らない）`else if (!state.active || canClaimQuest()) beginTurn() else step()`。PostToolUse は `if (todoItems && canClaimQuest()) { claimQuestOwnership(); reconcileQuest(); } else if (state.active) { detectFailure?counter:skillAttack }`。
 - オーナー：`isOwnerSession`（owner null／session 不明は許可＝P7）。`canClaimQuest = isOwnerSession || (sessionId && ownerStale)`。`claimQuestOwnership`（実 session のとき `ownerSession` を書き換え＋`ownerActivityAt=now`）。`canEndTurn`（オーナー本人の Stop だけ）。
 - 時間切れ：state に `ownerActivityAt`（サーバー now。`createInitialState`=0、`townReset`/`finishTurn`=0）。`reduceHookEvent` 冒頭でオーナーのフックごとに `ownerActivityAt=serverNow` を延命。`ownerStale = ownerActivityAt && now-ownerActivityAt >= OWNER_IDLE_RELEASE_MS`。
 - 廃止：`subagentCounts`／`bumpSubagentCount`／`ownerHasOpenTodos`／`ownerActiveSubagents`／`ownerLocked`／`beginTurn` の旧ロックガード（アイドル奪取機構を全廃）。

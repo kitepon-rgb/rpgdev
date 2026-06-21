@@ -151,7 +151,12 @@ export function reduceHookEvent(previousState, hookEvent, now) {
       break;
     case "UserPromptSubmit":
       // 町なら誰でも開始＝オーナー確定。冒険中はオーナー（または時間切れ放置の奪取）のみ新ターン、他は前進のみ。
-      if (!state.active || canClaimQuest(state, event)) {
+      // ただしオーナー本人の継続入力は、未完の本物 TODO が残る間は新ターンを始めない＝やりかけクエストを
+      // 自分の次プロンプトで synthetic に上書きしない（Stop と同じ hasUnfinishedRealTodo ガード）。
+      // 時間切れ放置の奪取（非オーナー）は isOwnerSession=false でこの分岐を通らず、従来どおり beginTurn で引き継ぐ。
+      if (state.active && isOwnerSession(state, event) && hasUnfinishedRealTodo(state)) {
+        step(state, event, effects);
+      } else if (!state.active || canClaimQuest(state, event)) {
         beginTurn(state, event, effects);
       } else {
         step(state, event, effects);

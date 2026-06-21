@@ -921,6 +921,46 @@ test("オーナーは未完の本物TODOが残る間 Stop（入力待ち）で�
   assert.deepEqual(r.state.quest.map((q) => q.label), ["Bの作業"]);
 });
 
+test("オーナー本人の UserPromptSubmit は未完の本物TODOを上書きしない（前進のみ・新ターンを始めない）", () => {
+  // A がオーナー＝未完の本物TODOを2件抱えて進行中。
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"));
+  r = reduceHookEvent(r.state, todoBy("A", [
+    { content: "task1", status: "in_progress" },
+    { content: "task2", status: "pending" }
+  ]));
+  assert.equal(r.state.ownerSession, "A");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["task1", "task2"]);
+  const turnBefore = r.state.turn;
+
+  // オーナー A が、未完の本物TODOを持ったまま新しい発話（チャット）を送る＝継続入力。
+  // 自分の次プロンプトでやりかけクエストを synthetic に全消ししてはいけない（本バグの回帰防止）。
+  r = reduceHookEvent(r.state, promptBy("A", "ところで進捗どう？"));
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["task1", "task2"], "オーナーの次発話で本物TODOが上書きされない");
+  assert.ok(!r.state.quest.some((q) => q.synthetic), "synthetic クエストを混入させない");
+  assert.equal(r.state.ownerSession, "A", "オーナーは変わらない");
+  assert.equal(r.state.active, true, "冒険は継続");
+  assert.equal(r.state.turn, turnBefore, "継続発話で新ターンを始めない（turn 据え置き）");
+  assert.ok(r.effects.some((e) => e.type === "step"), "継続発話は前進のみ");
+  assert.ok(!r.effects.some((e) => e.type === "adventure_started"), "adventure_started を出さない");
+});
+
+test("時間切れ奪取は未完の本物TODOが残っていても効く（オーナーの継続ガードで放置復旧を壊さない）", () => {
+  const T0 = 1000;
+  let r = reduceHookEvent(createInitialState(), promptBy("A", "親の作業"), T0);
+  r = reduceHookEvent(r.state, todoBy("A", [{ content: "A task", status: "in_progress" }]), T0 + 1000);
+  assert.equal(r.state.ownerSession, "A");
+
+  // 時間内は、未完の本物TODOがあっても B は奪取できない＝前進のみ・クエスト不変。
+  r = reduceHookEvent(r.state, promptBy("B", "横入り"), T0 + 2000);
+  assert.equal(r.state.ownerSession, "A", "時間内は奪取できない");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["A task"], "未完TODOがあっても時間内はクエスト不変");
+
+  // OWNER_IDLE_RELEASE_MS（5分）経過後は、未完の本物TODOが残っていても B の発行が引き継ぐ（放置オーナーからの自動復旧）。
+  r = reduceHookEvent(r.state, promptBy("B", "横入り"), T0 + 1000 + 300000);
+  assert.equal(r.state.ownerSession, "B", "未完の本物TODOがあっても時間切れなら引き継ぐ");
+  assert.deepEqual(r.state.quest.map((q) => q.label), ["横入り"]);
+});
+
 // 以下はレビュー（多視点＋敵対的検証ワークフロー）で見つかった抜けを塞ぐ回帰テスト。
 
 test("街（オーナー解放後）では野良のツール使用も Stop もドロップされる（冒険再開・出現・ターン終了しない）", () => {

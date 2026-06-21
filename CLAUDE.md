@@ -215,6 +215,7 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 ロックは**冒険まるごと**（毎フックのアイドル奪取は廃止）＝オーナーが街に戻るまで奪取不可。街に戻る（`finishTurn`＝オーナー解放）のは
 **オーナーの Stop のうち未完の本物 TODO が無い（全完了）とき**と**オーナーの SessionEnd**だけ（`hasUnfinishedRealTodo` で判定）。Stop は応答ごと（AI 出力が終わり次の入力待ちになるたび）に発火するが、
 **未完の本物 TODO が残る間は街に戻さず前進（`step`）のみ＝オーナー継続**＝やりかけのクエストを他セッションに奪われない。TODO 不在（synthetic/chat）や全完了は従来どおり Stop ごとに町へ戻り交代する。
+**同様に、オーナー本人の UserPromptSubmit（次の発話）も未完の本物 TODO が残る間は前進（`step`）のみ＝自分の次プロンプトでやりかけクエストを synthetic に上書きしない**（Stop ガードと対称。v0.7.8 で UserPromptSubmit 側の穴を塞いだ。時間切れ放置の非オーナー奪取＝`OWNER_IDLE_RELEASE_MS` は `isOwnerSession=false` で別枠＝従来どおり引き継ぐ）。
 オーナーが応答途中でクラッシュして無反応のまま固まった場合は、**時間切れ自動解除**（`OWNER_IDLE_RELEASE_MS`＝5分 無反応で次の非オーナー発行が引き継ぐ。`ownerActivityAt` で計測）＋
 **手動「街に戻る」ボタン**（overlay の `#townButton`→`POST /control/return-town`＝合成 SessionStart で `townReset`）で復旧する。⑥`SubagentStart`/`SubagentStop`
 フックを配線（reducer は元から対応・`examples/` の設定にも追加）。
