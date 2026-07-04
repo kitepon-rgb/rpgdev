@@ -499,7 +499,7 @@ async function findCsc(roots) {
   throw new Error(
     "C# compiler (.NET Framework 4.x csc.exe) not found under " +
       dirs.join(", ") +
-      ". Install .NET Framework 4.8 (or Visual Studio Build Tools). See docs/windows-wsl.md."
+      ". Install .NET Framework 4.8 (or Visual Studio Build Tools). See docs/02_windows-wsl.md."
   );
 }
 
@@ -511,7 +511,7 @@ async function ensureWebView2Dlls() {
   throw new Error(
     `Missing WebView2 SDK files in desktop/webview2/: ${missing.join(", ")}. ` +
       "Obtain them from the Microsoft.Web.WebView2 NuGet package (Core managed DLL + native x64 WebView2Loader.dll) " +
-      "and place them in desktop/webview2/. See docs/windows-wsl.md for the exact steps."
+      "and place them in desktop/webview2/. See docs/02_windows-wsl.md for the exact steps."
   );
 }
 

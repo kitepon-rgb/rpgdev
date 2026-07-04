@@ -1,6 +1,6 @@
 // RPGDev デスクトップ窓 — Windows / WSL2 ホスト（macOS の desktop/RPGDevWindow.swift と機能等価）。
 //
-// 設計方針（docs/windows-wsl.md・design-todo-rpg.md 参照）:
+// 設計方針（docs/02_windows-wsl.md・docs/01_design-todo-rpg.md 参照）:
 //  - C# WinForms + WebView2。在来 .NET Framework 4.x の csc.exe で必要時コンパイルする
 //    （swiftc 方式と同型＝npm 依存ゼロ・重量ランタイム非同梱）。C# 5 互換で書く
 //    （string 補間 / ?. / 式本体 / out var を使わない）＝古い csc でも通すため。

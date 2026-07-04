@@ -17,7 +17,9 @@ WSL2=Windows ホスト側に interop で同窓を起動 / 素の Linux は窓な
 `0.0.0.0` で待ち受け（窓は localhost 接続、WSL2 フックはホストの WSL アダプタ IP 経由）、Windows でも WSL2 でも同じ1つの
 共有冒険を動かす（セットアップ順非依存。要：WSL→ホスト inbound を許可する**標準 Defender ＋ Hyper-V の両層**の
 ファイアウォール許可規則＝`rpgdev setup-firewall` が適用。標準は `RemoteAddress 172.16/12`、Hyper-V は WSL vmCreator の既定 Block の例外）。詳細は
-[docs/windows-wsl.md](docs/windows-wsl.md)。
+[docs/02_windows-wsl.md](docs/02_windows-wsl.md)。
+文書の入口は [docs/00_overview.md](docs/00_overview.md)。設計正典は
+[docs/01_design-todo-rpg.md](docs/01_design-todo-rpg.md)。
 
 ## RPGDev 固有の検証ルール
 
@@ -221,7 +223,7 @@ front-facing fashion lineup、既存VTuber/版権キャラ模倣、ロゴ/文字
 フックを配線（reducer は元から対応・`examples/` の設定にも追加）。
 
 設計判断・Codex/Claude のフック実機検証結果・実装ステータスは
-[docs/design-todo-rpg.md](docs/design-todo-rpg.md) が単一の正典。reducer に手を入れる前に必ず読む。
+[docs/01_design-todo-rpg.md](docs/01_design-todo-rpg.md) が単一の正典。reducer に手を入れる前に必ず読む。
 reducer ([server/adventure-state.mjs](server/adventure-state.mjs)) と
 そのテスト ([test/adventure-state.test.mjs](test/adventure-state.test.mjs)) は実装済み。
 フロントエンド（[public/overlay.js](public/overlay.js) / [public/app.js](public/app.js)）も
@@ -306,7 +308,7 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
      露出せず、WSL→ホスト inbound を許可する標準 Defender ＋ Hyper-V の両層の許可規則が要る（`rpgdev setup-firewall` が両層を適用）。セットアップ順非依存。
      WebView2 SDK DLL は `desktop/webview2/` に同梱（無ければ明確エラー）。同梱 DLL のコピー（`copyDll`）は、
      実行中の窓が掴んでいて上書きできない（`EACCES`/`EBUSY`/`EPERM`）かつ既に配置済みなら**落ちずに続行**＝窓が動いたままの再起動でクラッシュさせない。詳細は
-     [docs/windows-wsl.md](docs/windows-wsl.md)。
+     [docs/02_windows-wsl.md](docs/02_windows-wsl.md)。
    - **Windows/WSL2 のタスクトレイ常駐**（[desktop/RPGDevTray.cs](desktop/RPGDevTray.cs)）：ハブが起動しているか分かりづらい問題への可視化。
      窓 exe(RPGDev.exe) とは別の C# WinForms NotifyIcon（WebView2 不要）を `desktop.mjs` が窓と一緒にビルド・起動する。
      アイコンは水の精霊 Aqua の顔をスプライト `ally-water-facing-slit.png` から実行時に機械的に切り出す（System.Drawing＝外部画像ツール不要・`--make-ico` で .ico も生成）。
@@ -376,7 +378,7 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
 違いに注意: `rpgdev setup` の Claude 出力は exec 形式（`command`=node 実体, `args`=[script, provider, event]）、Codex は
 インライン文字列。手動見本の Claude はシェル形式（`args` 無し単一文字列＝Windows でもシェル経由でシム解決）。
 **Windows ネイティブの Claude は exec 形式＋bare `rpgdev-hook` だとシェル非経由で `.cmd` シムが解決されず発火しない**ため、
-`rpgdev setup` の node 絶対パス形式を使う（詳細は docs/install-hooks.md / docs/windows-wsl.md）。フックは新セッションで反映。
+`rpgdev setup` の node 絶対パス形式を使う（詳細は docs/install-hooks.md / docs/02_windows-wsl.md）。フックは新セッションで反映。
 書き込み先はスコープで変わる：プロジェクトは `.claude/settings.local.json`、ユーザー全体（`--user`）の Claude は
 `~/.claude/settings.json`（**ユーザー全体の `settings.local.json` は Claude Code に読まれない**＝v0.6.0 のバグ。v0.6.1 で修正）。
 パスは `scripts/hook-config.mjs` の `hookTargetPath` が正典（`test/hook-config.test.mjs` がガード）。

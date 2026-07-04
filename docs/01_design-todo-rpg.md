@@ -601,7 +601,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - **WSL2 = 完全自動・単一 Windows ハブ**：ハブ（node サーバ）も窓も Windows ホスト側で動く（WSL2 から interop で起動）。ハブは **Windows ローカルのファイルから起動して `0.0.0.0` に待ち受ける**（物理 NIC は Defender 既定遮断で露出せず、WSL `vEthernet`〔inbound 許可1本〕と localhost だけ通る）。`desktop.mjs` が interop で `%LOCALAPPDATA%\rpgdev\hub` に **`server/`＋`public/` をコピーし、Windows の `node.exe` でそのコピーを実行**する（**WSL 共有 `\\wsl.localhost` から server を直接実行すると、ホスト WebView2 が `/events`〔SSE〕を受けられず窓が静止する＝今回の修正・実証済み**）。窓（C# exe）も同 hub dir に `csc.exe` でビルドし、**`http://127.0.0.1:37373/overlay.html`〔localhost〕**へ向けて起動する（窓は必ずハブと同ホスト）。住所は `scripts/hub-net.mjs` の用途別3関数＝`hubBindHost`（待受=win32/wsl は 0.0.0.0）/`hubReachHost`（このプロセス→ハブ=win32 は 127.0.0.1・wsl は既定ゲートウェイ）/`HUB_WINDOW_HOST`（窓=127.0.0.1）。env は `WSLENV` で interop 越境。窓は localhost なので `localhostForwarding` は不要（NAT 前提。mirrored では `RPGDEV_HOST=127.0.0.1`）。WSL→ホスト inbound を許す**標準 Defender 規則1本**が要る（Hyper-V 層ではない。0.0.0.0 でも vEthernet inbound は既定遮断のため必要）。
 - **位置永続化**：win32/WSL2 とも `%LOCALAPPDATA%\rpgdev\hub` 配下（win32=`desktop-window-win.json`、WSL=`window.json`。win32 もプロジェクト別 `.rpgdev` ではなくハブ dir＝1つの共有冒険。エラーログのみプロジェクト `.rpgdev`）。画面署名キーで構成変更時リセット＝Swift の `UserDefaults` ロジックと同等。
 - **package.json** `"os"` を `["darwin","win32","linux"]` に開放（WSL2=linux の install を通す）。
-- **単一 Windows ハブへ集約 [2026-06-17・実機検証済み]**：当初の v0.6 は「サーバは各環境ローカル」だったが、Windows と WSL2 を併用すると 37373 の奪い合い・二窓・WSL2 窓の誤接続が起きる。これを設計で消すため、ハブは Windows ホスト上に1つだけ（**Windows ローカルのファイルから `0.0.0.0` 待受**）・固定インスタンスキー `rpgdev-hub`（C# named Mutex）・単一グローバル状態 `%LOCALAPPDATA%\rpgdev\hub` へ統合し、Windows/WSL2 の全ツール使用が同じ1つの共有冒険を動かす（オーナーは既存の `ownerSession` 仲裁）。フック設定は接続先を焼き込まず実行時に `scripts/hub-net.mjs` の用途別住所（`hubBindHost`=待受 / `hubReachHost`=このプロセス→ハブ / `HUB_WINDOW_HOST`=窓）で解決するので**セットアップ順非依存**。**実機の落とし穴（実証済み・2点）**：①server を WSL 共有 `\\wsl.localhost` から実行するとホスト WebView2 が配信(SSE)を受けられない→`server/`+`public/` を hub dir にローカルコピーして実行で解決。②窓の WebView2 が立ち上がりきる前に状態を一気に流すと、場面転換（背景/勇者の差替）を取りこぼし背景が前の状態で固まる。詳細は [windows-wsl.md](windows-wsl.md)。
+- **単一 Windows ハブへ集約 [2026-06-17・実機検証済み]**：当初の v0.6 は「サーバは各環境ローカル」だったが、Windows と WSL2 を併用すると 37373 の奪い合い・二窓・WSL2 窓の誤接続が起きる。これを設計で消すため、ハブは Windows ホスト上に1つだけ（**Windows ローカルのファイルから `0.0.0.0` 待受**）・固定インスタンスキー `rpgdev-hub`（C# named Mutex）・単一グローバル状態 `%LOCALAPPDATA%\rpgdev\hub` へ統合し、Windows/WSL2 の全ツール使用が同じ1つの共有冒険を動かす（オーナーは既存の `ownerSession` 仲裁）。フック設定は接続先を焼き込まず実行時に `scripts/hub-net.mjs` の用途別住所（`hubBindHost`=待受 / `hubReachHost`=このプロセス→ハブ / `HUB_WINDOW_HOST`=窓）で解決するので**セットアップ順非依存**。**実機の落とし穴（実証済み・2点）**：①server を WSL 共有 `\\wsl.localhost` から実行するとホスト WebView2 が配信(SSE)を受けられない→`server/`+`public/` を hub dir にローカルコピーして実行で解決。②窓の WebView2 が立ち上がりきる前に状態を一気に流すと、場面転換（背景/勇者の差替）を取りこぼし背景が前の状態で固まる。詳細は [02_windows-wsl.md](02_windows-wsl.md)。
 
 **棚上げ（v1 OUT）**：素の Linux 窓（WSLg/GTK）/枠なし per-pixel-alpha 透過（v1 は枠付き・黒 letterbox）/full Visual hosting（入力自前転送。Window-to-Visual で不足時のみ昇格）/Windows での rendered-WAV SFX/Windows ネイティブ音声ブリッジ（恒久的に作らない）。
 
@@ -609,7 +609,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 
 **残オープン課題**：`csc.exe` 不在環境の扱い/WSL の path 変換・UNC・interop の実機挙動/WebView2 ランタイム版依存のリサイズ回帰/arm64（現状 x64 のみ同梱）。
 
-**検証境界（正直に）**：reducer は本変更で不変＝既存テストが回帰ガード。`scripts/desktop-platform.mjs` の `detectPlatform()` は純粋関数で `test/desktop-platform.test.mjs`（8本）で単体テスト。darwin 経路は実機 mac で `build:desktop`／`start`（既存窓フォーカス）の非回帰を確認済み。**Windows/WSL2 の窓・コンパイル・透過・DPI・interop は実機でのみ検証可能＝「テスト済み」とは記さない**。チェックリストは [docs/windows-wsl.md](windows-wsl.md)。
+**検証境界（正直に）**：reducer は本変更で不変＝既存テストが回帰ガード。`scripts/desktop-platform.mjs` の `detectPlatform()` は純粋関数で `test/desktop-platform.test.mjs`（8本）で単体テスト。darwin 経路は実機 mac で `build:desktop`／`start`（既存窓フォーカス）の非回帰を確認済み。**Windows/WSL2 の窓・コンパイル・透過・DPI・interop は実機でのみ検証可能＝「テスト済み」とは記さない**。チェックリストは [02_windows-wsl.md](02_windows-wsl.md)。
 
 ## 17. フック導入：`rpgdev setup`＋エージェント適用（Mac/Windows/WSL2 共通）[実装 2026-06-17]
 
@@ -628,7 +628,7 @@ plan 更新＋`echo` を実行させて payload を捕獲。
 - **イベント集合は既存検証済みを再現**（純関数 `scripts/hook-config.mjs` の `EVENT_SETS`：Claude=9＝失敗系含む／Codex=6＝失敗系なし）。
 - **コマンド表面**：`bin/rpgdev`→`scripts/cli.mjs` で `argv[2]==="setup"` のみ分岐（他は `desktop.mjs` を import＝従来完全同一）。`npm run setup` も追加。
 - **見本/説明書も修正**：`examples/claude-settings.local.json` を**シェル形式**（`args` 無し単一文字列）へ＝手動コピーでも Windows の
-  シェル経由でシム解決（グローバル導入前提）。README は「AI に依頼＋`rpgdev setup`」を主経路に、docs/windows-wsl.md の誤記を訂正。
+  シェル経由でシム解決（グローバル導入前提）。README は「AI に依頼＋`rpgdev setup`」を主経路に、docs/02_windows-wsl.md の誤記を訂正。
 
 **テスト/検証**：純関数 `buildHookConfig` を `test/hook-config.test.mjs`（7本：Claude9/Codex6/cmd-wrap/空白パス/純粋性/未知provider）でガード。
 `rpgdev setup --all` の出力と `bin/rpgdev` ディスパッチ（setup/help/従来）を実機確認。生成された claude コマンド

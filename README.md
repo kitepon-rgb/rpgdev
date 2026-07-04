@@ -104,8 +104,8 @@ A **turn ends** (you return to town) only when the owning session has **no unfin
 
 - Node.js 20+ (all platforms)
 - **macOS** — Swift compiler / Xcode Command Line Tools (the window is compiled on-demand with `swiftc`)
-- **Windows** — WebView2 Runtime (preinstalled on Windows 11) + .NET Framework 4.x `csc.exe` (the window is a C# WinForms + WebView2 host, compiled on-demand). The WebView2 SDK DLLs are bundled, so no extra download. See [docs/windows-wsl.md](docs/windows-wsl.md).
-- **WSL2** — the hub server and the window both run on the Windows host (started via interop); WSL2 connects to a single shared hub. Needs Node + WebView2 on the host and a host firewall allow for WSL→host traffic (applied by `rpgdev setup-firewall` — a standard Defender rule plus a Hyper-V rule). See [docs/windows-wsl.md](docs/windows-wsl.md).
+- **Windows** — WebView2 Runtime (preinstalled on Windows 11) + .NET Framework 4.x `csc.exe` (the window is a C# WinForms + WebView2 host, compiled on-demand). The WebView2 SDK DLLs are bundled, so no extra download. See [docs/02_windows-wsl.md](docs/02_windows-wsl.md).
+- **WSL2** — the hub server and the window both run on the Windows host (started via interop); WSL2 connects to a single shared hub. Needs Node + WebView2 on the host and a host firewall allow for WSL→host traffic (applied by `rpgdev setup-firewall` — a standard Defender rule plus a Hyper-V rule). See [docs/02_windows-wsl.md](docs/02_windows-wsl.md).
 - **bare Linux** — no desktop window yet; use the browser view (`npm run web`).
 
 ## Quick start
@@ -114,7 +114,7 @@ A **turn ends** (you return to town) only when the owning session has **no unfin
 rpgdev
 ```
 
-A small RPGDev window opens on your desktop (macOS / Windows; on WSL2 it appears on the Windows host). Runtime state and logs are written per-project under `.rpgdev/`. Windows/WSL2 setup details: [docs/windows-wsl.md](docs/windows-wsl.md).
+A small RPGDev window opens on your desktop (macOS / Windows; on WSL2 it appears on the Windows host). Runtime state and logs are written per-project under `.rpgdev/`. Windows/WSL2 setup details: [docs/02_windows-wsl.md](docs/02_windows-wsl.md).
 
 On **Windows / WSL2** a small **task-tray icon** (the Aqua water-spirit's face) also appears alongside the window — its presence means the hub is running, and it disappears when the hub stops. Right-click it to open the window, return to town, or quit (which stops the hub). Windows hides new tray icons under the overflow (`^`) by default, so look there if you don't see it.
 
@@ -203,7 +203,7 @@ npm run render:sfx       # regenerate attack / return SFX
 
 There is **no build/bundle step and no TypeScript** — the whole project is plain ESM with **zero runtime npm dependencies** (stdlib only). BGM and SFX are deterministically generated WAVs; edit the generators, then re-run `render:bgm` / `render:sfx` rather than editing the audio directly.
 
-The full design rationale and real-world hook verification notes live in [docs/design-todo-rpg.md](docs/design-todo-rpg.md) — read it before touching the reducer.
+Documentation starts at [docs/00_overview.md](docs/00_overview.md). The full design rationale and real-world hook verification notes live in [docs/01_design-todo-rpg.md](docs/01_design-todo-rpg.md) — read it before touching the reducer.
 
 ## License
 

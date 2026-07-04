@@ -99,8 +99,8 @@ TODO 一覧は3区画に均等割りされ、達成するほど背景（と BGM�
 
 - Node.js 20+（全プラットフォーム共通）
 - **macOS** — Swift compiler / Xcode Command Line Tools（窓は `swiftc` で必要時コンパイル）
-- **Windows** — WebView2 ランタイム（Windows 11 標準）＋ .NET Framework 4.x の `csc.exe`（窓は C# WinForms+WebView2 を必要時コンパイル）。WebView2 SDK DLL は同梱済み（追加 DL 不要）。詳細は [docs/windows-wsl.md](docs/windows-wsl.md)
-- **WSL2** — ハブ（サーバ）も窓も Windows ホスト側で動き（interop 起動）、WSL2 は単一の共有ハブへ接続。ホストに Node＋WebView2 と、WSL→ホスト inbound を許すファイアウォール許可（`rpgdev setup-firewall` が標準 Defender＋Hyper-V の両層を適用）が必要。詳細は [docs/windows-wsl.md](docs/windows-wsl.md)
+- **Windows** — WebView2 ランタイム（Windows 11 標準）＋ .NET Framework 4.x の `csc.exe`（窓は C# WinForms+WebView2 を必要時コンパイル）。WebView2 SDK DLL は同梱済み（追加 DL 不要）。詳細は [docs/02_windows-wsl.md](docs/02_windows-wsl.md)
+- **WSL2** — ハブ（サーバ）も窓も Windows ホスト側で動き（interop 起動）、WSL2 は単一の共有ハブへ接続。ホストに Node＋WebView2 と、WSL→ホスト inbound を許すファイアウォール許可（`rpgdev setup-firewall` が標準 Defender＋Hyper-V の両層を適用）が必要。詳細は [docs/02_windows-wsl.md](docs/02_windows-wsl.md)
 - **素の Linux** — デスクトップ窓は未対応。ブラウザ表示（`npm run web`）を使用
 
 ## 起動
@@ -109,7 +109,7 @@ TODO 一覧は3区画に均等割りされ、達成するほど背景（と BGM�
 rpgdev
 ```
 
-デスクトップに小さい RPGDev 窓が開きます（macOS / Windows。WSL2 では Windows ホスト側に表示）。状態やログは実行プロジェクトの `.rpgdev/` に保存。Windows/WSL2 の詳細は [docs/windows-wsl.md](docs/windows-wsl.md)。
+デスクトップに小さい RPGDev 窓が開きます（macOS / Windows。WSL2 では Windows ホスト側に表示）。状態やログは実行プロジェクトの `.rpgdev/` に保存。Windows/WSL2 の詳細は [docs/02_windows-wsl.md](docs/02_windows-wsl.md)。
 
 **Windows / WSL2 では、窓と一緒にタスクトレイ常駐（Aqua の顔アイコン）も起動します。** これはハブが動いている目印で、消えれば停止です（新しいトレイアイコンは Windows 既定で `^` のあふれメニューに隠れます）。右クリックで「窓を開く」「街に戻る」「終了（ハブ停止）」。
 
@@ -195,7 +195,7 @@ npm run render:bgm       # BGM(7トラック)を再生成
 npm run render:sfx       # 攻撃/帰還の効果音を再生成
 ```
 
-ビルド/バンドル工程も TypeScript も無く、全体が**依存ゼロの素の ESM**（stdlib のみ）。BGM/SFX は決定的に生成される WAV——音声を直接編集せず、ジェネレータを直してから再生成してください。設計の正典は [docs/design-todo-rpg.md](docs/design-todo-rpg.md)（reducer を触る前に必読）。
+ビルド/バンドル工程も TypeScript も無く、全体が**依存ゼロの素の ESM**（stdlib のみ）。BGM/SFX は決定的に生成される WAV——音声を直接編集せず、ジェネレータを直してから再生成してください。文書の入口は [docs/00_overview.md](docs/00_overview.md)。設計の正典は [docs/01_design-todo-rpg.md](docs/01_design-todo-rpg.md)（reducer を触る前に必読）。
 
 ## License
 

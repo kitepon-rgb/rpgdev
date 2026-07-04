@@ -120,7 +120,7 @@ function printForAgent(items) {
     out.push("  rpgdev setup-firewall");
     out.push("It applies a reboot-stable allow rule at both firewall layers (standard Defender + Hyper-V).");
     out.push("Run it on the WINDOWS host: from WSL2 the step can't raise the UAC prompt it needs.");
-    out.push("Details: docs/windows-wsl.md.");
+    out.push("Details: docs/02_windows-wsl.md.");
     out.push("");
     out.push("Windows/WSL2 — add a Start Menu entry with the Aqua-face icon (no admin needed):");
     out.push("  rpgdev setup-shortcut");

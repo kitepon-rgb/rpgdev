@@ -2,7 +2,7 @@
 // Windows / WSL2 では rpgdev サーバ（ハブ）を Windows ホスト上に1つだけ立て、全インターフェース(0.0.0.0)で
 // 待ち受ける。物理 NIC は Windows Defender の既定遮断で露出せず、WSL vEthernet（inbound 許可ルール）と
 // localhost だけが通る＝実質ホスト/WSL 限定。窓は同ホスト上なので localhost で繋ぎ、WSL2 のフックは
-// WSL アダプタ IP（既定ゲートウェイ）経由で同じ1つのハブへ届く（docs/windows-wsl.md「単一 Windows ハブ」）。
+// WSL アダプタ IP（既定ゲートウェイ）経由で同じ1つのハブへ届く（docs/02_windows-wsl.md「単一 Windows ハブ」）。
 //
 // 用途別の住所（混ぜると壊れるので分ける）：
 //   hubBindHost     … サーバが listen するアドレス（RPGDEV_HOST env に渡す）。win32/wsl=0.0.0.0。
