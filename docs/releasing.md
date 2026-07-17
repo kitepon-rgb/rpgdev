@@ -29,6 +29,15 @@
 > 必ず Windows のパスから実行する：`powershell.exe -Command 'Set-Location $env:USERPROFILE; npm i -g rpgdev@<ver>'`。
 > WSL 側のグローバルは WSL から普通に `npm i -g` でよい（両方更新が要る＝Windows ネイティブと WSL2 で別グローバル）。
 
+> **⚠ ハブ稼働中の `npm i -g` は EBUSY で失敗する。** 実行中のハブがグローバル配下のファイルを掴んでいるため、
+> 更新前に他セッションを止めてハブを shutdown してから両側を更新する（片側だけ更新して放置すると
+> split-brain になる。対処手順は [02_windows-wsl.md](02_windows-wsl.md) の split-brain 節）。
+
+> **`csc.exe` exit 1 の無害判定**: 更新後の初回起動で窓ビルド（`csc.exe`）が exit 1 を返しても、
+> ①`%LOCALAPPDATA%\rpgdev\hub` の `.rpgdev-deployed-version` マーカが新版になっている、かつ
+> ②該当リリースの変更が C# ソースに触れていない（コード grep で確認）なら、既存 exe の再利用で実害なし。
+> この2条件を確認せずに「ビルド失敗＝リリース失敗」と誤診しないこと。
+
 ---
 
 ## トークン設定（~/.npmrc）

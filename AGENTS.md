@@ -337,9 +337,15 @@ docs §8 の宿題（Codex 非Bash失敗フィールド、Claude TodoWrite paylo
   `RPGDEV_PROJECT_DIR`。
 - `bin/rpgdev`、`bin/rpgdev-hook`、`bin/rpgdev-server` は対応する `scripts/`/`server/`
   モジュールを import するだけの薄いラッパー。
+- `.claude/settings.json` は端末固有なので実ファイルを作らない。必要な読み取り系 allowlist は
+  `fewer-permission-prompts` で生成し、ローカル設定として管理する。
 
 ## 維持すべき規約
 
+- **CLAUDE.md と AGENTS.md は双子（正本は CLAUDE.md）。** 本ファイルを編集したら
+  `cp CLAUDE.md AGENTS.md` で丸ごと同期し、AGENTS.md のヘッダだけ Codex 用へ戻す
+  （1行目 `# AGENTS.md`、3行目 `This file provides guidance to Codex when working with code in this repository.`）。
+  AGENTS.md 側で個別に内容を育てない（ドリフトの原因になる）。
 - **静かなフォールバックをしない。** Hook CLI は失敗を `.rpgdev/hook-errors.log` + stderr に
   記録し、成功を装わずに非ゼロ終了する。サーバは `.rpgdev/server-errors.log` に記録する。
   編集時もこの挙動を維持し、エラーを握りつぶさないこと。

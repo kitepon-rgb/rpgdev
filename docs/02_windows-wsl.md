@@ -64,6 +64,21 @@ bugs is **designed out**, not patched.
 > but never gets live updates (background stuck, no BGM). Local-file execution (the same
 > shape as a native-Windows server) fixes it. This is verified.
 
+### If the hub goes split-brain (WSL and Windows on different versions)
+
+The Windows-native and WSL2 globals are **separate installs** of `rpgdev`. If only one
+side gets updated, whichever side launches first starts *its* version of the hub, and the
+other side's hooks/window then talk to a hub from a different release — symptoms look like
+"my fix isn't live" or mismatched assets. Recovery, in order:
+
+1. Stop the other Claude/Codex sessions that are feeding the hub.
+2. Shut the hub down.
+3. Update **both** globals: `npm i -g rpgdev@latest` in WSL, **and** from a Windows working
+   directory (`powershell.exe -Command 'Set-Location $env:USERPROFILE; npm i -g rpgdev@latest'`
+   — see [releasing.md](releasing.md) for why the Windows cwd matters, plus the EBUSY trap
+   when the hub is still running).
+4. Relaunch; both sides now converge on the same hub version.
+
 ## Platform matrix
 
 | Platform | Window host | How it is built | Notes |
