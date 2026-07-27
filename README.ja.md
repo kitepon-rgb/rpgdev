@@ -14,6 +14,9 @@
 
 Codex CLI / Claude Code が出す **Hook イベント**を、小さな RPG 風デスクトップ窓の演出に変換するアプリです（macOS / Windows / WSL2 対応）。ツール使用が戦闘アクションに、TODO リストがクエストログに、精霊が仲間として参戦します。**遊ぶのではなく、コードを書くだけ**——デスクトップの小窓で冒険が勝手に進みます。
 
+[kitepon.dev](https://kitepon.dev/)を運営する[クオ（@QLyun35332）](https://x.com/QLyun35332)が
+開発・メンテナンスしています。
+
 <p align="center">
   <img src=".github/screenshot-overlay.png" alt="戦闘中の RPGDev オーバーレイ窓：クエストログ、HP付きの敵、勇者と2体の精霊、ダンジョンステージ" width="64%">
 </p>

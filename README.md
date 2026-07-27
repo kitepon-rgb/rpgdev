@@ -16,6 +16,8 @@
 
 RPGDev is a small desktop overlay that turns the **hook events** your AI coding agent emits — Codex CLI and Claude Code — into a classic JRPG-style scene. Every tool call becomes a battle action, your TODO list becomes a quest log, and elemental spirits join you as allies while you work. **You don't play it — you just code, and watch the adventure unfold** in a little window on your desktop.
 
+Built and maintained by [Quo](https://x.com/QLyun35332) at [kitepon.dev](https://kitepon.dev/en).
+
 <p align="center">
   <img src=".github/screenshot-overlay.png" alt="The RPGDev overlay window in battle: a quest log, an encounter with its HP bar, the hero and two elemental spirits, on the dungeon stage" width="64%">
 </p>
