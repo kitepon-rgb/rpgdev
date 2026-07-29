@@ -1,0 +1,19 @@
+{
+  "base": "og-social.jpg",
+  "logo": "kitepon-dev-on-night.png",
+  "output": "og.png",
+  "canvas": {
+    "width": 1280,
+    "height": 640
+  },
+  "endorsement": {
+    "x": 56,
+    "y": 24,
+    "width": 140,
+    "height": 42
+  },
+  "output_size": {
+    "width": 1280,
+    "height": 640
+  }
+}
