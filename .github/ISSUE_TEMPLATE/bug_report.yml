@@ -12,7 +12,7 @@ body:
 
         Before filing, please:
         - Confirm you are on **macOS** with **Node 20+** (rpgdev runs nowhere else).
-        - Check the [existing issues](https://github.com/kitepon-rgb/rpgdev/issues) to avoid duplicates.
+        - Check the [existing issues](https://github.com/kitepon/rpgdev/issues) to avoid duplicates.
         - If you can, reproduce with the desktop window (`npm start` / `rpgdev`) rather than the secondary web view.
         - Grab anything useful from `.rpgdev/hook-errors.log` and `.rpgdev/server-errors.log` (see the Logs field below).
   - type: textarea

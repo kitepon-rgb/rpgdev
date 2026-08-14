@@ -9,7 +9,7 @@
 **English** · [日本語](README.ja.md)
 
 [![npm](https://img.shields.io/npm/v/rpgdev)](https://www.npmjs.com/package/rpgdev)
-[![CI](https://github.com/kitepon-rgb/rpgdev/actions/workflows/ci.yml/badge.svg)](https://github.com/kitepon-rgb/rpgdev/actions/workflows/ci.yml)
+[![CI](https://github.com/kitepon/rpgdev/actions/workflows/ci.yml/badge.svg)](https://github.com/kitepon/rpgdev/actions/workflows/ci.yml)
 ![license](https://img.shields.io/npm/l/rpgdev)
 ![node](https://img.shields.io/node/v/rpgdev)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20WSL2-lightgrey)
@@ -40,7 +40,7 @@ It runs many agents at once without flicker — the server paces everything (see
 
 The easiest way is to **tell your AI coding agent to install it.** In Claude Code or Codex, say:
 
-> **Read https://github.com/kitepon-rgb/rpgdev and install RPGDev for me.**
+> **Read https://github.com/kitepon/rpgdev and install RPGDev for me.**
 
 Your agent follows [docs/agent-install.md](docs/agent-install.md): it installs the package, writes the
 hooks into your settings **safely** (backs up, atomic, idempotent — it never clobbers your existing
@@ -69,7 +69,7 @@ Monsters are **random encounters**, not your TODO items — fifteen of them acro
 
 ### The art is forged, not stock
 
-Every sprite is generated with **[sprite-forge](https://github.com/kitepon-rgb/sprite-forge-mcp)** — a local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) sprite studio (also by the author, built *for* this game) that a human or an AI agent can drive over MCP to make clean, transparent, game-ready sprites. This Magma Golem, for instance, was forged in one pass:
+Every sprite is generated with **[sprite-forge](https://github.com/kitepon/sprite-forge-mcp)** — a local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) sprite studio (also by the author, built *for* this game) that a human or an AI agent can drive over MCP to make clean, transparent, game-ready sprites. This Magma Golem, for instance, was forged in one pass:
 
 <p align="center">
   <img src=".github/forged-magma-golem.png" alt="A Magma Golem boss sprite generated with sprite-forge — cracked obsidian body with glowing magma veins, transparent background" width="26%">

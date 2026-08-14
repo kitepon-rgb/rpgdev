@@ -48,13 +48,13 @@
     "windows",
     "wsl"
   ],
-  "homepage": "https://github.com/kitepon-rgb/rpgdev#readme",
+  "homepage": "https://github.com/kitepon/rpgdev#readme",
   "bugs": {
-    "url": "https://github.com/kitepon-rgb/rpgdev/issues"
+    "url": "https://github.com/kitepon/rpgdev/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kitepon-rgb/rpgdev.git"
+    "url": "git+https://github.com/kitepon/rpgdev.git"
   },
   "publishConfig": {
     "access": "public"

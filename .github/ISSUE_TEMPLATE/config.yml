@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Design doc (single source of truth)
-    url: https://github.com/kitepon-rgb/rpgdev/blob/main/docs/design-todo-rpg.md
+    url: https://github.com/kitepon/rpgdev/blob/main/docs/design-todo-rpg.md
     about: Read the design and implementation notes before filing an issue.
   - name: Discussions / questions
-    url: https://github.com/kitepon-rgb/rpgdev/discussions
+    url: https://github.com/kitepon/rpgdev/discussions
     about: Ask questions and discuss ideas here instead of opening an issue.

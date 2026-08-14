@@ -7,7 +7,7 @@
 [English](README.md) · **日本語**
 
 [![npm](https://img.shields.io/npm/v/rpgdev)](https://www.npmjs.com/package/rpgdev)
-[![CI](https://github.com/kitepon-rgb/rpgdev/actions/workflows/ci.yml/badge.svg)](https://github.com/kitepon-rgb/rpgdev/actions/workflows/ci.yml)
+[![CI](https://github.com/kitepon/rpgdev/actions/workflows/ci.yml/badge.svg)](https://github.com/kitepon/rpgdev/actions/workflows/ci.yml)
 ![license](https://img.shields.io/npm/l/rpgdev)
 ![node](https://img.shields.io/node/v/rpgdev)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20WSL2-lightgrey)
@@ -39,7 +39,7 @@ Claude Code / Codex で作業を始めると、RPGDev のフックが全イベ�
 
 一番簡単なのは **AI コーディングエージェントに頼む**ことです。Claude Code か Codex にこう言ってください：
 
-> **https://github.com/kitepon-rgb/rpgdev を見て RPGDev をインストールして。**
+> **https://github.com/kitepon/rpgdev を見て RPGDev をインストールして。**
 
 エージェントが [docs/agent-install.md](docs/agent-install.md) に従って、パッケージ導入・フックの**安全な自動書込**（バックアップ＋アトミック＋冪等＝既存設定を壊さない）・Windows/WSL2 のファイアウォール許可・窓の起動まで行います。**管理者が要る1手（WSL2 の Windows 側ファイアウォール）だけ**あなたに頼みます。
 
@@ -65,7 +65,7 @@ rpgdev                      # 窓を開く
 
 ### アートは“ストック画像”ではなく“鍛造”
 
-スプライトはすべて **[sprite-forge](https://github.com/kitepon-rgb/sprite-forge-mcp)** で生成しています——このゲームのために作られた、ローカル [ComfyUI](https://github.com/comfyanonymous/ComfyUI) のスプライト工房。人間でも AI エージェント（MCP 経由）でも駆動でき、透過のゲーム用スプライトをきれいに出します。たとえばこの Magma Golem も一発生成です：
+スプライトはすべて **[sprite-forge](https://github.com/kitepon/sprite-forge-mcp)** で生成しています——このゲームのために作られた、ローカル [ComfyUI](https://github.com/comfyanonymous/ComfyUI) のスプライト工房。人間でも AI エージェント（MCP 経由）でも駆動でき、透過のゲーム用スプライトをきれいに出します。たとえばこの Magma Golem も一発生成です：
 
 <p align="center">
   <img src=".github/forged-magma-golem.png" alt="sprite-forge で生成した Magma Golem ボススプライト（割れた黒曜石の体に光るマグマ、透過背景）" width="26%">
